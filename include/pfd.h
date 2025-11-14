@@ -128,9 +128,9 @@ typedef struct abs_deviation
 #define PFD_NUM_STORES 2
 #define PFD_PRINT_MAX 200
 
-extern volatile ticks** pfd_store;
-extern volatile ticks* _pfd_s;
-extern volatile ticks pfd_correction;
+extern __thread volatile ticks** pfd_store;
+extern __thread volatile ticks* _pfd_s;
+extern __thread volatile ticks pfd_correction;
 void pfd_collect_abs_deviation(uint32_t store, uint32_t num_vals, uint32_t num_print,
                                abs_deviation_t* out);
 #if !defined(DO_TIMINGS)
