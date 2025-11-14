@@ -5,9 +5,12 @@ CFLAGS = -O3 -Wall
 LDFLAGS = -lm -lrt
 VER_FLAGS = -D_GNU_SOURCE
 
-ifeq ($(VERSION),DEBUG) 
+ifeq ($(VERSION),DEBUG)
 CFLAGS =  -O0 -ggdb -Wall -g  -fno-inline
 endif
+
+CFLAGS += -pthread
+LDFLAGS += -pthread
 
 UNAME ?= $(shell uname -n)
 
