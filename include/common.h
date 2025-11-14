@@ -39,5 +39,5 @@
 #define P(args...) printf("[%02d] ", ID); printf(args); printf("\n"); fflush(stdout)
 #define PRINT P
 
-extern uint8_t ID;
+extern __thread uint8_t ID;
 #endif

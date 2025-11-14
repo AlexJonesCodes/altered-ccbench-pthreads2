@@ -36,9 +36,9 @@
 #include <math.h>
 #include "atomic_ops.h"
 
-volatile ticks** pfd_store;
-volatile ticks* _pfd_s;
-volatile ticks pfd_correction;
+__thread volatile ticks** pfd_store;
+__thread volatile ticks* _pfd_s;
+__thread volatile ticks pfd_correction;
 
 void 
 pfd_store_init(uint32_t num_entries)
