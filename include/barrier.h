@@ -30,6 +30,7 @@
 #ifndef BARRIER_H
 #define	BARRIER_H
 
+#include <pthread.h>
 #include "common.h"
 #include "atomic_ops.h"
 #ifdef __sparc__
@@ -39,7 +40,6 @@
 #endif /* __sparc */
 
 #define NUM_BARRIERS 16
-#define BARRIER_MEM_FILE "/barrier_mem"
 
 #ifndef ALIGNED
 #  if __GNUC__ && !SCC
@@ -52,10 +52,8 @@
 /*barrier type*/
 typedef ALIGNED(64) struct barrier
 {
+  pthread_barrier_t barrier;
   uint64_t num_participants;
-  volatile uint64_t num_crossing1;
-  volatile uint64_t num_crossing2;
-  volatile uint64_t num_crossing3;
   int (*color)(int); /*or color function: if return 0 -> no , 1 -> participant. Priority on this */
 } barrier_t;
 
@@ -63,7 +61,7 @@ typedef ALIGNED(64) struct barrier
 void barriers_init(const uint32_t num_procs);
 void barrier_init(const uint32_t barrier_num, const uint64_t participants, int (*color)(int), const uint32_t);
 void barrier_wait(const uint32_t barrier_num, const uint32_t id, const uint32_t total_cores);
-void barriers_term();
+void barriers_term(void);
 
 #ifdef __sparc__
 #  define PAUSE()    asm volatile("rd    %%ccr, %%g0\n\t"	\
