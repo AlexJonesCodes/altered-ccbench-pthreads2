@@ -14,14 +14,9 @@ if [[ ! -x "${CCBENCH_BIN}" ]]; then
   exit 1
 fi
 
-CORE_SET_DEFAULT="0 1 2 3 4 5 6 7"
-if [[ -n "${CORE_SET:-}" ]]; then
-  read -r -a CORES <<<"${CORE_SET}"
-else
-  read -r -a CORES <<<"${CORE_SET_DEFAULT}"
-fi
+CORES=(0 1 2 3 4 5 6 7)
 
-echo "Recording CAS latency grid to ${LOG_FILE} and ${CSV_FILE} (cores: ${CORES[*]})" >&2
+echo "Recording CAS latency grid to ${LOG_FILE} and ${CSV_FILE}" >&2
 >"${LOG_FILE}"
 printf "from_core,to_core,avg_latency\n" >"${CSV_FILE}"
 
@@ -44,18 +39,6 @@ for from_core in "${CORES[@]}"; do
     echo >>"${LOG_FILE}"
 
     avg=$(echo "${LOG_OUTPUT}" | awk -v core="${to_core}" '
-      $2 == "Core" {
-        tgt = $3
-        gsub(":", "", tgt)
-        if (tgt == core) {
-          for (i = 1; i <= NF; ++i) {
-            if ($i == "avg") {
-              print $(i+1)
-              exit
-            }
-          }
-        }
-      }
       $1 == "Core" {
         tgt = $2
         gsub(":", "", tgt)
