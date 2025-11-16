@@ -29,10 +29,6 @@
 
 #include "ccbench.h"
 
-#if defined(_WIN32)
-#  include <malloc.h>
-#endif
-
 __thread uint8_t ID;
 __thread unsigned long* seeds;
 
@@ -2141,15 +2137,6 @@ cache_line_open()
 
 #else    /* !__tile__ ****************************************************************************************/
   void* mem = NULL;
-
-#if defined(_WIN32)
-  mem = _aligned_malloc(size, 64);
-  if (mem == NULL)
-    {
-      perror("_aligned_malloc");
-      exit(1);
-    }
-#else
   int rc = posix_memalign(&mem, 64, size);
   if (rc != 0)
     {
@@ -2157,7 +2144,6 @@ cache_line_open()
       perror("posix_memalign");
       exit(1);
     }
-#endif
 
   volatile cache_line_t* cache_line = (volatile cache_line_t*) mem;
 
@@ -2226,11 +2212,7 @@ void
 cache_line_close(volatile cache_line_t* cache_line)
 {
 #if !defined(__tile__)
-#  if defined(_WIN32)
-  _aligned_free((void*) cache_line);
-#  else
   free((void*) cache_line);
-#  endif
 #else
   (void) cache_line;
   tmc_cmem_close();
