@@ -33,7 +33,6 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -45,10 +44,13 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sched.h>
+#if defined(__linux__)
+#  include <sched.h>
+#endif
 #include <assert.h>
 #include <float.h>
 #include <getopt.h>
+#include <pthread.h>
 
 #if defined(__amd64__)
 #  include <emmintrin.h>
@@ -78,7 +80,7 @@ typedef struct cache_line
 # define LLU unsigned long long int
 
 extern volatile cache_line_t* cache_line_open();
-extern void cache_line_close(const uint32_t id, const char* name);
+extern void cache_line_close(volatile cache_line_t* cache_line);
 
 typedef enum
   {
@@ -174,8 +176,6 @@ static uint32_t default_cores[] = {0,1,2};
 #define DEFAULT_AO_SUCCESS  0
 
 
-#define CACHE_LINE_MEM_FILE "/cache_line"
-
 #define B0 _mm_mfence(); barrier_wait(0, ID, test_cores); _mm_mfence();
 #define B1 _mm_mfence(); barrier_wait(2, ID, test_cores); _mm_mfence();
 #define B2 _mm_mfence(); barrier_wait(3, ID, test_cores); _mm_mfence();
@@ -204,7 +204,7 @@ static uint32_t default_cores[] = {0,1,2};
 #endif
 
 static inline void
-set_cpu(int cpu) 
+set_cpu(int cpu)
 {
 #if defined(__sparc__)
   processor_bind(P_LWPID,P_MYID, cpu, NULL);
@@ -219,20 +219,24 @@ set_cpu(int cpu)
       PRINT("******* i am not CPU %d", tmc_cpus_get_my_cpu());
     }
 
-#else
+#elif defined(__linux__)
   cpu_set_t mask;
   CPU_ZERO(&mask);
   CPU_SET(cpu, &mask);
 
-
-  if (sched_setaffinity(0, sizeof(mask), &mask) != 0) {
-    
+  int rc = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+  if (rc != 0)
+    {
+      errno = rc;
       printf("Problem with setting processor affinity: %s\n",
-        strerror(errno));
+             strerror(errno));
       exit(3);
-  }
+    }
 
-  printf("Requested cpu: %d, now running on cpu: %d\n",cpu, sched_getcpu());
+  printf("Requested cpu: %d, now running on cpu: %d\n", cpu, sched_getcpu());
+#else
+  (void) cpu;
+  printf("* CPU pinning is not supported on this platform; continuing without affinity.\n");
 #endif
 
 #ifdef OPTERON
@@ -303,23 +307,23 @@ static inline ticks getticks_correction_calc()
   }
 
 
-  static inline unsigned long* 
-  seed_rand() 
+  static inline uint64_t*
+  seed_rand()
   {
-    unsigned long* seeds;
-    seeds = (unsigned long*) malloc(3 * sizeof(unsigned long));
-    seeds[0] = getticks() % 123456789;
-    seeds[1] = getticks() % 362436069;
-    seeds[2] = getticks() % 521288629;
-    return seeds;
+    uint64_t* seeds_local;
+    seeds_local = (uint64_t*) malloc(3 * sizeof(uint64_t));
+    seeds_local[0] = getticks() % 123456789ULL;
+    seeds_local[1] = getticks() % 362436069ULL;
+    seeds_local[2] = getticks() % 521288629ULL;
+    return seeds_local;
   }
 
-extern unsigned long* seeds;
+extern __thread uint64_t* seeds;
   //Marsaglia's xorshf generator //period 2^96-1
-static inline unsigned long
-xorshf96(unsigned long* x, unsigned long* y, unsigned long* z) 
-{          
-  unsigned long t;
+static inline uint64_t
+xorshf96(uint64_t* x, uint64_t* y, uint64_t* z)
+{
+  uint64_t t;
   (*x) ^= (*x) << 16;
   (*x) ^= (*x) >> 5;
   (*x) ^= (*x) << 1;
