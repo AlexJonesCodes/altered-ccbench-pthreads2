@@ -1130,7 +1130,7 @@ run_benchmark(void* arg)
 	    case STORE_ON_OWNED:
 	      if (ID < 2)
 		{
-		  PRINT(" *** Core %ld ************************************************************************************", core);
+                  PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		  if (ID == 1)
 		    {
@@ -1139,25 +1139,25 @@ run_benchmark(void* arg)
 		}
 	      break;
             case CAS_CONCURRENT:
-              PRINT(" *** Core %ld ************************************************************************************", core);
+              PRINT(" *** Core %zu ************************************************************************************", core);
               collect_core_stats(0, test_reps, test_print);
               break;
 	    case LOAD_FROM_L1:
 	      if (ID < 1)
 		{
-		  PRINT(" *** Core %ld ************************************************************************************", core);
+                  PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    case LOAD_FROM_MEM_SIZE:
 	      if (ID < test_cores)
 		{
-		  PRINT(" *** Core %ld ************************************************************************************", core);
+                  PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    default:
-	      PRINT(" *** Core %ld ************************************************************************************", core);
+              PRINT(" *** Core %zu ************************************************************************************", core);
 	      collect_core_stats(0, test_reps, test_print);
 	    }
 	}
@@ -2178,9 +2178,9 @@ create_rand_list_cl(volatile uint64_t* list, size_t n)
   n /= per_cl;
 
   unsigned long* s = seed_rand();
-  s[0] = 0xB9E4E2F1F1E2E3D5L;
-  s[1] = 0xF1E2E3D5B9E4E2F1L;
-  s[2] = 0x9B3A0FA212342345L;
+  s[0] = 0xB9E4E2F1F1E2E3D5ULL;
+  s[1] = 0xF1E2E3D5B9E4E2F1ULL;
+  s[2] = 0x9B3A0FA212342345ULL;
 
   uint8_t* used = calloc(n * per_cl, sizeof(uint8_t));
   assert (used != NULL);

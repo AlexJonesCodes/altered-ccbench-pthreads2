@@ -44,7 +44,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sched.h>
+#if defined(__linux__)
+#  include <sched.h>
+#endif
 #include <assert.h>
 #include <float.h>
 #include <getopt.h>
@@ -202,7 +204,7 @@ static uint32_t default_cores[] = {0,1,2};
 #endif
 
 static inline void
-set_cpu(int cpu) 
+set_cpu(int cpu)
 {
 #if defined(__sparc__)
   processor_bind(P_LWPID,P_MYID, cpu, NULL);
@@ -217,7 +219,7 @@ set_cpu(int cpu)
       PRINT("******* i am not CPU %d", tmc_cpus_get_my_cpu());
     }
 
-#else
+#elif defined(__linux__)
   cpu_set_t mask;
   CPU_ZERO(&mask);
   CPU_SET(cpu, &mask);
