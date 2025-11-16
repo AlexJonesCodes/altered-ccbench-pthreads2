@@ -29,12 +29,8 @@
 
 #include "ccbench.h"
 
-#if defined(_WIN32) || defined(__MINGW32__)
-#  include <malloc.h>
-#endif
-
 __thread uint8_t ID;
-__thread uint64_t* seeds;
+__thread unsigned long* seeds;
 
 #if defined(__tile__)
 cpu_set_t cpus;
@@ -2141,15 +2137,6 @@ cache_line_open()
 
 #else    /* !__tile__ ****************************************************************************************/
   void* mem = NULL;
-
-#if defined(_WIN32) || defined(__MINGW32__) || defined(__MINGW64__)
-  mem = _aligned_malloc(size, 64);
-  if (mem == NULL)
-    {
-      perror("_aligned_malloc");
-      exit(1);
-    }
-#elif defined(_POSIX_VERSION) || defined(__APPLE__)
   int rc = posix_memalign(&mem, 64, size);
   if (rc != 0)
     {
@@ -2157,16 +2144,6 @@ cache_line_open()
       perror("posix_memalign");
       exit(1);
     }
-#else
-  /* C11 aligned_alloc requires the size to be a multiple of the alignment. */
-  size = (size + 63) & ~((uint64_t) 63);
-  mem = aligned_alloc(64, size);
-  if (mem == NULL)
-    {
-      perror("aligned_alloc");
-      exit(1);
-    }
-#endif
 
   volatile cache_line_t* cache_line = (volatile cache_line_t*) mem;
 
@@ -2200,7 +2177,7 @@ create_rand_list_cl(volatile uint64_t* list, size_t n)
   size_t per_cl = sizeof(cache_line_t) / sizeof(uint64_t);
   n /= per_cl;
 
-  uint64_t* s = seed_rand();
+  unsigned long* s = seed_rand();
   s[0] = 0xB9E4E2F1F1E2E3D5ULL;
   s[1] = 0xF1E2E3D5B9E4E2F1ULL;
   s[2] = 0x9B3A0FA212342345ULL;
@@ -2235,11 +2212,7 @@ void
 cache_line_close(volatile cache_line_t* cache_line)
 {
 #if !defined(__tile__)
-#  if defined(_WIN32) || defined(__MINGW32__)
-  _aligned_free((void*) cache_line);
-#  else
   free((void*) cache_line);
-#  endif
 #else
   (void) cache_line;
   tmc_cmem_close();
