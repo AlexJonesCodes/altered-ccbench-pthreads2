@@ -224,6 +224,7 @@ set_cpu(int cpu)
   CPU_ZERO(&mask);
   CPU_SET(cpu, &mask);
 
+
   int rc = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
   if (rc != 0)
     {
@@ -234,9 +235,6 @@ set_cpu(int cpu)
     }
 
   printf("Requested cpu: %d, now running on cpu: %d\n", cpu, sched_getcpu());
-#else
-  (void) cpu;
-  printf("* CPU pinning is not supported on this platform; continuing without affinity.\n");
 #endif
 
 #ifdef OPTERON
@@ -318,7 +316,7 @@ static inline ticks getticks_correction_calc()
     return seeds;
   }
 
-extern __thread uint64_t* seeds;
+extern __thread unsigned long* seeds;
   //Marsaglia's xorshf generator //period 2^96-1
 static inline uint64_t
 xorshf96(uint64_t* x, uint64_t* y, uint64_t* z)
