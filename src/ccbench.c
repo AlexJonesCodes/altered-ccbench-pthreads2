@@ -52,11 +52,6 @@ uint32_t test_cache_line_num = CACHE_LINE_NUM;
 uint32_t test_lfence = DEFAULT_LFENCE;
 uint32_t test_sfence = DEFAULT_SFENCE;
 
-
-#ifndef MAP_ANONYMOUS
-#define MAP_ANONYMOUS MAP_ANON
-#endif
-
 typedef struct
 {
   abs_deviation_t store[PFD_NUM_STORES];

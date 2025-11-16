@@ -33,7 +33,6 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
