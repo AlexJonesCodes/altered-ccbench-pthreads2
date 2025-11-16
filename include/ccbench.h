@@ -33,7 +33,6 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -49,6 +48,7 @@
 #include <assert.h>
 #include <float.h>
 #include <getopt.h>
+#include <pthread.h>
 
 #if defined(__amd64__)
 #  include <emmintrin.h>
@@ -78,7 +78,7 @@ typedef struct cache_line
 # define LLU unsigned long long int
 
 extern volatile cache_line_t* cache_line_open();
-extern void cache_line_close(const uint32_t id, const char* name);
+extern void cache_line_close(volatile cache_line_t* cache_line);
 
 typedef enum
   {
@@ -174,8 +174,6 @@ static uint32_t default_cores[] = {0,1,2};
 #define DEFAULT_AO_SUCCESS  0
 
 
-#define CACHE_LINE_MEM_FILE "/cache_line"
-
 #define B0 _mm_mfence(); barrier_wait(0, ID, test_cores); _mm_mfence();
 #define B1 _mm_mfence(); barrier_wait(2, ID, test_cores); _mm_mfence();
 #define B2 _mm_mfence(); barrier_wait(3, ID, test_cores); _mm_mfence();
@@ -225,14 +223,16 @@ set_cpu(int cpu)
   CPU_SET(cpu, &mask);
 
 
-  if (sched_setaffinity(0, sizeof(mask), &mask) != 0) {
-    
+  int rc = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+  if (rc != 0)
+    {
+      errno = rc;
       printf("Problem with setting processor affinity: %s\n",
-        strerror(errno));
+             strerror(errno));
       exit(3);
-  }
+    }
 
-  printf("Requested cpu: %d, now running on cpu: %d\n",cpu, sched_getcpu());
+  printf("Requested cpu: %d, now running on cpu: %d\n", cpu, sched_getcpu());
 #endif
 
 #ifdef OPTERON
@@ -314,7 +314,7 @@ static inline ticks getticks_correction_calc()
     return seeds;
   }
 
-extern unsigned long* seeds;
+extern __thread unsigned long* seeds;
   //Marsaglia's xorshf generator //period 2^96-1
 static inline unsigned long
 xorshf96(unsigned long* x, unsigned long* y, unsigned long* z) 
