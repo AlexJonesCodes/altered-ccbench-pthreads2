@@ -305,23 +305,23 @@ static inline ticks getticks_correction_calc()
   }
 
 
-  static inline unsigned long* 
-  seed_rand() 
+  static inline uint64_t*
+  seed_rand()
   {
-    unsigned long* seeds;
-    seeds = (unsigned long*) malloc(3 * sizeof(unsigned long));
-    seeds[0] = getticks() % 123456789;
-    seeds[1] = getticks() % 362436069;
-    seeds[2] = getticks() % 521288629;
+    uint64_t* seeds;
+    seeds = (uint64_t*) malloc(3 * sizeof(uint64_t));
+    seeds[0] = getticks() % 123456789ULL;
+    seeds[1] = getticks() % 362436069ULL;
+    seeds[2] = getticks() % 521288629ULL;
     return seeds;
   }
 
 extern __thread unsigned long* seeds;
   //Marsaglia's xorshf generator //period 2^96-1
-static inline unsigned long
-xorshf96(unsigned long* x, unsigned long* y, unsigned long* z) 
-{          
-  unsigned long t;
+static inline uint64_t
+xorshf96(uint64_t* x, uint64_t* y, uint64_t* z)
+{
+  uint64_t t;
   (*x) ^= (*x) << 16;
   (*x) ^= (*x) >> 5;
   (*x) ^= (*x) << 1;
