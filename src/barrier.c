@@ -28,17 +28,11 @@
  */
 
 #include "barrier.h"
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <string.h>
-#include <sched.h>
-#include <inttypes.h>
 
 #ifdef __sparc__
 #  include <sys/types.h>
@@ -57,52 +51,15 @@ int color_all(int id)
 void
 barriers_init(const uint32_t num_procs)
 {
-  uint32_t size;
-  size = NUM_BARRIERS * sizeof(barrier_t);
-  if (size < 8192)
+  barriers = (barrier_t*) calloc(NUM_BARRIERS, sizeof(barrier_t));
+  if (barriers == NULL)
     {
-      size = 8192;
+      perror("calloc");
+      exit(1);
     }
-
-  char keyF[100];
-  sprintf(keyF, BARRIER_MEM_FILE);
-
-  int barrierfd = shm_open(keyF, O_CREAT | O_EXCL | O_RDWR, S_IRWXU | S_IRWXG);
-  if (barrierfd<0)
-    {
-      if (errno != EEXIST)
-	{
-	  perror("In shm_open");
-	  exit(1);
-	}
-
-      //this time it is ok if it already exists
-      barrierfd = shm_open(keyF, O_CREAT | O_RDWR, S_IRWXU | S_IRWXG);
-      if (barrierfd<0)
-	{
-	  perror("In shm_open");
-	  exit(1);
-	}
-    }
-  else
-    {
-      if (ftruncate(barrierfd, size) < 0) {
-	perror("ftruncate failed\n");
-	exit(1);
-      }
-    }
-
-  void* mem = (void*) mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, barrierfd, 0);
-  if (mem == NULL)
-    {
-      perror("ssmp_mem = NULL\n");
-      exit(134);
-    }
-
-  barriers = (barrier_t*) mem;
 
   uint32_t bar;
-  for (bar = 0; bar < NUM_BARRIERS; bar++) 
+  for (bar = 0; bar < NUM_BARRIERS; bar++)
     {
       barrier_init(bar, 0, color_all, num_procs);
     }
@@ -110,24 +67,32 @@ barriers_init(const uint32_t num_procs)
 
 void
 barrier_init(const uint32_t barrier_num, const uint64_t participants, int (*color)(int),
-	     const uint32_t total_cores) 
+             const uint32_t total_cores)
 {
   if (barrier_num >= NUM_BARRIERS) 
     {
       return;
     }
 
-
-  barriers[barrier_num].num_crossing1 = 0;
-  barriers[barrier_num].num_crossing2 = 0;
-  barriers[barrier_num].num_crossing3 = 0;
   barriers[barrier_num].color = color;
   uint32_t ue, num_parts = 0;
-  for (ue = 0; ue < total_cores; ue++) 
+  for (ue = 0; ue < total_cores; ue++)
     {
       num_parts += color(ue);
     }
+  if (num_parts == 0)
+    {
+      num_parts = 1;
+    }
   barriers[barrier_num].num_participants = num_parts;
+
+  int rc = pthread_barrier_init(&barriers[barrier_num].barrier, NULL, num_parts);
+  if (rc != 0)
+    {
+      errno = rc;
+      perror("pthread_barrier_init");
+      exit(1);
+    }
 
 }
 
@@ -148,51 +113,34 @@ barrier_wait(const uint32_t barrier_num, const uint32_t id, const uint32_t total
   int (*col)(int);
   col = b->color;
 
-  if (col(id) == 0) 
+  if (col(id) == 0)
     {
       return;
     }
 
-
-  b->num_crossing2 = 0;
-  FAI_U64(&b->num_crossing1);
-
-  while (b->num_crossing1 < b->num_participants)
+  int rc = pthread_barrier_wait(&b->barrier);
+  if (rc != 0 && rc != PTHREAD_BARRIER_SERIAL_THREAD)
     {
-      PAUSE();
-      _mm_mfence();
+      errno = rc;
+      perror("pthread_barrier_wait");
+      exit(1);
     }
-
-
-  b->num_crossing3 = 0;
-
-  FAI_U64(&b->num_crossing2);
-
-  while (b->num_crossing2 < b->num_participants)
-    {
-      PAUSE();
-      _mm_mfence();
-    }
-
-  b->num_crossing1 = 0;
-
-  FAI_U64(&b->num_crossing3);
-
-  while (b->num_crossing3 < b->num_participants)
-    {
-      PAUSE();
-      _mm_mfence();
-    }
-
-  //  printf("EXIT : %d : %d\n", barrier_num, id);
 
 }
 
 void
-barriers_term(const uint32_t id) 
+barriers_term(void)
 {
-  if (id == 0)
+  if (barriers == NULL)
     {
-      shm_unlink(BARRIER_MEM_FILE);
+      return;
     }
+
+  for (uint32_t bar = 0; bar < NUM_BARRIERS; bar++)
+    {
+      pthread_barrier_destroy(&barriers[bar].barrier);
+    }
+
+  free(barriers);
+  barriers = NULL;
 }

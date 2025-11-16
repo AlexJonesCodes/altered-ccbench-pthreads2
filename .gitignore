@@ -44,3 +44,5 @@
 /xeon_cores
 /xeon_dist.out
 cscope.*
+cas_grid.log*
+cas_grid.csv*
