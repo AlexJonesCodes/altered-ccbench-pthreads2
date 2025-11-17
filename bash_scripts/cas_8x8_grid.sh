@@ -38,19 +38,16 @@ for from_core in "${CORES[@]}"; do
     fi
     echo >>"${LOG_FILE}"
 
-    avg=$(echo "${LOG_OUTPUT}" | awk -v core="${to_core}" '
-      $1 == "Core" {
-        tgt = $2
-        gsub(":", "", tgt)
-        if (tgt == core) {
-          for (i = 1; i <= NF; ++i) {
-            if ($i == "avg") {
-              print $(i+1)
-              exit
-            }
+    avg=$(echo "${LOG_OUTPUT}" | awk '
+      /Summary/ {
+        for (i = 1; i <= NF; ++i) {
+          if ($i == "mean" && $(i+1) == "avg") {
+            print $(i+2)
+            exit
           }
         }
-      }')
+      }
+    ')
     if [[ -z "${avg}" ]]; then
       avg="NA"
     fi
