@@ -135,17 +135,9 @@ pfd_store_init(uint32_t num_entries)
 #elif defined(i3_7020U)
     ad.avg = 25;
 #elif defined(I9_13900HX)
-    ad.avg = 16;
+    ad.avg = 14;
 #else
-          if (is_i9_13900hx())
-            {
-              ad.avg = 16;
-              printf("* detected 13th Gen Intel(R) Core(TM) i9-13900HX; using pfd correction default\n");
-            }
-          else
-            {
-              printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
-            }
+          printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
 #endif
         }
     }
