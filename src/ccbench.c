@@ -831,10 +831,11 @@ run_benchmark(void* arg)
 			B1;		/* BARRIER 1 */
 			sum += cas_0_eventually(cache_line, reps);
 		}
-		else {
-			B1;
-		}
-	  }
+                else {
+                        B1;
+                }
+            break;
+          }
 	case FAI_ON_MODIFIED: /* 17 */
 	  {
 	    switch (ID)
