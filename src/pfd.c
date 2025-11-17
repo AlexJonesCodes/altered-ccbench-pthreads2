@@ -41,7 +41,7 @@ __thread volatile ticks** pfd_store;
 __thread volatile ticks* _pfd_s;
 __thread volatile ticks pfd_correction;
 
-static int
+static int __attribute__((unused))
 is_i9_13900hx(void)
 {
   FILE* cpuinfo = fopen("/proc/cpuinfo", "r");
