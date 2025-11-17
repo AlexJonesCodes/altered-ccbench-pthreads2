@@ -59,7 +59,7 @@ pfd_store_init(uint32_t num_entries)
   uint32_t print_warning = 0;
 
 
-#if defined(XEON) || defined(OPTERON2) || defined(XEON2) || defined(DEFAULT) || defined(i3_7020U)
+#if defined(XEON) || defined(OPTERON2) || defined(XEON2) || defined(DEFAULT) || defined(i3_7020U) || defined(I9_13900HX)
   /* enforcing max freq if freq scaling is enabled */
   volatile uint64_t speed;
   for (speed = 0; speed < 20e7; speed++)
@@ -104,13 +104,15 @@ pfd_store_init(uint32_t num_entries)
 #elif defined(XEON) || defined(XEON2)
 	  ad.avg = 20;
 #elif defined(NIAGARA)
-	  ad.avg = 76;
+          ad.avg = 76;
 #elif defined(RYZEN53600)
     ad.avg = 32;
 #elif defined(i3_7020U)
     ad.avg = 25;
+#elif defined(I9_13900HX)
+    ad.avg = 14;
 #else
-	  printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
+          printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
 #endif
 	}
     }
