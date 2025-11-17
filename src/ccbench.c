@@ -29,8 +29,12 @@
 
 #include "ccbench.h"
 
-uint8_t ID;
-unsigned long* seeds;
+#if defined(_WIN32) || defined(__MINGW32__)
+#  include <malloc.h>
+#endif
+
+__thread uint8_t ID;
+__thread cc_rand_word_t* seeds;
 
 #if defined(__tile__)
 cpu_set_t cpus;
@@ -52,11 +56,6 @@ uint32_t test_cache_line_num = CACHE_LINE_NUM;
 uint32_t test_lfence = DEFAULT_LFENCE;
 uint32_t test_sfence = DEFAULT_SFENCE;
 
-
-#ifndef MAP_ANONYMOUS
-#define MAP_ANONYMOUS MAP_ANON
-#endif
-
 typedef struct
 {
   abs_deviation_t store[PFD_NUM_STORES];
@@ -64,6 +63,14 @@ typedef struct
 } core_summary_t;
 
 static core_summary_t* core_summaries;
+
+typedef struct
+{
+  volatile cache_line_t* cache_line;
+  uint32_t rank;
+} worker_args_t;
+
+static void* run_benchmark(void* arg);
 
 static void store_0(volatile cache_line_t* cache_line, volatile uint64_t reps);
 static void store_0_no_pf(volatile cache_line_t* cache_line, volatile uint64_t reps);
@@ -334,37 +341,81 @@ main(int argc, char **argv)
     }
 
   barriers_init(test_cores);
-  seeds = seed_rand();
 
   volatile cache_line_t* cache_line = cache_line_open();
 
-  size_t summary_bytes = test_cores * sizeof(core_summary_t);
-  core_summaries = (core_summary_t*) mmap(NULL, summary_bytes, PROT_READ | PROT_WRITE,
-                                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-  if (core_summaries == MAP_FAILED)
+  core_summaries = (core_summary_t*) calloc(test_cores, sizeof(core_summary_t));
+  if (core_summaries == NULL)
     {
-      perror("mmap");
+      perror("calloc");
       exit(1);
     }
-  memset(core_summaries, 0, summary_bytes);
+
+  worker_args_t* args = (worker_args_t*) calloc(test_cores, sizeof(worker_args_t));
+  if (args == NULL)
+    {
+      perror("calloc");
+      exit(1);
+    }
+
+  pthread_t* threads = NULL;
+  if (test_cores > 1)
+    {
+      threads = (pthread_t*) calloc(test_cores - 1, sizeof(pthread_t));
+      if (threads == NULL)
+        {
+          perror("calloc");
+          exit(1);
+        }
+    }
 
   int rank;
-  for (rank = 1; rank < test_cores; rank++) 
+  for (rank = 1; rank < test_cores; rank++)
     {
-      pid_t child = fork();
-      if (child < 0) 
-		{
-			P("Failure in fork():\n%s", strerror(errno));
-		} 
-			else if (child == 0) 
-		{
-			goto fork_done;
-		}
+      args[rank].cache_line = cache_line;
+      args[rank].rank = rank;
+      int rc = pthread_create(&threads[rank - 1], NULL, run_benchmark, &args[rank]);
+      if (rc != 0)
+        {
+          errno = rc;
+          perror("pthread_create");
+          exit(1);
+        }
     }
-  rank = 0;
 
- fork_done:
+  args[0].cache_line = cache_line;
+  args[0].rank = 0;
+  run_benchmark(&args[0]);
+
+  for (rank = 1; rank < test_cores; rank++)
+    {
+      int rc = pthread_join(threads[rank - 1], NULL);
+      if (rc != 0)
+        {
+          errno = rc;
+          perror("pthread_join");
+          exit(1);
+        }
+    }
+
+  cache_line_close(cache_line);
+  barriers_term();
+  free(core_summaries);
+  free(args);
+  free(threads);
+  return 0;
+
+}
+
+static void*
+run_benchmark(void* arg)
+{
+  worker_args_t* worker = (worker_args_t*) arg;
+  uint32_t rank = worker->rank;
+  volatile cache_line_t* cache_line = worker->cache_line;
+
   ID = rank;
+  seeds = seed_rand();
   size_t core = 0;
   core = test_cores_array[rank];
 
@@ -1083,7 +1134,7 @@ main(int argc, char **argv)
 	    case STORE_ON_OWNED:
 	      if (ID < 2)
 		{
-		  PRINT(" *** Core %ld ************************************************************************************", core);
+                  PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		  if (ID == 1)
 		    {
@@ -1092,25 +1143,25 @@ main(int argc, char **argv)
 		}
 	      break;
             case CAS_CONCURRENT:
-              PRINT(" *** Core %ld ************************************************************************************", core);
+              PRINT(" *** Core %zu ************************************************************************************", core);
               collect_core_stats(0, test_reps, test_print);
               break;
 	    case LOAD_FROM_L1:
 	      if (ID < 1)
 		{
-		  PRINT(" *** Core %ld ************************************************************************************", core);
+                  PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    case LOAD_FROM_MEM_SIZE:
 	      if (ID < test_cores)
 		{
-		  PRINT(" *** Core %ld ************************************************************************************", core);
+                  PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    default:
-	      PRINT(" *** Core %ld ************************************************************************************", core);
+              PRINT(" *** Core %zu ************************************************************************************", core);
 	      collect_core_stats(0, test_reps, test_print);
 	    }
 	}
@@ -1488,10 +1539,8 @@ main(int argc, char **argv)
     {
       PRINT(" value of cl is %-10u / sum is %llu", cache_line->word[0], (LLU) sum);
     }
-  cache_line_close(ID, "cache_line");
-  barriers_term(ID);
-  return 0;
 
+  return NULL;
 }
 
 uint32_t
@@ -2054,7 +2103,7 @@ collect_core_stats(uint32_t store, uint32_t num_vals, uint32_t num_print)
   abs_deviation_t stats;
   pfd_collect_abs_deviation(store, num_vals, num_print, &stats);
 
-  if (core_summaries == NULL || (void*) core_summaries == MAP_FAILED)
+  if (core_summaries == NULL)
     {
       return;
     }
@@ -2090,42 +2139,36 @@ cache_line_open()
 
   cache_line->word[0] = 0;
 
-#else	 /* !__tile__ ****************************************************************************************/
-  char keyF[100];
-  sprintf(keyF, CACHE_LINE_MEM_FILE);
+#else    /* !__tile__ ****************************************************************************************/
+  void* mem = NULL;
 
-  int ssmpfd = shm_open(keyF, O_CREAT | O_EXCL | O_RDWR, S_IRWXU | S_IRWXG);
-  if (ssmpfd < 0) 
+#if defined(_WIN32) || defined(__MINGW32__) || defined(__MINGW64__)
+  mem = _aligned_malloc(size, 64);
+  if (mem == NULL)
     {
-      if (errno != EEXIST) 
-	{
-	  perror("In shm_open");
-	  exit(1);
-	}
-
-
-      ssmpfd = shm_open(keyF, O_CREAT | O_RDWR, S_IRWXU | S_IRWXG);
-      if (ssmpfd < 0) 
-	{
-	  perror("In shm_open");
-	  exit(1);
-	}
-    }
-  else {
-    //    P("%s newly openned", keyF);
-    if (ftruncate(ssmpfd, size) < 0) {
-      perror("ftruncate failed\n");
+      perror("_aligned_malloc");
       exit(1);
     }
-  }
-
-  volatile cache_line_t* cache_line = 
-    (volatile cache_line_t *) mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, ssmpfd, 0);
-  if (cache_line == NULL)
+#elif (defined(_POSIX_VERSION) || defined(__APPLE__)) && !defined(__MSYS__)
+  int rc = posix_memalign(&mem, 64, size);
+  if (rc != 0)
     {
-      perror("cache_line = NULL\n");
-      exit(134);
+      errno = rc;
+      perror("posix_memalign");
+      exit(1);
     }
+#else
+  /* C11 aligned_alloc requires the size to be a multiple of the alignment. */
+  size = (size + 63) & ~((uint64_t) 63);
+  mem = aligned_alloc(64, size);
+  if (mem == NULL)
+    {
+      perror("aligned_alloc");
+      exit(1);
+    }
+#endif
+
+  volatile cache_line_t* cache_line = (volatile cache_line_t*) mem;
 
 #endif  /* __tile ********************************************************************************************/
   memset((void*) cache_line, '1', size);
@@ -2157,10 +2200,10 @@ create_rand_list_cl(volatile uint64_t* list, size_t n)
   size_t per_cl = sizeof(cache_line_t) / sizeof(uint64_t);
   n /= per_cl;
 
-  unsigned long* s = seed_rand();
-  s[0] = 0xB9E4E2F1F1E2E3D5L;
-  s[1] = 0xF1E2E3D5B9E4E2F1L;
-  s[2] = 0x9B3A0FA212342345L;
+  cc_rand_word_t* s = seed_rand();
+  s[0] = 0xB9E4E2F1F1E2E3D5ULL;
+  s[1] = 0xF1E2E3D5B9E4E2F1ULL;
+  s[2] = 0x9B3A0FA212342345ULL;
 
   uint8_t* used = calloc(n * per_cl, sizeof(uint8_t));
   assert (used != NULL);
@@ -2189,16 +2232,16 @@ create_rand_list_cl(volatile uint64_t* list, size_t n)
 } 
 
 void
-cache_line_close(const uint32_t id, const char* name)
+cache_line_close(volatile cache_line_t* cache_line)
 {
 #if !defined(__tile__)
-  if (id == 0)
-    {
-      char keyF[100];
-      sprintf(keyF, CACHE_LINE_MEM_FILE);
-      shm_unlink(keyF);
-    }
+#  if defined(_WIN32) || defined(__MINGW32__)
+  _aligned_free((void*) cache_line);
+#  else
+  free((void*) cache_line);
+#  endif
 #else
+  (void) cache_line;
   tmc_cmem_close();
 #endif
 }
