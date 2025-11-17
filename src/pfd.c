@@ -34,11 +34,36 @@
 
 #include "pfd.h"
 #include <math.h>
+#include <string.h>
 #include "atomic_ops.h"
 
 __thread volatile ticks** pfd_store;
 __thread volatile ticks* _pfd_s;
 __thread volatile ticks pfd_correction;
+
+static int
+is_i9_13900hx(void)
+{
+  FILE* cpuinfo = fopen("/proc/cpuinfo", "r");
+  if (cpuinfo == NULL)
+    {
+      return 0;
+    }
+
+  char line[256];
+  int match = 0;
+  while (fgets(line, sizeof(line), cpuinfo) != NULL)
+    {
+      if (strstr(line, "13th Gen Intel(R) Core(TM) i9-13900HX") != NULL)
+        {
+          match = 1;
+          break;
+        }
+    }
+
+  fclose(cpuinfo);
+  return match;
+}
 
 void 
 pfd_store_init(uint32_t num_entries)
@@ -59,7 +84,7 @@ pfd_store_init(uint32_t num_entries)
   uint32_t print_warning = 0;
 
 
-#if defined(XEON) || defined(OPTERON2) || defined(XEON2) || defined(DEFAULT) || defined(i3_7020U)
+#if defined(XEON) || defined(OPTERON2) || defined(XEON2) || defined(DEFAULT) || defined(i3_7020U) || defined(I9_13900HX)
   /* enforcing max freq if freq scaling is enabled */
   volatile uint64_t speed;
   for (speed = 0; speed < 20e7; speed++)
@@ -96,23 +121,33 @@ pfd_store_init(uint32_t num_entries)
 	}
       else
 	{
-	  printf("* warning: setting pfd correction manually\n");
+          printf("* warning: setting pfd correction manually\n");
 #if defined(OPTERON)
-	  ad.avg = 64;
+          ad.avg = 64;
 #elif defined(OPTERON2)
-	  ad.avg = 68;
+          ad.avg = 68;
 #elif defined(XEON) || defined(XEON2)
-	  ad.avg = 20;
+          ad.avg = 20;
 #elif defined(NIAGARA)
-	  ad.avg = 76;
+          ad.avg = 76;
 #elif defined(RYZEN53600)
     ad.avg = 32;
 #elif defined(i3_7020U)
     ad.avg = 25;
+#elif defined(I9_13900HX)
+    ad.avg = 16;
 #else
-	  printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
+          if (is_i9_13900hx())
+            {
+              ad.avg = 16;
+              printf("* detected 13th Gen Intel(R) Core(TM) i9-13900HX; using pfd correction default\n");
+            }
+          else
+            {
+              printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
+            }
 #endif
-	}
+        }
     }
 
   pfd_correction = ad.avg;
