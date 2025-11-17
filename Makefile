@@ -58,6 +58,11 @@ PLATFORM = i3_7020U
 CC = gcc
 endif
 
+ifeq ($(UNAME), i9_13900HX)
+PLATFORM = I9_13900HX
+CC = gcc
+endif
+
 ifeq ($(PLATFORM), )
 PLATFORM = DEFAULT
 CC = gcc

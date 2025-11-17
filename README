@@ -10,6 +10,11 @@ This is an altered version of ccbench, the code of which was written by:
 
 try:
 make UNAME=i3_7020U
+or I9_13900HX
 or RYZEN53600
+
+For 13th Gen Intel(R) Core(TM) i9-13900HX systems, the profiler now auto-detects the
+processor model at runtime and applies the platform default pfd correction (14
+cycles) even if the build was not compiled with `UNAME=i9_13900HX`.
 
 to set cpus to run on, use "./ccbench -c 4 -x [0,1,2,3]" where c is the number of cores and x is the array of cores to run n
