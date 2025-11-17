@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 17 nov update text
+
 SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 CCBENCH_BIN=${CCBENCH_BIN:-"${PROJECT_ROOT}/ccbench"}
@@ -38,19 +40,14 @@ for from_core in "${CORES[@]}"; do
     fi
     echo >>"${LOG_FILE}"
 
-    avg=$(echo "${LOG_OUTPUT}" | awk -v core="${to_core}" '
-      $1 == "Core" {
-        tgt = $2
-        gsub(":", "", tgt)
-        if (tgt == core) {
-          for (i = 1; i <= NF; ++i) {
-            if ($i == "avg") {
-              print $(i+1)
-              exit
-            }
-          }
+    avg=$(echo "${LOG_OUTPUT}" | awk '
+      /Summary/ {
+        if (match($0, /Summary[[:space:]]*:[[:space:]]*mean avg[[:space:]]*([0-9.]+)/, m)) {
+          print m[1]
+          exit
         }
-      }')
+      }
+    ')
     if [[ -z "${avg}" ]]; then
       avg="NA"
     fi
