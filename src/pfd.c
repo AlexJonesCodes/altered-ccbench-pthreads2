@@ -34,11 +34,36 @@
 
 #include "pfd.h"
 #include <math.h>
+#include <string.h>
 #include "atomic_ops.h"
 
 __thread volatile ticks** pfd_store;
 __thread volatile ticks* _pfd_s;
 __thread volatile ticks pfd_correction;
+
+static int
+is_i9_13900hx(void)
+{
+  FILE* cpuinfo = fopen("/proc/cpuinfo", "r");
+  if (cpuinfo == NULL)
+    {
+      return 0;
+    }
+
+  char line[256];
+  int match = 0;
+  while (fgets(line, sizeof(line), cpuinfo) != NULL)
+    {
+      if (strstr(line, "13th Gen Intel(R) Core(TM) i9-13900HX") != NULL)
+        {
+          match = 1;
+          break;
+        }
+    }
+
+  fclose(cpuinfo);
+  return match;
+}
 
 void 
 pfd_store_init(uint32_t num_entries)
@@ -96,13 +121,13 @@ pfd_store_init(uint32_t num_entries)
 	}
       else
 	{
-	  printf("* warning: setting pfd correction manually\n");
+          printf("* warning: setting pfd correction manually\n");
 #if defined(OPTERON)
-	  ad.avg = 64;
+          ad.avg = 64;
 #elif defined(OPTERON2)
-	  ad.avg = 68;
+          ad.avg = 68;
 #elif defined(XEON) || defined(XEON2)
-	  ad.avg = 20;
+          ad.avg = 20;
 #elif defined(NIAGARA)
           ad.avg = 76;
 #elif defined(RYZEN53600)
@@ -114,7 +139,7 @@ pfd_store_init(uint32_t num_entries)
 #else
           printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
 #endif
-	}
+        }
     }
 
   pfd_correction = ad.avg;
