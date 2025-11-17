@@ -58,7 +58,8 @@ for from_core in "${CORES[@]}"; do
             }
           }
         }
-      }')
+      }
+    ')
     if [[ -z "${avg}" ]]; then
       avg="NA"
     fi
