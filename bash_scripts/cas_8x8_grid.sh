@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 17 nov update text
+
 SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 CCBENCH_BIN=${CCBENCH_BIN:-"${PROJECT_ROOT}/ccbench"}
