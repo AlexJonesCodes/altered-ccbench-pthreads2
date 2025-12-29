@@ -335,6 +335,7 @@ main(int argc, char **argv)
       test_lfence = test_sfence = 0;
       break;
     }
+	printf("\n");
 
   barriers_init(test_cores);
 
@@ -418,7 +419,7 @@ run_benchmark(void* arg)
 #if defined(NIAGARA)
   if (test_cores <= 8 && test_cores > 3)
     {
-      if (ID == 0)
+      if (core == test_cores_array[0])
 	{
 	  PRINT(" ** spreading the 8 threads on the 8 real cores");
 	}
@@ -463,52 +464,49 @@ run_benchmark(void* arg)
 	{
 	case STORE_ON_MODIFIED: /* 0 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
-		B1;		/* BARRIER 1 */
+		B1;    /* BARRIER 1 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;    /* BARRIER 1 */
 		store_0_eventually(cache_line, reps);
-		break;
-	      default:
-		B1;		/* BARRIER 1 */
-		break;
+	      }
+	    else
+	      {
+		B1;    /* BARRIER 1 */
 	      }
 	    break;
 	  }
 	case STORE_ON_MODIFIED_NO_SYNC: /* 1 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0] || core == test_cores_array[1] || core == test_cores_array[2])
 	      {
-	      case 0:
-	      case 1:
-	      case 2:
 		store_0(cache_line, reps);
-		break;
-	      default:
+	      }
+	    else
+	      {
 		store_0_no_pf(cache_line, reps);
-		break;
 	      }
 	    break;
 	  }
 	case STORE_ON_EXCLUSIVE: /* 2 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
-		B1;		/* BARRIER 1 */
+		B1;    /* BARRIER 1 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;    /* BARRIER 1 */
 		store_0_eventually(cache_line, reps);
-		break;
-	      default:
-		B1;		/* BARRIER 1 */
-		break;
+	      }
+	    else
+	      {
+		B1;    /* BARRIER 1 */
 	      }
 
 	    if (!test_flush)
@@ -519,82 +517,80 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_SHARED:	/* 3 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
-		break;
-	      case 1:
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
 		store_0_eventually(cache_line, reps);
-		break;
-	      case 2:
-		B1;			/* BARRIER 1 */
+	      }
+	    else if (core == test_cores_array[2])
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
-		B2;			/* BARRIER 2 */
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
-		B2;			/* BARRIER 2 */
-		break;
+		B2;            /* BARRIER 2 */
 	      }
 	    break;
 	  }
 	case STORE_ON_OWNED_MINE: /* 4 */
 	  {
-	    switch (ID)
-	      {
-	      case 0:
-		B1;			/* BARRIER 1 */
-		sum += load_0_eventually(cache_line, reps);
-		B2;			/* BARRIER 2 */
-		break;
-	      case 1:
-		store_0_eventually(cache_line, reps);
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
-		store_0_eventually_pfd1(cache_line, reps);
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
-		sum += load_0_eventually_no_pf(cache_line);
-		B2;			/* BARRIER 2 */
-		break;
-	      }
+	    if (core == test_cores_array[0]){
+			B1;			/* BARRIER 1 */
+			sum += load_0_eventually(cache_line, reps);
+			B2;			/* BARRIER 2 */
+		}
+		else if (core == test_cores_array[1]){
+			store_0_eventually(cache_line, reps);
+			B1;			/* BARRIER 1 */
+			B2;			/* BARRIER 2 */
+			store_0_eventually_pfd1(cache_line, reps);
+		}
+		else{
+			B1;			/* BARRIER 1 */
+			sum += load_0_eventually_no_pf(cache_line);
+			B2;			/* BARRIER 2 */
+			break;
+		}
 	    break;
 	  }
 	case STORE_ON_OWNED:	/* 5 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
-		break;
-	      case 1:
-		B1;			/* BARRIER 1 */
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
-		B2;			/* BARRIER 2 */
+		B2;            /* BARRIER 2 */
 		store_0_eventually_pfd1(cache_line, reps);
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
+	      }
+	    else
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
-		B2;			/* BARRIER 2 */
-		break;
+		B2;            /* BARRIER 2 */
 	      }
 	    break;
 	  }
 	case STORE_ON_INVALID:	/* 6 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		B1;
 		/* store_0_eventually(cache_line, reps); */
 		store_0(cache_line, reps);
@@ -602,91 +598,93 @@ run_benchmark(void* arg)
 		  {
 		    cache_line += test_stride;
 		  }
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		invalidate(cache_line, 0, reps);
 		if (!test_flush)
 		  {
 		    cache_line += test_stride;
 		  }
 		B1;
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;
-		break;
 	      }
 	    break;
 	  }
 	case LOAD_FROM_MODIFIED: /* 7 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
-		B1;		
-		break;
-	      case 1:
-		B1;			/* BARRIER 1 */
+		B1;        
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;
-		break;
 	      }
 	    break;
 	  }
 	case LOAD_FROM_EXCLUSIVE: /* 8 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
-		B1;			/* BARRIER 1 */
+		B1;            /* BARRIER 1 */
 
 		if (!test_flush)
 		  {
 		    cache_line += test_stride;
 		  }
-		break;
-	      case 1:
-		B1;			/* BARRIER 1 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 
 		if (!test_flush)
 		  {
 		    cache_line += test_stride;
 		  }
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
-		break;
+	      }
+	    else
+	      {
+		B1;            /* BARRIER 1 */
 	      }
 	    break;
 	  }
 	case LOAD_FROM_SHARED:	/* 9 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
-		break;
-	      case 1:
-		B1;			/* BARRIER 1 */
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
-		B2;			/* BARRIER 2 */
-		break;
-	      case 2:
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[2])
+	      {
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
 		sum += load_0_eventually(cache_line, reps);
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
+	      }
+	    else
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
-		B2;			/* BARRIER 2 */
-		break;
+		B2;            /* BARRIER 2 */
 	      }
 
 	    if (!test_flush)
@@ -697,45 +695,46 @@ run_benchmark(void* arg)
 	  }
 	case LOAD_FROM_OWNED:	/* 10 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
-		break;
-	      case 1:
-		B1;			/* BARRIER 1 */
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
-		B2;			/* BARRIER 2 */
-		break;
-	      case 2:
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
+		B2;            /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[2])
+	      {
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
 		sum += load_0_eventually(cache_line, reps);
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
-		B2;			/* BARRIER 2 */
-		break;
+	      }
+	    else
+	      {
+		B1;            /* BARRIER 1 */
+		B2;            /* BARRIER 2 */
 	      }
 	    break;
 	  }
 	case LOAD_FROM_INVALID:	/* 11 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
-		B1;			/* BARRIER 1 */
+		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps); 		/* sum += load_0(cache_line, reps); */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		invalidate(cache_line, 0, reps);
-		B1;			/* BARRIER 1 */
-		break;
-	      default:
-		B1;			/* BARRIER 1 */
-		break;
+		B1;            /* BARRIER 1 */
+	      }
+	    else
+	      {
+		B1;            /* BARRIER 1 */
 	      }
 
 	    if (!test_flush)
@@ -746,12 +745,12 @@ run_benchmark(void* arg)
 	  }
 	case CAS: /* 12 */
 	  {
-		if (ID == test_cores_array[0]){
+		if (core == test_cores_array[0]){
 			sum += cas_0_eventually(cache_line, reps);
 			B1;		/* BARRIER 1 */
 		}
-		else if (ID == test_cores_array[1]){
-		B1;		/* BARRIER 1 */
+		else if (core == test_cores_array[1]){	
+			B1;		/* BARRIER 1 */
 		sum += cas_0_eventually(cache_line, reps);
 		}
 		else {
@@ -760,66 +759,66 @@ run_benchmark(void* arg)
 	}
 	case FAI: /* 13 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += fai(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
-		B1;		/* BARRIER 1 */
+		B1;    /* BARRIER 1 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;    /* BARRIER 1 */
 		sum += fai(cache_line, reps);
-		break;
-	      default:
-		B1;		/* BARRIER 1 */
-		break;
+	      }
+	    else
+	      {
+		B1;    /* BARRIER 1 */
 	      }
 	    break;
 	  }
 	case TAS:		/* 14 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += tas(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		B2;		/* BARRIER 2 */
-		break;
-	      case 1:
-		B1;		/* BARRIER 1 */
+		B1;    /* BARRIER 1 */
+		B2;    /* BARRIER 2 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;    /* BARRIER 1 */
 		sum += tas(cache_line, reps);
 		_mm_mfence();
 		cache_line->word[0] = 0;
-		B2;		/* BARRIER 2 */
-		break;
-	      default:
-		B1;		/* BARRIER 1 */
-		B2;		/* BARRIER 2 */
-		break;
+		B2;    /* BARRIER 2 */
+	      }
+	    else
+	      {
+		B1;    /* BARRIER 1 */
+		B2;    /* BARRIER 2 */
 	      }
 	    break;
 	  }
 	case SWAP: /* 15 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += swap(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
-		B1;		/* BARRIER 1 */
+		B1;    /* BARRIER 1 */
+	      }
+	    else if (core == test_cores_array[1])
+	      {
+		B1;    /* BARRIER 1 */
 		sum += swap(cache_line, reps);
-		break;
-	      default:
-		B1;		/* BARRIER 1 */
-		break;
+	      }
+	    else
+	      {
+		B1;    /* BARRIER 1 */
 	      }
 	    break;
 	  }
 	case CAS_ON_MODIFIED: /* 16 */
 	  {
-		if (ID == test_cores_array[0]){
+		if (core == test_cores_array[0]){
 			store_0_eventually(cache_line, reps);
 			if (test_ao_success)
 			{
@@ -827,38 +826,37 @@ run_benchmark(void* arg)
 			}
 			B1;		/* BARRIER 1 */
 		}
-		else if (ID == test_cores_array[1]){
+		else if (core == test_cores_array[1]){
 			B1;		/* BARRIER 1 */
 			sum += cas_0_eventually(cache_line, reps);
 		}
-                else {
-                        B1;
-                }
+		else {
+			B1;
+		}
             break;
           }
 	case FAI_ON_MODIFIED: /* 17 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += fai(cache_line, reps);
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
-		break;
 	      }
 	    break;
 	  }
 	case TAS_ON_MODIFIED: /* 18 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
 		if (!test_ao_success)
 		  {
@@ -866,94 +864,96 @@ run_benchmark(void* arg)
 		    _mm_mfence();
 		  }
 		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += tas(cache_line, reps);
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
-		break;
 	      }
 	    break;
 	  }
 	case SWAP_ON_MODIFIED: /* 19 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		store_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += swap(cache_line, reps);
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
-		break;
 	      }
 	    break;
 	  }
 	case CAS_ON_SHARED: /* 20 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 		sum += cas_0_eventually(cache_line, reps);
-		break;
-	      case 2:
+	      }
+	    else if (core == test_cores_array[2])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 		B2;		/* BARRIER 2 */
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
 		B2;			/* BARRIER 2 */
-		break;
 	      }
 	    break;
 	  }
 	case FAI_ON_SHARED: /* 21 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 		sum += fai(cache_line, reps);
-		break;
-	      case 2:
+	      }
+	    else if (core == test_cores_array[2])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 		B2;		/* BARRIER 2 */
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
 		B2;			/* BARRIER 2 */
-		break;
 	      }
 	    break;
 	  }
 	case TAS_ON_SHARED: /* 22 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		if (test_ao_success)
 		  {
 		    cache_line->word[0] = 0;
@@ -965,49 +965,52 @@ run_benchmark(void* arg)
 		sum += load_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 		sum += tas(cache_line, reps);
-		break;
-	      case 2:
+	      }
+	    else if (core == test_cores_array[2])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 		B2;		/* BARRIER 2 */
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
 		B2;			/* BARRIER 2 */
-		break;
 	      }
 	    break;
 	  }
 	case SWAP_ON_SHARED: /* 23 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		sum += load_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 		sum += swap(cache_line, reps);
-		break;
-	      case 2:
+	      }
+	    else if (core == test_cores_array[2])
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 		B2;		/* BARRIER 2 */
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
 		B2;			/* BARRIER 2 */
-		break;
 	      }
 	    break;
 	  }
@@ -1025,19 +1028,19 @@ run_benchmark(void* arg)
           }
 	case FAI_ON_INVALID:	/* 25 */
 	  {
-	    switch (ID)
+	    if (core == test_cores_array[0])
 	      {
-	      case 0:
 		B1;		/* BARRIER 1 */
 		sum += fai(cache_line, reps);
-		break;
-	      case 1:
+	      }
+	    else if (core == test_cores_array[1])
+	      {
 		invalidate(cache_line, 0, reps);
 		B1;		/* BARRIER 1 */
-		break;
-	      default:
+	      }
+	    else
+	      {
 		B1;		/* BARRIER 1 */
-		break;
 	      }
 
 	    if (!test_flush)
@@ -1048,7 +1051,7 @@ run_benchmark(void* arg)
 	  }
 	case LOAD_FROM_L1:	/* 26 */
 	  {
-	    if (ID == 0)
+	    if (core == test_cores_array[0])
 	      {
 		sum += load_0(cache_line, reps);
 		sum += load_0(cache_line, reps);
@@ -1167,8 +1170,7 @@ run_benchmark(void* arg)
   B10;
 
 
-  if (ID == 0)
-    {
+	if (core == test_cores_array[0])    {
       PRINT(" ---- Cross-core summary ------------------------------------------------------------");
       double min_avg = DBL_MAX;
       double max_avg = 0.0;
@@ -2151,7 +2153,7 @@ cache_line_open()
 #endif  /* __tile ********************************************************************************************/
   memset((void*) cache_line, '1', size);
 
-  if (ID == 0)
+  if (ID == test_cores_array[0])
     {
       uint32_t cl;
       for (cl = 0; cl < test_cache_line_num; cl++)
