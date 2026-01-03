@@ -350,11 +350,9 @@ static inline uint32_t pow2roundup (uint32_t x)
 }
 #endif	/* _H_CCBENCH_ */
 
-size_t core_rows = 0, core_cols = 0;
-
-int parse_2d_array(
+int parse_jagged_array(
     const char *s,
-    int ***out,
-    size_t *rows,
+    size_t ***out,
+    size_t rows,
     size_t *cols
 );

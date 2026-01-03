@@ -39,10 +39,13 @@ cpu_set_t cpus;
 
 moesi_type_t test_test = DEFAULT_TEST;
 moesi_type_t test_test2 = -1;
-uint32_t test_cores = DEFAULT_CORES;
-uint32_t test_reps = DEFAULT_REPS;
-uint32_t ***test_cores_array = DEFAULT_CORES_ARRAY;
-uint32_t ***test_num_array = DEFAULT_CORES_ARRAY;
+size_t test_reps = DEFAULT_REPS;
+size_t test_rows;             // number of rows
+size_t *test_cols;            // array of column counts per row
+size_t **test_num_array;
+size_t core_rows;             // number of rows
+size_t *core_cols;            // array of column counts per row
+size_t **test_cores_array;
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -198,20 +201,23 @@ main(int argc, char **argv)
 	    }
 
 	  exit(0);
-	case 'c':
-	  test_cores = atoi(optarg);
 	  break;
 	case 'r':
 	  test_reps = atoi(optarg);
 	  break;
 	case 't':
-		if (parse_2d_array(optarg, &test_num_array, &core_rows, &core_cols) != 0) {
+		if ((parse_jagged_array(optarg, &test_num_array, test_rows, test_cols) != 0) || test_rows != 1){
 			fprintf(stderr, "Invalid format for -x\n");
 			exit(EXIT_FAILURE);
 		}
-	  	break;
+
+		for (i = 0; i < test_cols[0]; i++){
+			printf("Test %zu\n", test_num_array[0][i]);
+		}
+	  	printf("\n\n\n\n\n\n");
+		break;
 	case 'x': // user provided a core array
-		if (parse_2d_array(optarg, &test_cores_array, &core_rows, &core_cols) != 0) {
+		if (parse_jagged_array(optarg, &test_cores_array, core_rows, core_cols) != 0) {
 			fprintf(stderr, "Invalid format for -x\n");
 			exit(EXIT_FAILURE);
 		}
@@ -266,8 +272,7 @@ main(int argc, char **argv)
 
 
   ID = 0;
-  printf("test: %20s  / #cores: %d / #repetitions: %d / stride: %d (%u kiB)", moesi_type_des[test_test], 
-	 test_cores, test_reps, test_stride, (64 * test_stride) / 1024);
+  // printf("test: %20s  / #cores: %d / #repetitions: %d / stride: %d (%u kiB)", moesi_type_des[test_test], test_cores, test_reps, test_stride, (64 * test_stride) / 1024);
   if (test_flush)
     {
       printf(" / flush");
@@ -2212,62 +2217,80 @@ cache_line_close(volatile cache_line_t* cache_line)
 #endif
 }
 
-int parse_2d_array(
+static void free_jagged(size_t **a, size_t *cols, size_t rows) {
+    if (!a) return;
+    for (size_t i = 0; i < rows; i++)
+        free(a[i]);
+    free(a);
+    free(cols);
+}
+
+int parse_jagged_array(
     const char *s,
-    int ***out,
-    size_t *rows,
+    size_t ***out,
+    size_t rows,
     size_t *cols
 ) {
     const char *p = s;
-    size_t r = 0, c = 0;
+    size_t r = 0;
 
-    /* ---------- Count rows ---------- */
+    int **data = NULL;
+    size_t *col_counts = NULL;
+
     while (*p) {
-        if (*p == '[' && *(p + 1) != '[')
-            r++;
-        p++;
-    }
-    if (r == 0) return -1;
-
-    /* ---------- Count cols (first row only) ---------- */
-    p = strchr(s, '[');
-    p++;                // first '['
-    while (*p && *p != '[') p++;
-    p++;                // enter first row
-
-    while (*p && *p != ']') {
-        if (isdigit(*p) || *p == '-') {
-            c++;
-            while (isdigit(*p) || *p == '-') p++;
-        } else {
+        if (*p != '[') {
             p++;
+            continue;
         }
-    }
-    if (c == 0) return -1;
 
-    /* ---------- Allocate ---------- */
-    int **arr = malloc(r * sizeof(*arr));
-    if (!arr) return -1;
+        p++; /* enter row */
 
-    for (size_t i = 0; i < r; i++) {
-        arr[i] = malloc(c * sizeof(**arr));
-        if (!arr[i]) return -1;
-    }
+        /* ---------- count elements in this row ---------- */
+        size_t count = 0;
+        const char *q = p;
 
-    /* ---------- Parse values ---------- */
-    p = s;
-    for (size_t i = 0; i < r; i++) {
-        while (*p && *p != '[') p++;
-        p++; // '['
+        while (*q && *q != ']') {
+            if (isdigit(*q) || *q == '-') {
+                count++;
+                while (isdigit(*q) || *q == '-') q++;
+            } else {
+                q++;
+            }
+        }
 
-        for (size_t j = 0; j < c; j++) {
+        if (*q != ']') goto fail;
+
+        /* ---------- grow row arrays ---------- */
+        int **tmp_data = realloc(data, (r + 1) * sizeof *data);
+        size_t *tmp_cols = realloc(col_counts, (r + 1) * sizeof *col_counts);
+        if (!tmp_data || !tmp_cols) goto fail;
+
+        data = tmp_data;
+        col_counts = tmp_cols;
+
+        data[r] = malloc(count * sizeof **data);
+        if (!data[r]) goto fail;
+
+        col_counts[r] = count;
+
+        /* ---------- parse values ---------- */
+        for (size_t j = 0; j < count; j++) {
             while (*p && !isdigit(*p) && *p != '-') p++;
-            arr[i][j] = strtol(p, (char **)&p, 10);
+            data[r][j] = (int)strtol(p, (char **)&p, 10);
         }
+
+        r++;
+        p = q + 1;
     }
 
-    *out  = arr;
-    *rows = r;
-    *cols = c;
+    if (r == 0) goto fail;
+
+    *out  = data;
+    rows = r;
+    *cols = col_counts;
     return 0;
+
+fail:
+    free_jagged(data, col_counts, r);
+    return -1;
 }
