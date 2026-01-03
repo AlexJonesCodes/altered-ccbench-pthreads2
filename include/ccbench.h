@@ -163,7 +163,7 @@ const char* moesi_type_des[] =
 #define DEFAULT_CORES       2
 #define DEFAULT_REPS        10000
 #define DEFAULT_TEST        0
-static uint32_t default_cores[] = {0,1,2};
+static uint32_t default_cores[1][3] = {{0,1,2}};
 #define DEFAULT_CORES_ARRAY default_cores
 #define DEFAULT_CORE_OTHERS 0
 #define DEFAULT_FLUSH       0
@@ -349,3 +349,12 @@ static inline uint32_t pow2roundup (uint32_t x)
   return x+1;
 }
 #endif	/* _H_CCBENCH_ */
+
+size_t core_rows = 0, core_cols = 0;
+
+int parse_2d_array(
+    const char *s,
+    int ***out,
+    size_t *rows,
+    size_t *cols
+);

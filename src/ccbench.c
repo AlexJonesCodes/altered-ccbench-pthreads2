@@ -28,6 +28,7 @@
  */
 
 #include "ccbench.h"
+#include <ctype.h>
 
 __thread uint8_t ID;
 __thread unsigned long* seeds;
@@ -37,9 +38,11 @@ cpu_set_t cpus;
 #endif
 
 moesi_type_t test_test = DEFAULT_TEST;
+moesi_type_t test_test2 = -1;
 uint32_t test_cores = DEFAULT_CORES;
 uint32_t test_reps = DEFAULT_REPS;
-uint32_t *test_cores_array = DEFAULT_CORES_ARRAY;
+uint32_t ***test_cores_array = DEFAULT_CORES_ARRAY;
+uint32_t ***test_num_array = DEFAULT_CORES_ARRAY;
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -133,7 +136,7 @@ main(int argc, char **argv)
   while(1) 
     {
       i = 0;
-      c = getopt_long(argc, argv, "hc:r:t:x:m:y:z:o:e:fvup:s:", long_options, &i);
+      c = getopt_long(argc, argv, "r:t:c:x:", long_options, &i);
 
       if(c == -1)
 	break;
@@ -202,30 +205,17 @@ main(int argc, char **argv)
 	  test_reps = atoi(optarg);
 	  break;
 	case 't':
-	  test_test = atoi(optarg);
-	  break;
+		if (parse_2d_array(optarg, &test_num_array, &core_rows, &core_cols) != 0) {
+			fprintf(stderr, "Invalid format for -x\n");
+			exit(EXIT_FAILURE);
+		}
+	  	break;
 	case 'x': // user provided a core array
-		char *copy = strdup(optarg);
-		copy[strlen(copy) - 1] = '\0'; // remove closing ]
-		char *p = copy + 1;            // skip opening [
-    	int *arr = malloc(test_cores * sizeof(int));
-
-		char *tok = strtok(p, ",");
-		for (int i = 0; i < test_cores && tok; i++) {
-			arr[i] = atoi(tok);
-			tok = strtok(NULL, ",");
+		if (parse_2d_array(optarg, &test_cores_array, &core_rows, &core_cols) != 0) {
+			fprintf(stderr, "Invalid format for -x\n");
+			exit(EXIT_FAILURE);
 		}
-
-		free(copy);
-		memcpy(test_cores_array, arr, test_cores * sizeof(uint32_t));
-
-		printf("Using cores array: ");
-		for (i = 0; i < test_cores; i++) {
-			printf("%d ", test_cores_array[i]);
-		}
-		printf("\n");
-
-	  break;
+		break;
 	case 'o':
 	  test_core_others = atoi(optarg);
 	  break;
@@ -2220,4 +2210,64 @@ cache_line_close(volatile cache_line_t* cache_line)
   (void) cache_line;
   tmc_cmem_close();
 #endif
+}
+
+int parse_2d_array(
+    const char *s,
+    int ***out,
+    size_t *rows,
+    size_t *cols
+) {
+    const char *p = s;
+    size_t r = 0, c = 0;
+
+    /* ---------- Count rows ---------- */
+    while (*p) {
+        if (*p == '[' && *(p + 1) != '[')
+            r++;
+        p++;
+    }
+    if (r == 0) return -1;
+
+    /* ---------- Count cols (first row only) ---------- */
+    p = strchr(s, '[');
+    p++;                // first '['
+    while (*p && *p != '[') p++;
+    p++;                // enter first row
+
+    while (*p && *p != ']') {
+        if (isdigit(*p) || *p == '-') {
+            c++;
+            while (isdigit(*p) || *p == '-') p++;
+        } else {
+            p++;
+        }
+    }
+    if (c == 0) return -1;
+
+    /* ---------- Allocate ---------- */
+    int **arr = malloc(r * sizeof(*arr));
+    if (!arr) return -1;
+
+    for (size_t i = 0; i < r; i++) {
+        arr[i] = malloc(c * sizeof(**arr));
+        if (!arr[i]) return -1;
+    }
+
+    /* ---------- Parse values ---------- */
+    p = s;
+    for (size_t i = 0; i < r; i++) {
+        while (*p && *p != '[') p++;
+        p++; // '['
+
+        for (size_t j = 0; j < c; j++) {
+            while (*p && !isdigit(*p) && *p != '-') p++;
+            arr[i][j] = strtol(p, (char **)&p, 10);
+        }
+    }
+
+    *out  = arr;
+    *rows = r;
+    *cols = c;
+    return 0;
 }
