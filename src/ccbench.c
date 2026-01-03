@@ -46,6 +46,11 @@ size_t **test_num_array;
 size_t core_rows;             // number of rows
 size_t *core_cols;            // array of column counts per row
 size_t **test_cores_array;
+uint32_t test_cores = DEFAULT_CORES;
+size_t *core_for_rank = NULL;    /* flattened physical core id per rank */
+size_t *test_for_rank = NULL;    /* test id per rank */
+size_t *role_for_rank = NULL;    /* role index within group per rank */
+size_t *group_for_rank = NULL;   /* group index per rank */
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -95,64 +100,44 @@ static uint32_t swap(volatile cache_line_t* cl, volatile uint64_t reps);
 static size_t parse_size(char* optarg);
 static void create_rand_list_cl(volatile uint64_t* list, size_t n);
 static void collect_core_stats(uint32_t store, uint32_t num_vals, uint32_t num_print);
+static void free_jagged(size_t **a, size_t *cols, size_t rows);
 
+/* command-line long options */
+static struct option long_options[] = {
+	{"help",                     no_argument,       NULL, 'h'},
+	{"repetitions",              required_argument, NULL, 'r'},
+	{"test",                     required_argument, NULL, 't'},
+	{"cores",                    required_argument, NULL, 'c'},
+	{"cores_array",              required_argument, NULL, 'x'},
+	{"mem-size",                 required_argument, NULL, 'm'},
+	{"flush",                    no_argument,       NULL, 'f'},
+	{"success",                  no_argument,       NULL, 'u'},
+	{"verbose",                  no_argument,       NULL, 'v'},
+	{"print",                    required_argument, NULL, 'p'},
+	{NULL, 0, NULL, 0}
+};
 
-int
-main(int argc, char **argv) 
+int main(int argc, char** argv)
 {
+	int i;
+	char c;
+	while (1)
+		{
+			i = 0;
+			c = getopt_long(argc, argv, "r:t:c:x:", long_options, &i);
 
-  /* before doing any allocations */
-#if defined(__tile__)
-  if (tmc_cpus_get_my_affinity(&cpus) != 0)
-    {
-      tmc_task_die("Failure in 'tmc_cpus_get_my_affinity()'.");
-    }
-#endif
+			if (c == -1)
+				break;
 
-#if defined(XEON)
-  set_cpu(1);
-#else
-  set_cpu(0);
-#endif
+			if (c == 0 && long_options[i].flag == 0)
+				c = long_options[i].val;
 
-  struct option long_options[] = 
-    {
-      // These options don't set a flag
-      {"help",                      no_argument,       NULL, 'h'},
-      {"cores",                     required_argument, NULL, 'c'},
-      {"repetitions",               required_argument, NULL, 'r'},
-      {"test",                      required_argument, NULL, 't'},
-      {"cores_array",               required_argument, NULL, 'x'},
-      {"core-others",               required_argument, NULL, 'o'},
-      {"stride",                    required_argument, NULL, 's'},
-      {"fence",                     required_argument, NULL, 'e'},
-      {"mem-size",                  required_argument, NULL, 'm'},
-      {"flush",                     no_argument,       NULL, 'f'},
-      {"success",                   no_argument,       NULL, 'u'},
-      {"verbose",                   no_argument,       NULL, 'v'},
-      {"print",                     required_argument, NULL, 'p'},
-      {NULL, 0, NULL, 0}
-    };
-
-  int i;
-  char c;
-  while(1) 
-    {
-      i = 0;
-      c = getopt_long(argc, argv, "r:t:c:x:", long_options, &i);
-
-      if(c == -1)
-	break;
-
-      if(c == 0 && long_options[i].flag == 0)
-	c = long_options[i].val;
-
-      switch(c) 
-	{
-	case 0:
-	  /* Flag is automatically set */
-	  break;
-	case 'h':
+			switch (c)
+				{
+				case 0:
+					/* Flag is automatically set */
+					break;
+				case 'h':
 	  printf("ccbench  Copyright (C) 2013  Vasileios Trigonakis <vasileios.trigonakis@epfl.ch>\n"
 		 "This program comes with ABSOLUTELY NO WARRANTY.\n"
 		 "This is free software, and you are welcome to redistribute it under certain conditions.\n\n"
@@ -206,18 +191,13 @@ main(int argc, char **argv)
 	  test_reps = atoi(optarg);
 	  break;
 	case 't':
-		if ((parse_jagged_array(optarg, &test_num_array, test_rows, test_cols) != 0) || test_rows != 1){
+		if ((parse_jagged_array(optarg, &test_num_array, &test_rows, &test_cols) != 0) || test_rows != 1){
 			fprintf(stderr, "Invalid format for -x\n");
 			exit(EXIT_FAILURE);
 		}
-
-		for (i = 0; i < test_cols[0]; i++){
-			printf("Test %zu\n", test_num_array[0][i]);
-		}
-	  	printf("\n\n\n\n\n\n");
 		break;
 	case 'x': // user provided a core array
-		if (parse_jagged_array(optarg, &test_cores_array, core_rows, core_cols) != 0) {
+		if (parse_jagged_array(optarg, &test_cores_array, &core_rows, &core_cols) != 0) {
 			fprintf(stderr, "Invalid format for -x\n");
 			exit(EXIT_FAILURE);
 		}
@@ -256,6 +236,18 @@ main(int argc, char **argv)
 	}
     }
 
+	if (test_cols[0] != core_rows) {
+		fprintf(stderr, "You must provide the same number of tests as core groups, eg ./ccbench -t '[[4,5]]' -x '[[0,1],[2,3]]'\n");
+		exit(EXIT_FAILURE);
+	}
+	for (i = 0; i < core_rows; i++) {
+		printf("Test %zu runs on cores: ", test_num_array[0][i]);
+		for (size_t j = 0; j < core_cols[i]; j++) {
+			printf("%zu", test_cores_array[i][j]);
+			if (j + 1 < core_cols[i]) printf(", ");
+		}
+		printf("\n");
+	}
 
   test_cache_line_num = test_mem_size / sizeof(cache_line_t);
 
@@ -332,7 +324,75 @@ main(int argc, char **argv)
     }
 	printf("\n");
 
-  barriers_init(test_cores);
+	/* Build per-rank mappings from jagged core arrays and test ids. */
+	if (test_cores_array == NULL) {
+		test_cores = DEFAULT_CORES;
+		core_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		test_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		role_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		group_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		if (!core_for_rank || !test_for_rank || !role_for_rank || !group_for_rank) {
+			perror("malloc");
+			exit(1);
+		}
+		for (size_t rr = 0; rr < test_cores; rr++) {
+			core_for_rank[rr] = rr;
+			test_for_rank[rr] = test_test;
+			role_for_rank[rr] = 0;
+			group_for_rank[rr] = 0;
+		}
+	} else {
+		/* compute total number of ranks (flatten all groups) */
+		size_t total = 0;
+		for (size_t g = 0; g < core_rows; g++) {
+			total += core_cols[g];
+		}
+		test_cores = (uint32_t) total;
+
+		core_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		test_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		role_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		group_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
+		if (!core_for_rank || !test_for_rank || !role_for_rank || !group_for_rank) {
+			perror("malloc");
+			exit(1);
+		}
+
+		size_t idx = 0;
+		for (size_t g = 0; g < core_rows; g++) {
+			size_t assigned_test = (size_t) test_test;
+			if (test_num_array != NULL) {
+				if (test_rows == 1) {
+					if (g < test_cols[0]) {
+						assigned_test = test_num_array[0][g];
+					} else {
+						fprintf(stderr, "Mismatch between -t and -x shapes\n");
+						exit(EXIT_FAILURE);
+					}
+				} else if (test_rows == core_rows) {
+					if (test_cols[g] >= 1) {
+						assigned_test = test_num_array[g][0];
+					} else {
+						fprintf(stderr, "Invalid -t content\n");
+						exit(EXIT_FAILURE);
+					}
+				} else {
+					fprintf(stderr, "Invalid -t shape\n");
+					exit(EXIT_FAILURE);
+				}
+			}
+
+			for (size_t j = 0; j < core_cols[g]; j++) {
+				core_for_rank[idx] = test_cores_array[g][j];
+				test_for_rank[idx] = assigned_test;
+				role_for_rank[idx] = j;
+				group_for_rank[idx] = g;
+				idx++;
+			}
+		}
+	}
+
+	barriers_init(test_cores);
 
   volatile cache_line_t* cache_line = cache_line_open();
 
@@ -395,6 +455,36 @@ main(int argc, char **argv)
   free(core_summaries);
   free(args);
   free(threads);
+	if (core_for_rank) {
+		free(core_for_rank);
+		core_for_rank = NULL;
+	}
+	if (test_for_rank) {
+		free(test_for_rank);
+		test_for_rank = NULL;
+	}
+	if (role_for_rank) {
+		free(role_for_rank);
+		role_for_rank = NULL;
+	}
+	if (group_for_rank) {
+		free(group_for_rank);
+		group_for_rank = NULL;
+	}
+
+	/* free parsed jagged arrays if they were allocated */
+	if (test_num_array) {
+		free_jagged(test_num_array, test_cols, test_rows);
+		test_num_array = NULL;
+		test_cols = NULL;
+		test_rows = 0;
+	}
+	if (test_cores_array) {
+		free_jagged(test_cores_array, core_cols, core_rows);
+		test_cores_array = NULL;
+		core_cols = NULL;
+		core_rows = 0;
+	}
   return 0;
 
 }
@@ -406,15 +496,30 @@ run_benchmark(void* arg)
   uint32_t rank = worker->rank;
   volatile cache_line_t* cache_line = worker->cache_line;
 
-  ID = rank;
-  seeds = seed_rand();
-  size_t core = 0;
-  core = test_cores_array[rank];
+	ID = rank;
+	seeds = seed_rand();
+	size_t core = 0;
+	size_t group = 0;
+	size_t role = 0;
+	moesi_type_t my_test = test_test;
+	if (core_for_rank) {
+		core = core_for_rank[rank];
+		group = group_for_rank[rank];
+		role = role_for_rank[rank];
+		my_test = (moesi_type_t) test_for_rank[rank];
+	} else {
+		core = rank;
+		group = 0;
+		role = 0;
+		my_test = test_test;
+	}
+
+	/* lightweight startup info removed (cleanup) */
 
 #if defined(NIAGARA)
   if (test_cores <= 8 && test_cores > 3)
     {
-      if (core == test_cores_array[0])
+	if (role == 0)
 	{
 	  PRINT(" ** spreading the 8 threads on the 8 real cores");
 	}
@@ -423,6 +528,7 @@ run_benchmark(void* arg)
 #endif
 
   set_cpu(core);
+  printf("Requested core: %zu, now running on cpu: %d, test is: %d\n", core, sched_getcpu(), my_test);
 
 #if defined(__tile__)
   tmc_cmem_init(0);		/*   initialize shared memory */
@@ -455,16 +561,16 @@ run_benchmark(void* arg)
 
       B0;			/* BARRIER 0 */
 
-      switch (test_test)
+	switch (my_test)
 	{
 	case STORE_ON_MODIFIED: /* 0 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		store_0_eventually(cache_line, reps);
 		B1;    /* BARRIER 1 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;    /* BARRIER 1 */
 		store_0_eventually(cache_line, reps);
@@ -477,7 +583,7 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_MODIFIED_NO_SYNC: /* 1 */
 	  {
-	    if (core == test_cores_array[0] || core == test_cores_array[1] || core == test_cores_array[2])
+		if (role == 0 || role == 1 || role == 2)
 	      {
 		store_0(cache_line, reps);
 	      }
@@ -489,12 +595,12 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_EXCLUSIVE: /* 2 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += load_0_eventually(cache_line, reps);
 		B1;    /* BARRIER 1 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;    /* BARRIER 1 */
 		store_0_eventually(cache_line, reps);
@@ -512,19 +618,19 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_SHARED:	/* 3 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += load_0_eventually(cache_line, reps);
 		B1;            /* BARRIER 1 */
 		B2;            /* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;            /* BARRIER 1 */
 		B2;            /* BARRIER 2 */
 		store_0_eventually(cache_line, reps);
 	      }
-	    else if (core == test_cores_array[2])
+		else if (role == 2)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
@@ -540,14 +646,14 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_OWNED_MINE: /* 4 */
 	  {
-	    if (core == test_cores_array[0]){
+	    if (role == 0){
 			B1;			/* BARRIER 1 */
-			sum += load_0_eventually(cache_line, reps);
-			B2;			/* BARRIER 2 */
-		}
-		else if (core == test_cores_array[1]){
-			store_0_eventually(cache_line, reps);
-			B1;			/* BARRIER 1 */
+				sum += load_0_eventually(cache_line, reps);
+				B2;			/* BARRIER 2 */
+			}
+			else if (role == 1){
+				store_0_eventually(cache_line, reps);
+				B1;			/* BARRIER 1 */
 			B2;			/* BARRIER 2 */
 			store_0_eventually_pfd1(cache_line, reps);
 		}
@@ -561,13 +667,13 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_OWNED:	/* 5 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		store_0_eventually(cache_line, reps);
 		B1;            /* BARRIER 1 */
 		B2;            /* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
@@ -584,7 +690,7 @@ run_benchmark(void* arg)
 	  }
 	case STORE_ON_INVALID:	/* 6 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		B1;
 		/* store_0_eventually(cache_line, reps); */
@@ -594,7 +700,7 @@ run_benchmark(void* arg)
 		    cache_line += test_stride;
 		  }
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		invalidate(cache_line, 0, reps);
 		if (!test_flush)
@@ -611,12 +717,12 @@ run_benchmark(void* arg)
 	  }
 	case LOAD_FROM_MODIFIED: /* 7 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		store_0_eventually(cache_line, reps);
 		B1;        
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
@@ -629,7 +735,7 @@ run_benchmark(void* arg)
 	  }
 	case LOAD_FROM_EXCLUSIVE: /* 8 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += load_0_eventually(cache_line, reps);
 		B1;            /* BARRIER 1 */
@@ -639,7 +745,7 @@ run_benchmark(void* arg)
 		    cache_line += test_stride;
 		  }
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
@@ -655,54 +761,22 @@ run_benchmark(void* arg)
 	      }
 	    break;
 	  }
-	case LOAD_FROM_SHARED:	/* 9 */
-	  {
-	    if (core == test_cores_array[0])
-	      {
-		sum += load_0_eventually(cache_line, reps);
-		B1;            /* BARRIER 1 */
-		B2;            /* BARRIER 2 */
-	      }
-	    else if (core == test_cores_array[1])
-	      {
-		B1;            /* BARRIER 1 */
-		sum += load_0_eventually(cache_line, reps);
-		B2;            /* BARRIER 2 */
-	      }
-	    else if (core == test_cores_array[2])
-	      {
-		B1;            /* BARRIER 1 */
-		B2;            /* BARRIER 2 */
-		sum += load_0_eventually(cache_line, reps);
-	      }
-	    else
-	      {
-		B1;            /* BARRIER 1 */
-		sum += load_0_eventually_no_pf(cache_line);
-		B2;            /* BARRIER 2 */
-	      }
 
-	    if (!test_flush)
-	      {
-		cache_line += test_stride;
-	      }
-	    break;
-	  }
 	case LOAD_FROM_OWNED:	/* 10 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		store_0_eventually(cache_line, reps);
 		B1;            /* BARRIER 1 */
 		B2;            /* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 		B2;            /* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[2])
+		else if (role == 2)
 	      {
 		B1;            /* BARRIER 1 */
 		B2;            /* BARRIER 2 */
@@ -717,12 +791,12 @@ run_benchmark(void* arg)
 	  }
 	case LOAD_FROM_INVALID:	/* 11 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps); 		/* sum += load_0(cache_line, reps); */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		invalidate(cache_line, 0, reps);
 		B1;            /* BARRIER 1 */
@@ -740,12 +814,12 @@ run_benchmark(void* arg)
 	  }
 	case CAS: /* 12 */
 	  {
-		if (core == test_cores_array[0]){
+		if (role == 0){
 			sum += cas_0_eventually(cache_line, reps);
-			B1;		/* BARRIER 1 */
+			B1;			/* BARRIER 1 */
 		}
-		else if (core == test_cores_array[1]){	
-			B1;		/* BARRIER 1 */
+		else if (role == 1){	
+			B1;			/* BARRIER 1 */
 		sum += cas_0_eventually(cache_line, reps);
 		}
 		else {
@@ -754,12 +828,12 @@ run_benchmark(void* arg)
 	}
 	case FAI: /* 13 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += fai(cache_line, reps);
 		B1;    /* BARRIER 1 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;    /* BARRIER 1 */
 		sum += fai(cache_line, reps);
@@ -772,13 +846,13 @@ run_benchmark(void* arg)
 	  }
 	case TAS:		/* 14 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += tas(cache_line, reps);
 		B1;    /* BARRIER 1 */
 		B2;    /* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;    /* BARRIER 1 */
 		sum += tas(cache_line, reps);
@@ -795,12 +869,12 @@ run_benchmark(void* arg)
 	  }
 	case SWAP: /* 15 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += swap(cache_line, reps);
 		B1;    /* BARRIER 1 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;    /* BARRIER 1 */
 		sum += swap(cache_line, reps);
@@ -813,7 +887,7 @@ run_benchmark(void* arg)
 	  }
 	case CAS_ON_MODIFIED: /* 16 */
 	  {
-		if (core == test_cores_array[0]){
+		if (role == 0){
 			store_0_eventually(cache_line, reps);
 			if (test_ao_success)
 			{
@@ -821,7 +895,7 @@ run_benchmark(void* arg)
 			}
 			B1;		/* BARRIER 1 */
 		}
-		else if (core == test_cores_array[1]){
+		else if (role == 1){
 			B1;		/* BARRIER 1 */
 			sum += cas_0_eventually(cache_line, reps);
 		}
@@ -832,12 +906,12 @@ run_benchmark(void* arg)
           }
 	case FAI_ON_MODIFIED: /* 17 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		store_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;		/* BARRIER 1 */
 		sum += fai(cache_line, reps);
@@ -850,20 +924,20 @@ run_benchmark(void* arg)
 	  }
 	case TAS_ON_MODIFIED: /* 18 */
 	  {
-	    if (core == test_cores_array[0])
+	    if (role == 0)
 	      {
-		store_0_eventually(cache_line, reps);
-		if (!test_ao_success)
-		  {
-		    cache_line->word[0] = 0xFFFFFFFF;
-		    _mm_mfence();
-		  }
-		B1;		/* BARRIER 1 */
+	    	store_0_eventually(cache_line, reps);
+	    	if (!test_ao_success)
+	    	  {
+	    	    cache_line->word[0] = 0xFFFFFFFF;
+	    	    _mm_mfence();
+	    	  }
+	    	B1;		/* BARRIER 1 */
 	      }
-	    else if (core == test_cores_array[1])
+	    else if (role == 1)
 	      {
-		B1;		/* BARRIER 1 */
-		sum += tas(cache_line, reps);
+	    	B1;		/* BARRIER 1 */
+	    	sum += tas(cache_line, reps);
 	      }
 	    else
 	      {
@@ -873,16 +947,16 @@ run_benchmark(void* arg)
 	  }
 	case SWAP_ON_MODIFIED: /* 19 */
 	  {
-	    if (core == test_cores_array[0])
-	      {
-		store_0_eventually(cache_line, reps);
-		B1;		/* BARRIER 1 */
-	      }
-	    else if (core == test_cores_array[1])
-	      {
-		B1;		/* BARRIER 1 */
-		sum += swap(cache_line, reps);
-	      }
+		if (role == 0)
+			{
+			store_0_eventually(cache_line, reps);
+			B1;		/* BARRIER 1 */
+			}
+		else if (role == 1)
+			{
+			B1;		/* BARRIER 1 */
+			sum += swap(cache_line, reps);
+			}
 	    else
 	      {
 		B1;		/* BARRIER 1 */
@@ -890,48 +964,48 @@ run_benchmark(void* arg)
 	    break;
 	  }
 	case CAS_ON_SHARED: /* 20 */
-	  {
-	    if (core == test_cores_array[0])
-	      {
-		sum += load_0_eventually(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		B2;		/* BARRIER 2 */
-	      }
-	    else if (core == test_cores_array[1])
-	      {
-		B1;		/* BARRIER 1 */
-		B2;		/* BARRIER 2 */
-		sum += cas_0_eventually(cache_line, reps);
-	      }
-	    else if (core == test_cores_array[2])
-	      {
-		B1;		/* BARRIER 1 */
-		sum += load_0_eventually(cache_line, reps);
-		B2;		/* BARRIER 2 */
-	      }
-	    else
-	      {
-		B1;		/* BARRIER 1 */
-		sum += load_0_eventually_no_pf(cache_line);
-		B2;			/* BARRIER 2 */
-	      }
-	    break;
-	  }
+		{
+			if (role == 0)
+				{
+					sum += load_0_eventually(cache_line, reps);
+					B1;        /* BARRIER 1 */
+					B2;        /* BARRIER 2 */
+				}
+			else if (role == 1)
+				{
+					B1;        /* BARRIER 1 */
+					sum += cas_0_eventually(cache_line, reps);
+					B2;        /* BARRIER 2 */
+				}
+			else if (role == 2)
+				{
+					B1;        /* BARRIER 1 */
+					sum += load_0_eventually(cache_line, reps);
+					B2;        /* BARRIER 2 */
+				}
+			else
+				{
+					B1;        /* BARRIER 1 */
+					sum += load_0_eventually_no_pf(cache_line);
+					B2;        /* BARRIER 2 */
+				}
+			break;
+		}
 	case FAI_ON_SHARED: /* 21 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		sum += load_0_eventually(cache_line, reps);
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+		else if (role == 1)
 	      {
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 		sum += fai(cache_line, reps);
 	      }
-	    else if (core == test_cores_array[2])
+	    else if (role == 2)
 	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
@@ -947,7 +1021,7 @@ run_benchmark(void* arg)
 	  }
 	case TAS_ON_SHARED: /* 22 */
 	  {
-	    if (core == test_cores_array[0])
+		if (role == 0)
 	      {
 		if (test_ao_success)
 		  {
@@ -961,13 +1035,13 @@ run_benchmark(void* arg)
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+	    else if (role == 1)
 	      {
 		B1;		/* BARRIER 1 */
 		B2;		/* BARRIER 2 */
 		sum += tas(cache_line, reps);
 	      }
-	    else if (core == test_cores_array[2])
+			else if (role == 2)
 	      {
 		B1;		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
@@ -983,29 +1057,29 @@ run_benchmark(void* arg)
 	  }
 	case SWAP_ON_SHARED: /* 23 */
 	  {
-	    if (core == test_cores_array[0])
+	    if (role == 0)
 	      {
 		sum += load_0_eventually(cache_line, reps);
-		B1;		/* BARRIER 1 */
-		B2;		/* BARRIER 2 */
+		B1; 		/* BARRIER 1 */
+		B2; 		/* BARRIER 2 */
 	      }
-	    else if (core == test_cores_array[1])
+	    else if (role == 1)
 	      {
-		B1;		/* BARRIER 1 */
-		B2;		/* BARRIER 2 */
+		B1; 		/* BARRIER 1 */
+		B2; 		/* BARRIER 2 */
 		sum += swap(cache_line, reps);
 	      }
-	    else if (core == test_cores_array[2])
+	    else if (role == 2)
 	      {
-		B1;		/* BARRIER 1 */
+		B1; 		/* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
-		B2;		/* BARRIER 2 */
+		B2; 		/* BARRIER 2 */
 	      }
 	    else
 	      {
-		B1;		/* BARRIER 1 */
+		B1; 		/* BARRIER 1 */
 		sum += load_0_eventually_no_pf(cache_line);
-		B2;			/* BARRIER 2 */
+		B2; 			/* BARRIER 2 */
 	      }
 	    break;
 	  }
@@ -1023,20 +1097,20 @@ run_benchmark(void* arg)
           }
 	case FAI_ON_INVALID:	/* 25 */
 	  {
-	    if (core == test_cores_array[0])
-	      {
-		B1;		/* BARRIER 1 */
-		sum += fai(cache_line, reps);
-	      }
-	    else if (core == test_cores_array[1])
-	      {
-		invalidate(cache_line, 0, reps);
-		B1;		/* BARRIER 1 */
-	      }
-	    else
-	      {
-		B1;		/* BARRIER 1 */
-	      }
+		if (role == 0)
+			{
+			B1; 		/* BARRIER 1 */
+			sum += fai(cache_line, reps);
+			}
+		else if (role == 1)
+			{
+			invalidate(cache_line, 0, reps);
+			B1; 		/* BARRIER 1 */
+			}
+		else
+			{
+			B1; 		/* BARRIER 1 */
+			}
 
 	    if (!test_flush)
 	      {
@@ -1045,13 +1119,13 @@ run_benchmark(void* arg)
 	    break;
 	  }
 	case LOAD_FROM_L1:	/* 26 */
-	  {
-	    if (core == test_cores_array[0])
-	      {
-		sum += load_0(cache_line, reps);
-		sum += load_0(cache_line, reps);
-		sum += load_0(cache_line, reps);
-	      }
+	{
+		if (role == 0)
+			{
+			sum += load_0(cache_line, reps);
+			sum += load_0(cache_line, reps);
+			sum += load_0(cache_line, reps);
+			}
 	    break;
 	  }
 	case LOAD_FROM_MEM_SIZE: /* 27 */
@@ -1165,7 +1239,7 @@ run_benchmark(void* arg)
   B10;
 
 
-	if (core == test_cores_array[0])    {
+	if (rank == 0)    {
       PRINT(" ---- Cross-core summary ------------------------------------------------------------");
       double min_avg = DBL_MAX;
       double max_avg = 0.0;
@@ -1189,26 +1263,26 @@ run_benchmark(void* arg)
                 }
             }
 
-          if (stats == NULL)
-            {
-              PRINT(" Core %u : no samples recorded", test_cores_array[core_idx]);
-              continue;
-            }
+					if (stats == NULL)
+						{
+							PRINT(" Core %u : no samples recorded", (uint32_t) core_for_rank[core_idx]);
+							continue;
+						}
 
-          double avg = stats->avg;
-          PRINT(" Core %u : avg %8.1f cycles (min %8.1f | max %8.1f)",
-                test_cores_array[core_idx], avg, stats->min_val, stats->max_val);
+					double avg = stats->avg;
+					PRINT(" Core %u : avg %8.1f cycles (min %8.1f | max %8.1f)",
+								(uint32_t) core_for_rank[core_idx], avg, stats->min_val, stats->max_val);
           sum_avg += avg;
           cores_with_stats++;
           if (avg < min_avg)
             {
               min_avg = avg;
-              min_core = test_cores_array[core_idx];
+							min_core = (uint32_t) core_for_rank[core_idx];
             }
           if (avg > max_avg)
             {
               max_avg = avg;
-              max_core = test_cores_array[core_idx];
+							max_core = (uint32_t) core_for_rank[core_idx];
             }
         }
 
@@ -2148,7 +2222,7 @@ cache_line_open()
 #endif  /* __tile ********************************************************************************************/
   memset((void*) cache_line, '1', size);
 
-  if (ID == test_cores_array[0])
+	if (ID == 0)
     {
       uint32_t cl;
       for (cl = 0; cl < test_cache_line_num; cl++)
@@ -2226,16 +2300,16 @@ static void free_jagged(size_t **a, size_t *cols, size_t rows) {
 }
 
 int parse_jagged_array(
-    const char *s,
-    size_t ***out,
-    size_t rows,
-    size_t *cols
+	const char *s,
+	size_t ***out,
+	size_t *rows,
+	size_t **cols
 ) {
     const char *p = s;
-    size_t r = 0;
+	size_t r = 0;
 
-    int **data = NULL;
-    size_t *col_counts = NULL;
+	size_t **data = NULL;
+	size_t *col_counts = NULL;
 
     while (*p) {
         if (*p != '[') {
@@ -2261,34 +2335,34 @@ int parse_jagged_array(
         if (*q != ']') goto fail;
 
         /* ---------- grow row arrays ---------- */
-        int **tmp_data = realloc(data, (r + 1) * sizeof *data);
+		size_t **tmp_data = realloc(data, (r + 1) * sizeof *data);
         size_t *tmp_cols = realloc(col_counts, (r + 1) * sizeof *col_counts);
         if (!tmp_data || !tmp_cols) goto fail;
 
         data = tmp_data;
         col_counts = tmp_cols;
 
-        data[r] = malloc(count * sizeof **data);
+		data[r] = malloc(count * sizeof **data);
         if (!data[r]) goto fail;
 
-        col_counts[r] = count;
+		col_counts[r] = count;
 
         /* ---------- parse values ---------- */
         for (size_t j = 0; j < count; j++) {
             while (*p && !isdigit(*p) && *p != '-') p++;
-            data[r][j] = (int)strtol(p, (char **)&p, 10);
+			data[r][j] = (size_t)strtol(p, (char **)&p, 10);
         }
 
         r++;
         p = q + 1;
     }
 
-    if (r == 0) goto fail;
+	if (r == 0) goto fail;
 
-    *out  = data;
-    rows = r;
-    *cols = col_counts;
-    return 0;
+	*out  = data;
+	*rows = r;
+	*cols = col_counts;
+	return 0;
 
 fail:
     free_jagged(data, col_counts, r);

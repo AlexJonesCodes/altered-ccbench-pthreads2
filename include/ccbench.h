@@ -163,7 +163,6 @@ const char* moesi_type_des[] =
 #define DEFAULT_CORES       2
 #define DEFAULT_REPS        10000
 #define DEFAULT_TEST        0
-static uint32_t default_cores[1][3] = {{0,1,2}};
 #define DEFAULT_CORES_ARRAY default_cores
 #define DEFAULT_CORE_OTHERS 0
 #define DEFAULT_FLUSH       0
@@ -233,8 +232,6 @@ set_cpu(int cpu)
              strerror(errno));
       exit(3);
     }
-
-  printf("Requested cpu: %d, now running on cpu: %d\n", cpu, sched_getcpu());
 #endif
 
 #ifdef OPTERON
@@ -351,8 +348,8 @@ static inline uint32_t pow2roundup (uint32_t x)
 #endif	/* _H_CCBENCH_ */
 
 int parse_jagged_array(
-    const char *s,
-    size_t ***out,
-    size_t rows,
-    size_t *cols
+  const char *s,
+  size_t ***out,
+  size_t *rows,
+  size_t **cols
 );
