@@ -35,6 +35,7 @@
 #include "pfd.h"
 #include <math.h>
 #include <string.h>
+#include <sched.h>
 #include "atomic_ops.h"
 
 __thread volatile ticks** pfd_store;
@@ -81,8 +82,6 @@ pfd_store_init(uint32_t num_entries)
     }
 
   int32_t tries = 10;
-  uint32_t print_warning = 0;
-
 
 #if defined(XEON) || defined(OPTERON2) || defined(XEON2) || defined(DEFAULT) || defined(i3_7020U) || defined(I9_13900HX)
   /* enforcing max freq if freq scaling is enabled */
@@ -96,6 +95,10 @@ pfd_store_init(uint32_t num_entries)
   pfd_correction = 0;
 
 #define PFD_CORRECTION_CONF 3
+
+ int default_pdf_bool = 1;
+ char str[1024];
+ size_t str_len = 0;
  retry:
   for (i = 0; i < num_entries; i++)
     {
@@ -107,45 +110,68 @@ pfd_store_init(uint32_t num_entries)
   abs_deviation_t ad;
   get_abs_deviation(pfd_store[0], num_entries, &ad);
   double std_pp = 100 * (1 - (ad.avg - ad.std_dev) / ad.avg);
-
+  
   if (std_pp > PFD_CORRECTION_CONF)
     {
-      if (print_warning++ == 1)	/* print warning if 2 failed attempts */
-	{
-	  printf("* warning: avg pfd correction is %.1f with std deviation: %.1f%%. Recalculating.\n", 
-		 ad.avg, std_pp);
-	}
       if (tries-- > 0)
-	{
-	  goto retry;
-	}
+      {
+        goto retry;
+      }
       else
-	{
-          printf("* warning: setting pfd correction manually\n");
-#if defined(OPTERON)
-          ad.avg = 64;
-#elif defined(OPTERON2)
-          ad.avg = 68;
-#elif defined(XEON) || defined(XEON2)
-          ad.avg = 20;
-#elif defined(NIAGARA)
-          ad.avg = 76;
-#elif defined(RYZEN53600)
-    ad.avg = 32;
-#elif defined(i3_7020U)
-    ad.avg = 25;
-#elif defined(I9_13900HX)
-    ad.avg = 14;
-#else
-          printf("* warning: no default value for pfd correction is provided (fix in src/pfd.c)\n");
-#endif
-        }
+      {
+        default_pdf_bool = -1;
+        #if defined(OPTERON)
+              ad.avg = 64;
+        #elif defined(OPTERON2)
+              ad.avg = 68;
+        #elif defined(XEON) || defined(XEON2)
+              ad.avg = 20;
+        #elif defined(NIAGARA)
+              ad.avg = 76;
+        #elif defined(RYZEN53600)
+            ad.avg = 32;
+        #elif defined(i3_7020U)
+            ad.avg = 25;
+        #elif defined(I9_13900HX)
+            ad.avg = 14;
+        #else
+              default_pdf_bool = 0;
+        #endif
+            }
     }
+    str_len += snprintf(
+        str + str_len,
+        sizeof(str) - str_len,
+        "thread %lu: ",
+        (unsigned long)sched_getcpu()
+    );
 
   pfd_correction = ad.avg;
   assert(pfd_correction > 0);
   
-  printf("* set pfd correction: %llu (std deviation: %.1f%%)\n", (long long unsigned int) pfd_correction, std_pp);
+  str_len += snprintf(
+      str + str_len,
+      sizeof(str) - str_len,
+      "set pfd correction to %llu (std dev: %.1f%%)",
+      (unsigned long long)pfd_correction,
+      std_pp
+  );
+
+  if (default_pdf_bool == 0) {
+    str_len += snprintf(
+      str + str_len,
+      sizeof(str) - str_len,
+      " WARN: std is high and no fallback pfd correction"
+    );
+  }
+  else if (default_pdf_bool == -1) {
+    str_len += snprintf(
+      str + str_len,
+      sizeof(str) - str_len,
+      " std is high, using default pfd correction"
+    );
+  }
+  printf("%s\n", str);
 }
 
 static inline 

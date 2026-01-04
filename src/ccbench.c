@@ -499,17 +499,14 @@ run_benchmark(void* arg)
 	ID = rank;
 	seeds = seed_rand();
 	size_t core = 0;
-	size_t group = 0;
 	size_t role = 0;
 	moesi_type_t my_test = test_test;
 	if (core_for_rank) {
 		core = core_for_rank[rank];
-		group = group_for_rank[rank];
 		role = role_for_rank[rank];
 		my_test = (moesi_type_t) test_for_rank[rank];
 	} else {
 		core = rank;
-		group = 0;
 		role = 0;
 		my_test = test_test;
 	}
