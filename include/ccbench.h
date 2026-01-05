@@ -82,6 +82,9 @@ typedef struct cache_line
 extern volatile cache_line_t* cache_line_open();
 extern void cache_line_close(volatile cache_line_t* cache_line);
 
+/* exported from ccbench.c */
+extern size_t *group_for_rank;
+
 typedef enum
   {
     STORE_ON_MODIFIED,
@@ -176,9 +179,39 @@ const char* moesi_type_des[] =
 
 
 #define B0 _mm_mfence(); barrier_wait(0, ID, test_cores); _mm_mfence();
-#define B1 _mm_mfence(); barrier_wait(2, ID, test_cores); _mm_mfence();
-#define B2 _mm_mfence(); barrier_wait(3, ID, test_cores); _mm_mfence();
-#define B3 _mm_mfence(); barrier_wait(4, ID, test_cores); _mm_mfence();
+#define PER_GROUP_BASE 2
+#define PER_GROUP_SLOTS 3
+
+#define BG1 _mm_mfence(); do { \
+    size_t _grp = (group_for_rank ? group_for_rank[ID] : 0); \
+    size_t _idx = PER_GROUP_BASE + _grp * PER_GROUP_SLOTS + 0; \
+    if (_idx < NUM_BARRIERS) barrier_wait((uint32_t)_idx, ID, test_cores); \
+    else barrier_wait(2, ID, test_cores); \
+    _mm_mfence(); \
+  } while(0)
+
+#define BG2 _mm_mfence(); do { \
+    size_t _grp = (group_for_rank ? group_for_rank[ID] : 0); \
+    size_t _idx = PER_GROUP_BASE + _grp * PER_GROUP_SLOTS + 1; \
+    if (_idx < NUM_BARRIERS) barrier_wait((uint32_t)_idx, ID, test_cores); \
+    else barrier_wait(3, ID, test_cores); \
+    _mm_mfence(); \
+  } while(0)
+
+#define BG3 _mm_mfence(); do { \
+    size_t _grp = (group_for_rank ? group_for_rank[ID] : 0); \
+    size_t _idx = PER_GROUP_BASE + _grp * PER_GROUP_SLOTS + 2; \
+    if (_idx < NUM_BARRIERS) barrier_wait((uint32_t)_idx, ID, test_cores); \
+    else barrier_wait(4, ID, test_cores); \
+    _mm_mfence(); \
+  } while(0)
+
+#undef B1
+#define B1 BG1
+#undef B2
+#define B2 BG2
+#undef B3
+#define B3 BG3
 #define B4 _mm_mfence(); barrier_wait(5, ID, test_cores); _mm_mfence();
 #define B5 _mm_mfence(); barrier_wait(6, ID, test_cores); _mm_mfence();
 #define B6 _mm_mfence(); barrier_wait(7, ID, test_cores); _mm_mfence();

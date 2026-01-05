@@ -76,14 +76,18 @@ barrier_init(const uint32_t barrier_num, const uint64_t participants, int (*colo
 
   barriers[barrier_num].color = color;
   uint32_t ue, num_parts = 0;
-  for (ue = 0; ue < total_cores; ue++)
-    {
-      num_parts += color(ue);
-    }
-  if (num_parts == 0)
-    {
-      num_parts = 1;
-    }
+  if (participants > 0) {
+    num_parts = (uint32_t) participants;
+  } else {
+    for (ue = 0; ue < total_cores; ue++)
+      {
+        num_parts += color(ue);
+      }
+    if (num_parts == 0)
+      {
+        num_parts = 1;
+      }
+  }
   barriers[barrier_num].num_participants = num_parts;
 
   int rc = pthread_barrier_init(&barriers[barrier_num].barrier, NULL, num_parts);
@@ -96,6 +100,28 @@ barrier_init(const uint32_t barrier_num, const uint64_t participants, int (*colo
 
 }
 
+void
+barrier_set_participants(const uint32_t barrier_num, const uint64_t participants, const uint32_t total_cores)
+{
+  if (barrier_num >= NUM_BARRIERS)
+    return;
+
+  /* destroy existing barrier and re-init with the requested participant count */
+  int rc = pthread_barrier_destroy(&barriers[barrier_num].barrier);
+  (void) rc; /* ignore destroy errors */
+
+  uint32_t num_parts = (participants > 0) ? (uint32_t)participants : (uint32_t)1;
+  barriers[barrier_num].num_participants = num_parts;
+
+  rc = pthread_barrier_init(&barriers[barrier_num].barrier, NULL, num_parts);
+  if (rc != 0)
+    {
+      errno = rc;
+      perror("pthread_barrier_init");
+      exit(1);
+    }
+}
+
 
 void 
 barrier_wait(const uint32_t barrier_num, const uint32_t id, const uint32_t total_cores) 
@@ -105,8 +131,6 @@ barrier_wait(const uint32_t barrier_num, const uint32_t id, const uint32_t total
     {
       return;
     }
-
-  //  printf("enter: %d : %d\n", barrier_num, id);
 
   barrier_t *b = &barriers[barrier_num];
 

@@ -394,6 +394,20 @@ int main(int argc, char** argv)
 
 	barriers_init(test_cores);
 
+	/* Reconfigure per-group barriers so each per-group barrier expects only
+	 * the number of participants in that group (core_cols[g]). This prevents
+	 * deadlock where a barrier initialized for all threads would wait for
+	 * threads that never call it.
+	 */
+	for (size_t g = 0; g < core_rows; g++) {
+		for (size_t k = 0; k < PER_GROUP_SLOTS; k++) {
+			uint32_t bar_idx = (uint32_t)(PER_GROUP_BASE + g * PER_GROUP_SLOTS + k);
+			if (bar_idx < NUM_BARRIERS) {
+				barrier_set_participants(bar_idx, (uint64_t)core_cols[g], test_cores);
+			}
+		}
+	}
+
   volatile cache_line_t* cache_line = cache_line_open();
 
   core_summaries = (core_summary_t*) calloc(test_cores, sizeof(core_summary_t));
@@ -549,6 +563,7 @@ run_benchmark(void* arg)
   volatile uint64_t reps;
   for (reps = 0; reps < test_reps; reps++)
     {
+		printf("rep: %lu\n", reps);
       if (test_flush)
 	{
 	  _mm_mfence();
@@ -578,7 +593,7 @@ run_benchmark(void* arg)
 	      }
 	    break;
 	  }
-	case STORE_ON_MODIFIED_NO_SYNC: /* 1 */
+	case STORE_ON_MODIFIED_NO_SYNC: // 1
 	  {
 		if (role == 0 || role == 1 || role == 2)
 	      {
@@ -658,6 +673,7 @@ run_benchmark(void* arg)
 			B1;			/* BARRIER 1 */
 			sum += load_0_eventually_no_pf(cache_line);
 			B2;			/* BARRIER 2 */
+	break;
 			break;
 		}
 	    break;
@@ -815,13 +831,14 @@ run_benchmark(void* arg)
 			sum += cas_0_eventually(cache_line, reps);
 			B1;			/* BARRIER 1 */
 		}
-		else if (role == 1){	
+		else if (role == 1){
 			B1;			/* BARRIER 1 */
-		sum += cas_0_eventually(cache_line, reps);
+			sum += cas_0_eventually(cache_line, reps);
 		}
 		else {
 			B1;		/* BARRIER 1 */
 		}
+		break;
 	}
 	case FAI: /* 13 */
 	  {
@@ -1183,6 +1200,7 @@ run_benchmark(void* arg)
 
       B3;			/* BARRIER 3 */
     }
+  printf("out of instr switch for rep %lu\n", reps);
 
   if (!test_verbose)
     {

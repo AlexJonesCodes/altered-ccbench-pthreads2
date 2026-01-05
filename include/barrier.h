@@ -62,6 +62,10 @@ void barriers_init(const uint32_t num_procs);
 void barrier_init(const uint32_t barrier_num, const uint64_t participants, int (*color)(int), const uint32_t);
 void barrier_wait(const uint32_t barrier_num, const uint32_t id, const uint32_t total_cores);
 void barriers_term(void);
+/* Reconfigure a barrier to expect `participants` threads. Use to set
+ * per-group participant counts after parsing groups. If `participants` is 0
+ * the color function will be used to compute participants. */
+void barrier_set_participants(const uint32_t barrier_num, const uint64_t participants, const uint32_t total_cores);
 
 #ifdef __sparc__
 #  define PAUSE()    asm volatile("rd    %%ccr, %%g0\n\t"	\
