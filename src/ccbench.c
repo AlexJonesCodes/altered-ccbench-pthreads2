@@ -248,6 +248,7 @@ int main(int argc, char** argv)
 		}
 		printf("\n");
 	}
+	printf("\n");
 
   test_cache_line_num = test_mem_size / sizeof(cache_line_t);
 
@@ -1216,7 +1217,7 @@ run_benchmark(void* arg)
 	    case STORE_ON_OWNED:
 	      if (ID < 2)
 		{
-                  PRINT(" *** Core %zu ************************************************************************************", core);
+                  // PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		  if (ID == 1)
 		    {
@@ -1225,25 +1226,25 @@ run_benchmark(void* arg)
 		}
 	      break;
             case CAS_CONCURRENT:
-              PRINT(" *** Core %zu ************************************************************************************", core);
+              // PRINT(" *** Core %zu ************************************************************************************", core);
               collect_core_stats(0, test_reps, test_print);
               break;
 	    case LOAD_FROM_L1:
 	      if (ID < 1)
 		{
-                  PRINT(" *** Core %zu ************************************************************************************", core);
+                  // PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    case LOAD_FROM_MEM_SIZE:
 	      if (ID < test_cores)
 		{
-                  PRINT(" *** Core %zu ************************************************************************************", core);
+                  // PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    default:
-              PRINT(" *** Core %zu ************************************************************************************", core);
+              // PRINT(" *** Core %zu ************************************************************************************", core);
 	      collect_core_stats(0, test_reps, test_print);
 	    }
 	}
@@ -1253,7 +1254,8 @@ run_benchmark(void* arg)
 
 
 	if (rank == 0)    {
-      PRINT(" ---- Cross-core summary ------------------------------------------------------------");
+	  printf("\n\n");
+      printf("---- Cross-core summary ------------------------------------------------------------\n");
       double min_avg = DBL_MAX;
       double max_avg = 0.0;
       double sum_avg = 0.0;
@@ -1276,21 +1278,23 @@ run_benchmark(void* arg)
                 }
             }
 			if (role_for_rank[core_idx] == 0){
-				PRINT(" Test ID: %u", (uint32_t) test_for_rank[core_idx]);
+				printf("Test number %u uses test ID %u\n", (uint32_t) group_for_rank[core_idx], (uint32_t) test_for_rank[core_idx]);
 			}
 
 					if (stats == NULL)
 						{
-							PRINT(" Thread %u : no samples recorded", (uint32_t) core_for_rank[core_idx]);
+							printf("Thread %u : no samples recorded\n", (uint32_t) core_for_rank[core_idx]);
 							continue;
 						}
 
 					double avg = stats->avg;
-					PRINT(" Core number %u is using thread: %u. with: avg %8.1f cycles (min %8.1f | max %8.1f)",
-								(uint32_t) role_for_rank[core_idx], (uint32_t) core_for_rank[core_idx], avg, stats->min_val, stats->max_val);
+					double std_dev = stats->std_dev;
+					double abs_dev = stats->abs_dev;
+					printf("Core number %u is using thread: %u. with: avg %5.1f cycles (min %5.1f | max %5.1f), std dev: %5.1f, abs dev: %5.1f\n",
+								(uint32_t) role_for_rank[core_idx], (uint32_t) core_for_rank[core_idx], avg, stats->min_val, stats->max_val, std_dev, abs_dev);
 				
 					if (core_idx == (test_cores - 1) || role_for_rank[core_idx + 1] == 0) {
-						PRINT(" End test results for: %u", (uint32_t) test_for_rank[core_idx - 1]);
+						printf("End test %u results for ID %u\n", (uint32_t) group_for_rank[core_idx], (uint32_t) test_for_rank[core_idx - 1]);
 					}
           sum_avg += avg;
           cores_with_stats++;
@@ -1305,6 +1309,7 @@ run_benchmark(void* arg)
 							max_core = (uint32_t) core_for_rank[core_idx];
             }
         }
+	  printf("\n\n");
 
       if (cores_with_stats > 0)
         {

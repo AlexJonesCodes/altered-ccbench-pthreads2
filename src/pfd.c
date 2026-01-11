@@ -241,7 +241,7 @@ pfd_collect_abs_deviation(uint32_t store, uint32_t num_vals, uint32_t num_print,
 
   abs_deviation_t ad;
   get_abs_deviation(pfd_store[store], num_vals, &ad);
-  print_abs_deviation(&ad);
+  // print_abs_deviation(&ad);
 
   if (out != NULL)
     {
