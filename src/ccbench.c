@@ -107,6 +107,7 @@ static struct option long_options[] = {
 	{"help",                     no_argument,       NULL, 'h'},
 	{"repetitions",              required_argument, NULL, 'r'},
 	{"test",                     required_argument, NULL, 't'},
+	{"stride",                   required_argument, NULL, 's'},
 	{"cores",                    required_argument, NULL, 'c'},
 	{"cores_array",              required_argument, NULL, 'x'},
 	{"mem-size",                 required_argument, NULL, 'm'},
@@ -124,7 +125,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:", long_options, &i);
 
 			if (c == -1)
 				break;
