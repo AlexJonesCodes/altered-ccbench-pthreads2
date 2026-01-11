@@ -563,7 +563,6 @@ run_benchmark(void* arg)
   volatile uint64_t reps;
   for (reps = 0; reps < test_reps; reps++)
     {
-		printf("rep: %lu\n", reps);
       if (test_flush)
 	{
 	  _mm_mfence();
@@ -1200,7 +1199,6 @@ run_benchmark(void* arg)
 
       B3;			/* BARRIER 3 */
     }
-  printf("out of instr switch for rep %lu\n", reps);
 
   if (!test_verbose)
     {
@@ -1277,16 +1275,23 @@ run_benchmark(void* arg)
                   break;
                 }
             }
+			if (role_for_rank[core_idx] == 0){
+				PRINT(" Test ID: %u", (uint32_t) test_for_rank[core_idx]);
+			}
 
 					if (stats == NULL)
 						{
-							PRINT(" Core %u : no samples recorded", (uint32_t) core_for_rank[core_idx]);
+							PRINT(" Thread %u : no samples recorded", (uint32_t) core_for_rank[core_idx]);
 							continue;
 						}
 
 					double avg = stats->avg;
-					PRINT(" Core %u : avg %8.1f cycles (min %8.1f | max %8.1f)",
-								(uint32_t) core_for_rank[core_idx], avg, stats->min_val, stats->max_val);
+					PRINT(" Core number %u is using thread: %u. with: avg %8.1f cycles (min %8.1f | max %8.1f)",
+								(uint32_t) role_for_rank[core_idx], (uint32_t) core_for_rank[core_idx], avg, stats->min_val, stats->max_val);
+				
+					if (core_idx == (test_cores - 1) || role_for_rank[core_idx + 1] == 0) {
+						PRINT(" End test results for: %u", (uint32_t) test_for_rank[core_idx - 1]);
+					}
           sum_avg += avg;
           cores_with_stats++;
           if (avg < min_avg)
