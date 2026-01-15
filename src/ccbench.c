@@ -494,6 +494,12 @@ int main(int argc, char** argv)
 		barrier_set_participants(5, (uint64_t)(test_cores + 1), test_cores);
 	}
 
+	/* First-touch on seed's NUMA node: pin main to seed_core before cache_line_open() */
+	if (seed_core >= 0) {
+	set_cpu(seed_core);
+	printf("Main pinned to seed core %d for first-touch placement\n", seed_core);
+	}
+
   volatile cache_line_t* cache_line = cache_line_open();
 
   core_summaries = (core_summary_t*) calloc(test_cores, sizeof(core_summary_t));
