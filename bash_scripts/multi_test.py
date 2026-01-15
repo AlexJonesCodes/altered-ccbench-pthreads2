@@ -5,15 +5,20 @@ import itertools
 import csv
 import sys
 import re
+import time
 from pathlib import Path
 from test_nums_to_name import *
 
+
+# ---------- timing start ----------
+
+START_TS = time.perf_counter()
 
 # ---------- configuration ----------
 
 CCBENCH = "../ccbench"
 REPS = 100
-CORES = list(range(0,12))
+CORES = list(range(0, 10))
 TEST_ID = 14
 OUTFILE = Path("results/ccbench_crosscore.csv")
 
@@ -24,7 +29,7 @@ with open("test_nums_to_name.sh") as f:
         if line.startswith("TARGET_CORE"):
             # example: TARGET_CORE[14]=0
             k, v = line.strip().split("=")
-            idx = int(k[k.find("[")+1:k.find("]")])
+            idx = int(k[k.find("[") + 1 : k.find("]")])
             TARGET_CORE[idx] = int(v)
 
 CARE_CORE = TARGET_CORE[TEST_ID]
@@ -109,3 +114,10 @@ with OUTFILE.open("w", newline="") as f:
             TEST_ID, c, d, parsed[1]
         ])
         print(f"Completed: {pair0} and {pair1}")
+
+# ---------- timing end ----------
+
+END_TS = time.perf_counter()
+ELAPSED = END_TS - START_TS
+
+print(f"Total execution time: {ELAPSED:.6f} seconds")

@@ -29,6 +29,8 @@
 
 #include "ccbench.h"
 #include <ctype.h>
+#include <limits.h>  
+
 
 __thread uint8_t ID;
 __thread unsigned long* seeds;
@@ -51,6 +53,10 @@ size_t *core_for_rank = NULL;    /* flattened physical core id per rank */
 size_t *test_for_rank = NULL;    /* test id per rank */
 size_t *role_for_rank = NULL;    /* role index within group per rank */
 size_t *group_for_rank = NULL;   /* group index per rank */
+static int seed_core = -1;     /* physical core id that primes the line */
+static int seed_rank = -1;     /* flattened rank (computed after -x mapping) */
+static int have_seeder_thread = 0;  /* seed core not in -x => spawn helper */
+static pthread_t seeder_pth;        /* helper thread handle */
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -62,6 +68,35 @@ size_t   test_mem_size = CACHE_LINE_NUM * sizeof(cache_line_t);
 uint32_t test_cache_line_num = CACHE_LINE_NUM;
 uint32_t test_lfence = DEFAULT_LFENCE;
 uint32_t test_sfence = DEFAULT_SFENCE;
+
+/* Per-thread and per-repetition winner tracking (generalised for all tests) */
+static uint32_t* win_counts_per_rank = NULL;   /* size: test_cores */
+static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX means unclaimed */
+
+/* Thread-local current repetition index for ops that don't take 'reps' param */
+__thread uint64_t current_rep_idx = 0;
+
+/* Attempt to claim victory for this repetition; first thread to claim wins */
+static inline void race_try_win(uint64_t rep_idx)
+{
+  if (!first_winner_per_rep) return;
+  if (rep_idx >= test_reps) return;
+
+  /* Atomically set from UINT32_MAX (unclaimed) to our thread ID */
+  uint32_t expected = UINT32_MAX;
+  if (__sync_bool_compare_and_swap(&first_winner_per_rep[rep_idx], expected, (uint32_t) ID))
+    {
+      /* We won this repetition */
+      if (win_counts_per_rank)
+        {
+          __sync_fetch_and_add(&win_counts_per_rank[ID], 1);
+        }
+    }
+}
+
+/* Convenience macro: pick reps param if available, else use current_rep_idx */
+#define RACE_TRY_WITH_REP(rep_expr) race_try_win((uint64_t)(rep_expr))
+#define RACE_TRY() race_try_win(current_rep_idx)
 
 typedef struct
 {
@@ -78,6 +113,11 @@ typedef struct
 } worker_args_t;
 
 static void* run_benchmark(void* arg);
+typedef struct {
+  volatile cache_line_t* cache_line;
+} seeder_args_t;
+
+static void* seeder_main(void* arg);
 
 static void store_0(volatile cache_line_t* cache_line, volatile uint64_t reps);
 static void store_0_no_pf(volatile cache_line_t* cache_line, volatile uint64_t reps);
@@ -110,6 +150,7 @@ static struct option long_options[] = {
 	{"stride",                   required_argument, NULL, 's'},
 	{"cores",                    required_argument, NULL, 'c'},
 	{"cores_array",              required_argument, NULL, 'x'},
+	{"seed",                     required_argument, NULL, 'b'},
 	{"mem-size",                 required_argument, NULL, 'm'},
 	{"flush",                    no_argument,       NULL, 'f'},
 	{"success",                  no_argument,       NULL, 'u'},
@@ -125,7 +166,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -191,9 +232,12 @@ int main(int argc, char** argv)
 	case 'r':
 	  test_reps = atoi(optarg);
 	  break;
+	case 'b': /* --seed: physical core id where the line is primed each repetition */
+		seed_core = atoi(optarg);
+		break;
 	case 't':
 		if ((parse_jagged_array(optarg, &test_num_array, &test_rows, &test_cols) != 0) || test_rows != 1){
-			fprintf(stderr, "Invalid format for -x\n");
+			fprintf(stderr, "Invalid format for -t\n");
 			exit(EXIT_FAILURE);
 		}
 		break;
@@ -237,19 +281,24 @@ int main(int argc, char** argv)
 	}
     }
 
-	if (test_cols[0] != core_rows) {
-		fprintf(stderr, "You must provide the same number of tests as core groups, eg ./ccbench -t '[[4,5]]' -x '[[0,1],[2,3]]'\n");
-		exit(EXIT_FAILURE);
-	}
-	for (i = 0; i < core_rows; i++) {
-		printf("Test %zu runs on cores: ", test_num_array[0][i]);
-		for (size_t j = 0; j < core_cols[i]; j++) {
-			printf("%zu", test_cores_array[i][j]);
-			if (j + 1 < core_cols[i]) printf(", ");
+	if (test_rows == 1 && core_rows == 1 && test_cols[0] == core_cols[0]) {
+		printf("Per-thread ops in group 0:\n");
+		for (size_t j = 0; j < core_cols[0]; j++) {
+			printf("  Test %zu on core %zu\n", test_num_array[0][j], test_cores_array[0][j]);
+		}
+		printf("\n");
+	} else {
+		for (i = 0; i < (int)core_rows; i++) {
+			size_t t_for_group = test_num_array[0][i];
+			printf("Test %zu runs on cores: ", t_for_group);
+			for (size_t j = 0; j < core_cols[i]; j++) {
+				printf("%zu", test_cores_array[i][j]);
+				if (j + 1 < core_cols[i]) printf(", ");
+			}
+			printf("\n");
 		}
 		printf("\n");
 	}
-	printf("\n");
 
   test_cache_line_num = test_mem_size / sizeof(cache_line_t);
 
@@ -364,33 +413,64 @@ int main(int argc, char** argv)
 		for (size_t g = 0; g < core_rows; g++) {
 			size_t assigned_test = (size_t) test_test;
 			if (test_num_array != NULL) {
-				if (test_rows == 1) {
-					if (g < test_cols[0]) {
-						assigned_test = test_num_array[0][g];
-					} else {
-						fprintf(stderr, "Mismatch between -t and -x shapes\n");
-						exit(EXIT_FAILURE);
-					}
-				} else if (test_rows == core_rows) {
-					if (test_cols[g] >= 1) {
-						assigned_test = test_num_array[g][0];
-					} else {
-						fprintf(stderr, "Invalid -t content\n");
-						exit(EXIT_FAILURE);
-					}
+				if (test_rows == 1 && core_rows == 1 && test_cols[0] == core_cols[0]) {
+				/* Per-thread ops: one group, tests list length equals group size */
+				assigned_test = (size_t) test_test; /* placeholder, overridden per j below */
+				} else if (test_rows == 1) {
+				/* One test per group (by position g) */
+				if (g < test_cols[0]) {
+					assigned_test = test_num_array[0][g];
 				} else {
-					fprintf(stderr, "Invalid -t shape\n");
+					fprintf(stderr, "Mismatch between -t and -x shapes\n");
 					exit(EXIT_FAILURE);
+				}
+				} else if (test_rows == core_rows) {
+				if (test_cols[g] >= 1) {
+					assigned_test = test_num_array[g][0];
+				} else {
+					fprintf(stderr, "Invalid -t content\n");
+					exit(EXIT_FAILURE);
+				}
+				} else {
+				fprintf(stderr, "Invalid -t shape\n");
+				exit(EXIT_FAILURE);
 				}
 			}
 
 			for (size_t j = 0; j < core_cols[g]; j++) {
 				core_for_rank[idx] = test_cores_array[g][j];
+				if (test_num_array != NULL && test_rows == 1 && core_rows == 1 && test_cols[0] == core_cols[0]) {
+				/* per-thread ops list */
+				test_for_rank[idx] = (size_t) test_num_array[0][j];
+				} else {
 				test_for_rank[idx] = assigned_test;
+				}
 				role_for_rank[idx] = j;
 				group_for_rank[idx] = g;
 				idx++;
 			}
+
+		}
+	}
+
+	/* Allocate winner tracking arrays */
+	win_counts_per_rank = (uint32_t*) calloc(test_cores, sizeof(uint32_t));
+	if (!win_counts_per_rank) { perror("calloc"); exit(1); }
+
+	first_winner_per_rep = (uint32_t*) malloc(sizeof(uint32_t) * test_reps);
+	if (!first_winner_per_rep) { perror("malloc"); exit(1); }
+	for (size_t i_init = 0; i_init < test_reps; i_init++)
+	{
+		first_winner_per_rep[i_init] = UINT32_MAX; /* unclaimed */
+	}
+
+	if (seed_core >= 0) {
+		seed_rank = -1;
+		for (size_t r = 0; r < test_cores; r++) {
+			if ((int)core_for_rank[r] == seed_core) { seed_rank = (int) r; break; }
+		}
+		if (seed_rank < 0) {
+			have_seeder_thread = 1; /* prime outside -x */
 		}
 	}
 
@@ -408,6 +488,10 @@ int main(int argc, char** argv)
 				barrier_set_participants(bar_idx, (uint64_t)core_cols[g], test_cores);
 			}
 		}
+	}
+
+	if (have_seeder_thread) {
+		barrier_set_participants(5, (uint64_t)(test_cores + 1), test_cores);
 	}
 
   volatile cache_line_t* cache_line = cache_line_open();
@@ -437,6 +521,15 @@ int main(int argc, char** argv)
         }
     }
 
+	seeder_args_t* sargs = NULL;
+	if (have_seeder_thread) {
+	sargs = (seeder_args_t*) malloc(sizeof(seeder_args_t));
+	if (!sargs) { perror("malloc"); exit(1); }
+	sargs->cache_line = cache_line;
+	int rc = pthread_create(&seeder_pth, NULL, seeder_main, sargs);
+	if (rc != 0) { errno = rc; perror("pthread_create seeder"); exit(1); }
+	}
+
   int rank;
   for (rank = 1; rank < test_cores; rank++)
     {
@@ -465,12 +558,30 @@ int main(int argc, char** argv)
           exit(1);
         }
     }
+	if (have_seeder_thread) {
+		int rc = pthread_join(seeder_pth, NULL);
+		if (rc != 0) {
+			errno = rc; perror("pthread_join seeder"); 
+		}
+	}
+	if (sargs) {
+		free(sargs); sargs = NULL; 
+	}
 
   cache_line_close(cache_line);
   barriers_term();
   free(core_summaries);
   free(args);
   free(threads);
+  if (first_winner_per_rep) {
+	free(first_winner_per_rep);
+	first_winner_per_rep = NULL;
+	}
+	if (win_counts_per_rank) {
+	free(win_counts_per_rank);
+	win_counts_per_rank = NULL;
+	}
+
 	if (core_for_rank) {
 		free(core_for_rank);
 		core_for_rank = NULL;
@@ -503,6 +614,35 @@ int main(int argc, char** argv)
 	}
   return 0;
 
+}
+
+static void* seeder_main(void* arg)
+{
+  seeder_args_t* a = (seeder_args_t*) arg;
+  volatile cache_line_t* cache_line = a->cache_line;
+
+  /* Pin this helper thread to the seed core */
+  set_cpu(seed_core);
+
+  for (uint64_t reps = 0; reps < test_reps; reps++) {
+    /* Prime: make CAS succeed so the line becomes Modified in seed cache */
+    uint8_t o = (uint8_t)(reps & 0x1);
+    cache_line->word[0] = o;
+    _mm_mfence();
+    /* one plain CAS on base word (no PFD, no RACE_TRY) */
+    uint8_t no = (uint8_t)!o;
+    (void) CAS_U32(cache_line->word, o, no);
+
+    /* Reset first-winner for this repetition (seed owns this step) */
+    if (first_winner_per_rep) {
+      first_winner_per_rep[reps] = UINT32_MAX;
+      _mm_mfence();
+    }
+
+    /* Release contenders: workers will be waiting at B4 */
+    B4;
+  }
+  return NULL;
 }
 
 static void*
@@ -572,7 +712,63 @@ run_benchmark(void* arg)
 	  _mm_mfence();
 	}
 
-      B0;			/* BARRIER 0 */
+	B0;            /* BARRIER 0 */
+	/* Seed mode: either seed is inside -x (seed_rank >= 0) or we have a helper seeder thread */
+	if (seed_rank >= 0 || have_seeder_thread) {
+	if (seed_rank >= 0 && (int)ID == seed_rank) {
+		/* In-thread priming when seed is part of -x */
+		uint8_t o = (uint8_t)(reps & 0x1);
+		cache_line->word[0] = o;   /* set expected value */
+		_mm_mfence();
+		/* Prime with CAS to modify the line (ok if it contributes to sum) */
+		sum += cas_0_eventually(cache_line, reps);
+	}
+
+	/* Start contention phase: workers wait for the seed (in-thread or helper) */
+	B4;
+
+	if (!(seed_rank >= 0 && (int)ID == seed_rank)) {
+		/* Dispatch this thread's assigned test */
+		switch (my_test) {
+		case CAS:        sum += cas_0_eventually(cache_line, reps); break;  /* 12 */
+		case FAI:        sum += fai(cache_line, reps); break;                /* 13 */
+		case TAS:        sum += tas(cache_line, reps);
+						_mm_mfence(); cache_line->word[0] = 0; break;       /* keep TAS re-entrant */
+		case SWAP:       sum += swap(cache_line, reps); break;               /* 15 */
+
+		case STORE_ON_MODIFIED:
+		case STORE_ON_MODIFIED_NO_SYNC:
+		case STORE_ON_EXCLUSIVE:
+		case STORE_ON_SHARED:
+		case STORE_ON_OWNED_MINE:
+		case STORE_ON_OWNED:
+		case STORE_ON_INVALID:
+			store_0_eventually(cache_line, reps);
+			break;
+
+		case LOAD_FROM_MODIFIED:
+		case LOAD_FROM_EXCLUSIVE:
+		case LOAD_FROM_SHARED:
+		case LOAD_FROM_OWNED:
+		case LOAD_FROM_INVALID:
+		case LOAD_FROM_L1:
+			sum += load_0_eventually(cache_line, reps);
+			break;
+
+		default:
+			/* keep counts aligned */
+			PFDI(0); asm volatile(""); PFDO(0, reps);
+			break;
+		}
+	}
+
+	/* Optional per-group sync to keep loop structure */
+	B1;
+	continue; /* skip the normal test switch for this repetition */
+	}
+
+
+	  current_rep_idx = reps;
 
 	switch (my_test)
 	{
@@ -658,27 +854,29 @@ run_benchmark(void* arg)
 	    break;
 	  }
 	case STORE_ON_OWNED_MINE: /* 4 */
-	  {
-	    if (role == 0){
-			B1;			/* BARRIER 1 */
-				sum += load_0_eventually(cache_line, reps);
-				B2;			/* BARRIER 2 */
-			}
-			else if (role == 1){
-				store_0_eventually(cache_line, reps);
-				B1;			/* BARRIER 1 */
-			B2;			/* BARRIER 2 */
+	{
+		if (role == 0)
+		{
+			B1;            /* BARRIER 1 */
+			sum += load_0_eventually(cache_line, reps);
+			B2;            /* BARRIER 2 */
+		}
+		else if (role == 1)
+		{
+			store_0_eventually(cache_line, reps);
+			B1;            /* BARRIER 1 */
+			B2;            /* BARRIER 2 */
 			store_0_eventually_pfd1(cache_line, reps);
 		}
-		else{
-			B1;			/* BARRIER 1 */
+		else
+		{
+			B1;            /* BARRIER 1 */
 			sum += load_0_eventually_no_pf(cache_line);
-			B2;			/* BARRIER 2 */
-	break;
-			break;
+			B2;            /* BARRIER 2 */
 		}
-	    break;
-	  }
+		break;
+	}
+
 	case STORE_ON_OWNED:	/* 5 */
 	  {
 		if (role == 0)
@@ -1295,8 +1493,11 @@ run_benchmark(void* arg)
 								(uint32_t) role_for_rank[core_idx], (uint32_t) core_for_rank[core_idx], avg, stats->min_val, stats->max_val, std_dev, abs_dev);
 				
 					if (core_idx == (test_cores - 1) || role_for_rank[core_idx + 1] == 0) {
-						printf("End test %u results for ID %u\n", (uint32_t) group_for_rank[core_idx], (uint32_t) test_for_rank[core_idx - 1]);
+						printf("End test %u results for ID %u\n",
+							(uint32_t) group_for_rank[core_idx],
+							(uint32_t) test_for_rank[core_idx]);
 					}
+
           sum_avg += avg;
           cores_with_stats++;
           if (avg < min_avg)
@@ -1322,6 +1523,23 @@ run_benchmark(void* arg)
         {
           PRINT(" Summary : no statistics captured");
         }
+	  
+	        /* Report first-op winners across all repetitions (generalised) */
+      if (win_counts_per_rank)
+        {
+          printf("\nFirst-op winners per thread (out of %zu reps):\n", test_reps);
+          for (uint32_t r = 0; r < test_cores; r++)
+            {
+              printf("  Group %u role %u on thread %u (thread ID %u): %u wins\n",
+                     (unsigned) (group_for_rank ? group_for_rank[r] : 0),
+                     (unsigned) (role_for_rank ? role_for_rank[r] : 0),
+                     (unsigned) (core_for_rank ? core_for_rank[r] : r),
+                     r,
+                     win_counts_per_rank[r]);
+            }
+          printf("\n");
+        }
+
 
       switch (test_test)
         {
@@ -1644,6 +1862,7 @@ cas(volatile cache_line_t* cl, volatile uint64_t reps)
   uint8_t no = !o; 
   volatile uint32_t r;
 
+  RACE_TRY_WITH_REP(reps);
   PFDI(0);
   r = CAS_U32(cl->word, o, no);
   PFDO(0, reps);
@@ -1657,6 +1876,7 @@ cas_no_pf(volatile cache_line_t* cl, volatile uint64_t reps)
   uint8_t o = reps & 0x1;
   uint8_t no = !o; 
   volatile uint32_t r;
+  RACE_TRY_WITH_REP(reps);
   r = CAS_U32(cl->word, o, no);
 
   return (r == o);
@@ -1670,6 +1890,8 @@ cas_0_eventually(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t r;
 
   uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
+
   do
     {
       cln = clrand();
@@ -1689,6 +1911,7 @@ fai(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t t = 0;
 
   uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1706,8 +1929,9 @@ uint8_t
 tas(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint8_t r;
-
+  
   uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1733,6 +1957,7 @@ swap(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t res;
 
   uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1750,6 +1975,7 @@ swap(volatile cache_line_t* cl, volatile uint64_t reps)
 void
 store_0(volatile cache_line_t* cl, volatile uint64_t reps)
 {
+	  RACE_TRY_WITH_REP(reps);
   if (test_sfence == 0)
     {
       PFDI(0);
@@ -1774,7 +2000,8 @@ store_0(volatile cache_line_t* cl, volatile uint64_t reps)
 
 void
 store_0_no_pf(volatile cache_line_t* cl, volatile uint64_t reps)
-{
+{  
+	RACE_TRY();
   cl->word[0] = reps;
   if (test_sfence == 1)
     {
@@ -1790,6 +2017,7 @@ static void
 store_0_eventually_sf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+  RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1806,6 +2034,7 @@ static void
 store_0_eventually_mf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1822,6 +2051,7 @@ static void
 store_0_eventually_nf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1837,6 +2067,7 @@ static void
 store_0_eventually_dw(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1876,6 +2107,7 @@ static void
 store_0_eventually_pfd1_sf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1892,6 +2124,7 @@ static void
 store_0_eventually_pfd1_mf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1908,6 +2141,7 @@ static void
 store_0_eventually_pfd1_nf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
+    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -1942,6 +2176,7 @@ load_0_eventually_lf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
   volatile uint64_t val = 0;
+  RACE_TRY_WITH_REP(reps);
 
   do
     {
@@ -1961,6 +2196,7 @@ load_0_eventually_mf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
   volatile uint64_t val = 0;
+  RACE_TRY_WITH_REP(reps);
 
   do
     {
@@ -1980,6 +2216,7 @@ load_0_eventually_nf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t cln = 0;
   volatile uint64_t val = 0;
+  RACE_TRY_WITH_REP(reps);
 
   do
     {
@@ -2018,7 +2255,9 @@ uint64_t
 load_0_eventually_no_pf(volatile cache_line_t* cl)
 {
   uint32_t cln = 0;
-  uint64_t sum = 0;
+  uint64_t sum = 0;  
+  RACE_TRY();
+
   do
     {
       cln = clrand();
@@ -2036,6 +2275,7 @@ load_0_lf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t val = 0;
   volatile uint32_t* p = (volatile uint32_t*) &cl->word[0];
+    RACE_TRY_WITH_REP(reps);
   PFDI(0);
   val = p[0];
   _mm_lfence();
@@ -2048,6 +2288,7 @@ load_0_mf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t val = 0;
   volatile uint32_t* p = (volatile uint32_t*) &cl->word[0];
+    RACE_TRY_WITH_REP(reps);
   PFDI(0);
   val = p[0];
   _mm_mfence();
@@ -2060,6 +2301,7 @@ load_0_nf(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t val = 0;
   volatile uint32_t* p = (volatile uint32_t*) &cl->word[0];
+    RACE_TRY_WITH_REP(reps);
   PFDI(0);
   val = p[0];
   PFDO(0, reps);
@@ -2091,6 +2333,7 @@ static uint64_t
 load_next_lf(volatile uint64_t* cl, volatile uint64_t reps)
 {
   const size_t do_reps = test_cache_line_num;
+    RACE_TRY_WITH_REP(reps);
   PFDI(0);
   int i;
   for (i = 0; i < do_reps; i++)
@@ -2107,6 +2350,7 @@ static uint64_t
 load_next_mf(volatile uint64_t* cl, volatile uint64_t reps)
 {
   const size_t do_reps = test_cache_line_num;
+    RACE_TRY_WITH_REP(reps);
   PFDI(0);
   int i;
   for (i = 0; i < do_reps; i++)
@@ -2123,6 +2367,7 @@ static uint64_t
 load_next_nf(volatile uint64_t* cl, volatile uint64_t reps)
 {
   const size_t do_reps = test_cache_line_num;
+    RACE_TRY_WITH_REP(reps);
   PFDI(0);
   int i;
   for (i = 0; i < do_reps; i++)
@@ -2155,6 +2400,7 @@ load_next(volatile uint64_t* cl, volatile uint64_t reps)
 void
 invalidate(volatile cache_line_t* cl, uint64_t index, volatile uint64_t reps)
 {
+	  RACE_TRY_WITH_REP(reps);
   PFDI(0);
   _mm_clflush((void*) (cl + index));
   PFDO(0, reps);
