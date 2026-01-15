@@ -631,13 +631,11 @@ static void* seeder_main(void* arg)
   set_cpu(seed_core);
 
   for (uint64_t reps = 0; reps < test_reps; reps++) {
-    /* Prime: make CAS succeed so the line becomes Modified in seed cache */
-    uint8_t o = (uint8_t)(reps & 0x1);
-    cache_line->word[0] = o;
-    _mm_mfence();
-    /* one plain CAS on base word (no PFD, no RACE_TRY) */
-    uint8_t no = (uint8_t)!o;
-    (void) CAS_U32(cache_line->word, o, no);
+    /* Prime: place line Modified in seed cache and leave value = o (so contenders can CAS it) */
+	uint8_t o = (uint8_t)(reps & 0x1);
+	cache_line->word[0] = o;
+	_mm_mfence();
+
 
     /* Reset first-winner for this repetition (seed owns this step) */
     if (first_winner_per_rep) {
@@ -722,12 +720,10 @@ run_benchmark(void* arg)
 	/* Seed mode: either seed is inside -x (seed_rank >= 0) or we have a helper seeder thread */
 	if (seed_rank >= 0 || have_seeder_thread) {
 	if (seed_rank >= 0 && (int)ID == seed_rank) {
-		/* In-thread priming when seed is part of -x */
-		uint8_t o = (uint8_t)(reps & 0x1);
-		cache_line->word[0] = o;   /* set expected value */
-		_mm_mfence();
-		/* Prime with CAS to modify the line (ok if it contributes to sum) */
-		sum += cas_0_eventually(cache_line, reps);
+	/* In-thread priming when seed is part of -x: leave value = o */
+	uint8_t o = (uint8_t)(reps & 0x1);
+	cache_line->word[0] = o;
+	_mm_mfence();
 	}
 
 	/* Start contention phase: workers wait for the seed (in-thread or helper) */
