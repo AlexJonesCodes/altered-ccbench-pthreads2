@@ -63,7 +63,9 @@ extern cpu_set_t cpus;
 
 #if defined(PLATFORM_NUMA)
 #  include <numa.h>
-#endif	/* PLATFORM_NUMA */
+/* runtime NUMA toggle from ccbench.c */
+extern int opt_numa;
+#endif  /* PLATFORM_NUMA */
 
 #include "common.h"
 #include "pfd.h"
@@ -267,28 +269,19 @@ set_cpu(int cpu)
     }
 #endif
 
-#ifdef OPTERON
-  uint32_t numa_node = cpu/6;
-  numa_set_preferred(numa_node);  
-#elif defined(XEON)
-  uint32_t numa_node = 0;
-  if (cpu == 0)
+#ifdef PLATFORM_NUMA
+  if (opt_numa && numa_available() != -1)
     {
-      numa_node = 4;
+      int node = numa_node_of_cpu(cpu);
+      if (node >= 0)
+        {
+          /* Bind this thread’s memory policy to the CPU’s NUMA node */
+          numa_run_on_node(node);
+          numa_set_preferred(node);
+        }
     }
-  else if (cpu <= 40)
-    {
-      numa_node = (cpu - 1) / 10;
-    }
-  else
-    {
-      numa_node = cpu / 10;
-    }
-  numa_set_preferred(numa_node);  
-#elif defined(PLATFORM_NUMA)
-  printf("* You need to define how cores correspond to mem nodes in ccbench.h\n");
-#endif 
-  
+#endif /* PLATFORM_NUMA */
+
 }
 
 inline void 

@@ -33,6 +33,8 @@
 #include <sys/mman.h>
 #include <numa.h>
 #include <numaif.h>
+#include <float.h>   /* for DBL_MAX */
+#include <sched.h>   /* for CPU_SET, sched_getcpu */
 
 __thread uint8_t ID;
 __thread unsigned long* seeds;
@@ -60,6 +62,7 @@ static int seed_rank = -1;     /* flattened rank (computed after -x mapping) */
 static int have_seeder_thread = 0;  /* seed core not in -x => spawn helper */
 static pthread_t seeder_pth;        /* helper thread handle */
 static int opt_mlock = 0;
+int opt_numa = 1;
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -163,6 +166,7 @@ static struct option long_options[] = {
 	{"success",                  no_argument,       NULL, 'u'},
 	{"verbose",                  no_argument,       NULL, 'v'},
 	{"mlock",                    no_argument,       NULL, 'K'},
+	{"no-numa",                  no_argument,       NULL, 'n'},
 	{"print",                    required_argument, NULL, 'p'},
 	{NULL, 0, NULL, 0}
 };
@@ -174,7 +178,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:K", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -223,6 +227,8 @@ int main(int argc, char** argv)
 		 "        What memory size to use (in cache lines) (default=" XSTR(CACHE_LINE_NUM) ")\n"
 		 "  -u, --success\n"
 		 "        Make all atomic operations be successfull (e.g, TAS_ON_SHARED)\n"
+		 "  -n, --no-numa\n"
+		 "        Disable NUMA placement/binding (enabled by default if libnuma is present)\n"
 		 "  -v, --verbose\n"
 		 "        Verbose printing of results (default=" XSTR(DEFAULT_VERBOSE) ")\n"
 		 "  -p, --print <int>\n"
@@ -243,7 +249,9 @@ int main(int argc, char** argv)
 	case 'K':
 		opt_mlock = 1;
 		break;
-
+	case 'n': /* --no-numa: disable NUMA placement/binding at runtime */
+		opt_numa = 0;
+	break;
 	case 'b': /* --seed: physical core id where the line is primed each repetition */
 		seed_core = atoi(optarg);
 		break;
@@ -486,13 +494,15 @@ int main(int argc, char** argv)
 		}
 	}
 
-	/* Resolve seed NUMA node from seed_core (libnuma, user-space) */
-	if (seed_core >= 0 && numa_available() != -1) {
-		seed_node = numa_node_of_cpu(seed_core);
-		if (seed_node >= 0) {
-			printf("Seed core %d is on NUMA node %d\n", seed_core, seed_node);
+	#ifdef PLATFORM_NUMA
+		/* Resolve seed NUMA node from seed_core (libnuma, user-space) */
+		if (opt_numa && seed_core >= 0 && numa_available() != -1) {
+			seed_node = numa_node_of_cpu(seed_core);
+			if (seed_node >= 0) {
+				printf("Seed core %d is on NUMA node %d\n", seed_core, seed_node);
+			}
 		}
-	}
+	#endif
 
 	barriers_init(test_cores);
 
@@ -523,16 +533,18 @@ int main(int argc, char** argv)
 		/* Now allocate the test buffer */
 		volatile cache_line_t* cache_line = cache_line_open();
 
+		#ifdef PLATFORM_NUMA
 		/* Diagnostic: print the current NUMA node of the first page of cache_line */
-		if (numa_available() != -1) {
-		int status = -1;
-		void* pages[1] = { (void*) cache_line };
-		if (move_pages(0, 1, pages, NULL, &status, 0) == 0) {
-			printf("Initial page node for cache_line: %d\n", status);
-		} else {
-			perror("move_pages");
+		if (opt_numa && numa_available() != -1) {
+			int status = -1;
+			void* pages[1] = { (void*) cache_line };
+			if (move_pages(0, 1, pages, NULL, &status, 0) == 0) {
+				printf("Initial page node for cache_line: %d\n", status);
+			} else {
+				perror("move_pages");
+			}
 		}
-	}
+		#endif
 
 
   core_summaries = (core_summary_t*) calloc(test_cores, sizeof(core_summary_t));
@@ -2144,8 +2156,8 @@ store_0_eventually_dw(volatile cache_line_t* cl, volatile uint64_t reps)
       cln = clrand();
       volatile uint32_t *w = &cl[cln].word[0];
       PFDI(0);
-      w[0] = cln;
-      w[16] = cln;
+      w[0]  = cln;
+	  w[15] = cln;  /* last uint32_t in a 64B cache line */
       PFDO(0, reps);
     }
   while (cln > 0);
@@ -2553,13 +2565,15 @@ cache_line_open()
 #else    /* !__tile__ ****************************************************************************************/
   void* mem = NULL;
 
-  /* Prefer allocating the buffer on the seed’s NUMA node (page-aligned, OK for 64B alignment) */
-  if (seed_node >= 0 && numa_available() != -1) {
-    mem = numa_alloc_onnode(size, seed_node);
-    if (mem != NULL) {
-      cache_line_from_numa = 1;
-    }
-  }
+  #ifdef PLATFORM_NUMA
+	/* Prefer allocating the buffer on the seed’s NUMA node (page-aligned, OK for 64B alignment) */
+	if (seed_node >= 0 && numa_available() != -1) {
+		mem = numa_alloc_onnode(size, seed_node);
+		if (mem != NULL) {
+		cache_line_from_numa = 1;
+		}
+	}
+  #endif
 
   /* Fallback to regular allocation if libnuma unavailable or allocation failed */
   if (mem == NULL) {
@@ -2657,11 +2671,15 @@ cache_line_close(volatile cache_line_t* cache_line)
 {
 #if !defined(__tile__)
   size_t size = test_cache_line_num * sizeof(cache_line_t);
-  if (cache_line_from_numa && numa_available() != -1) {
-    numa_free((void*) cache_line, size);
-  } else {
-    free((void*) cache_line);
-  }
+  #ifdef PLATFORM_NUMA
+	if (opt_numa && cache_line_from_numa && numa_available() != -1) {
+	numa_free((void*) cache_line, size);
+	} else
+	#endif
+	{
+	free((void*) cache_line);
+	}
+
 #else
   (void) cache_line;
   tmc_cmem_close();
