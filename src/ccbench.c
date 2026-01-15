@@ -31,6 +31,8 @@
 #include <ctype.h>
 #include <limits.h>  
 #include <sys/mman.h>
+#include <numa.h>
+#include <numaif.h>
 
 __thread uint8_t ID;
 __thread unsigned long* seeds;
@@ -69,6 +71,10 @@ size_t   test_mem_size = CACHE_LINE_NUM * sizeof(cache_line_t);
 uint32_t test_cache_line_num = CACHE_LINE_NUM;
 uint32_t test_lfence = DEFAULT_LFENCE;
 uint32_t test_sfence = DEFAULT_SFENCE;
+
+/* NUMA placement: selected node for the cache line and allocation origin */
+static int seed_node = -1;
+static int cache_line_from_numa = 0;
 
 /* Per-thread and per-repetition winner tracking (generalised for all tests) */
 static uint32_t* win_counts_per_rank = NULL;   /* size: test_cores */
@@ -480,6 +486,14 @@ int main(int argc, char** argv)
 		}
 	}
 
+	/* Resolve seed NUMA node from seed_core (libnuma, user-space) */
+	if (seed_core >= 0 && numa_available() != -1) {
+		seed_node = numa_node_of_cpu(seed_core);
+		if (seed_node >= 0) {
+			printf("Seed core %d is on NUMA node %d\n", seed_core, seed_node);
+		}
+	}
+
 	barriers_init(test_cores);
 
 	/* Reconfigure per-group barriers so each per-group barrier expects only
@@ -502,11 +516,24 @@ int main(int argc, char** argv)
 
 	/* First-touch on seed's NUMA node: pin main to seed_core before cache_line_open() */
 	if (seed_core >= 0) {
-	set_cpu(seed_core);
-	printf("Main pinned to seed core %d for first-touch placement\n", seed_core);
+		set_cpu(seed_core);
+		printf("Main pinned to seed core %d for first-touch placement\n", seed_core);
+		}
+
+		/* Now allocate the test buffer */
+		volatile cache_line_t* cache_line = cache_line_open();
+
+		/* Diagnostic: print the current NUMA node of the first page of cache_line */
+		if (numa_available() != -1) {
+		int status = -1;
+		void* pages[1] = { (void*) cache_line };
+		if (move_pages(0, 1, pages, NULL, &status, 0) == 0) {
+			printf("Initial page node for cache_line: %d\n", status);
+		} else {
+			perror("move_pages");
+		}
 	}
 
-  volatile cache_line_t* cache_line = cache_line_open();
 
   core_summaries = (core_summary_t*) calloc(test_cores, sizeof(core_summary_t));
   if (core_summaries == NULL)
@@ -2525,15 +2552,28 @@ cache_line_open()
 
 #else    /* !__tile__ ****************************************************************************************/
   void* mem = NULL;
-  int rc = posix_memalign(&mem, 64, size);
-  if (rc != 0)
-    {
-      errno = rc;
-      perror("posix_memalign");
-      exit(1);
+
+  /* Prefer allocating the buffer on the seed’s NUMA node (page-aligned, OK for 64B alignment) */
+  if (seed_node >= 0 && numa_available() != -1) {
+    mem = numa_alloc_onnode(size, seed_node);
+    if (mem != NULL) {
+      cache_line_from_numa = 1;
     }
+  }
+
+  /* Fallback to regular allocation if libnuma unavailable or allocation failed */
+  if (mem == NULL) {
+    int rc = posix_memalign(&mem, 64, size);
+    if (rc != 0)
+      {
+        errno = rc;
+        perror("posix_memalign");
+        exit(1);
+      }
+  }
 
   volatile cache_line_t* cache_line = (volatile cache_line_t*) mem;
+  
   /* Best-effort lock to reduce paging jitter (may fail due to RLIMIT_MEMLOCK) */
   if (opt_mlock) {
     if (mlock((const void*) cache_line, size) != 0) {
@@ -2616,7 +2656,12 @@ void
 cache_line_close(volatile cache_line_t* cache_line)
 {
 #if !defined(__tile__)
-  free((void*) cache_line);
+  size_t size = test_cache_line_num * sizeof(cache_line_t);
+  if (cache_line_from_numa && numa_available() != -1) {
+    numa_free((void*) cache_line, size);
+  } else {
+    free((void*) cache_line);
+  }
 #else
   (void) cache_line;
   tmc_cmem_close();
