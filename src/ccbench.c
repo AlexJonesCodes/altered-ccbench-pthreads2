@@ -30,7 +30,7 @@
 #include "ccbench.h"
 #include <ctype.h>
 #include <limits.h>  
-
+#include <sys/mman.h>
 
 __thread uint8_t ID;
 __thread unsigned long* seeds;
@@ -57,6 +57,7 @@ static int seed_core = -1;     /* physical core id that primes the line */
 static int seed_rank = -1;     /* flattened rank (computed after -x mapping) */
 static int have_seeder_thread = 0;  /* seed core not in -x => spawn helper */
 static pthread_t seeder_pth;        /* helper thread handle */
+static int opt_mlock = 0;
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -155,6 +156,7 @@ static struct option long_options[] = {
 	{"flush",                    no_argument,       NULL, 'f'},
 	{"success",                  no_argument,       NULL, 'u'},
 	{"verbose",                  no_argument,       NULL, 'v'},
+	{"mlock",                    no_argument,       NULL, 'K'},
 	{"print",                    required_argument, NULL, 'p'},
 	{NULL, 0, NULL, 0}
 };
@@ -166,7 +168,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:K", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -232,6 +234,10 @@ int main(int argc, char** argv)
 	case 'r':
 	  test_reps = atoi(optarg);
 	  break;
+	case 'K':
+		opt_mlock = 1;
+		break;
+
 	case 'b': /* --seed: physical core id where the line is primed each repetition */
 		seed_core = atoi(optarg);
 		break;
@@ -699,6 +705,14 @@ run_benchmark(void* arg)
       PFDINIT(test_reps);
     }
   B0;
+
+  /* Local warmup: touch the target line a few times to prime TLB/L1 */
+  for (int w = 0; w < 1024; w++) {
+    (void) cache_line->word[0];
+    _mm_pause();
+  }
+  _mm_mfence();
+
 
   /* /\********************************************************************************* */
   /*  *  main functionality */
@@ -1514,6 +1528,34 @@ run_benchmark(void* arg)
             }
         }
 	  printf("\n\n");
+
+	  /* Aggregate by socket (simple heuristic: even CPUs -> socket 0, odd CPUs -> socket 1) */
+      double sum_avg_sock[2] = {0.0, 0.0};
+      uint32_t cnt_sock[2] = {0, 0};
+      uint32_t wins_sock[2] = {0, 0};
+      for (uint32_t r = 0; r < test_cores; r++)
+        {
+          int sock = (core_for_rank[r] % 2 == 0) ? 0 : 1;
+          const core_summary_t* summary = &core_summaries[r];
+          const abs_deviation_t* stats = NULL;
+          for (uint32_t s = 0; s < PFD_NUM_STORES; s++) {
+            if (summary->store_valid[s]) { stats = &summary->store[s]; break; }
+          }
+          if (stats) {
+            sum_avg_sock[sock] += stats->avg;
+            cnt_sock[sock]++;
+          }
+          if (win_counts_per_rank) {
+            wins_sock[sock] += win_counts_per_rank[r];
+          }
+        }
+      if (cnt_sock[0] || cnt_sock[1]) {
+        printf("Per-socket summary:\n");
+        if (cnt_sock[0]) printf("  Socket 0: mean avg %6.1f cycles, wins %u\n", sum_avg_sock[0]/cnt_sock[0], wins_sock[0]);
+        if (cnt_sock[1]) printf("  Socket 1: mean avg %6.1f cycles, wins %u\n", sum_avg_sock[1]/cnt_sock[1], wins_sock[1]);
+        printf("\n");
+      }
+
 
       if (cores_with_stats > 0)
         {
@@ -2492,26 +2534,42 @@ cache_line_open()
     }
 
   volatile cache_line_t* cache_line = (volatile cache_line_t*) mem;
+  /* Best-effort lock to reduce paging jitter (may fail due to RLIMIT_MEMLOCK) */
+  if (opt_mlock) {
+    if (mlock((const void*) cache_line, size) != 0) {
+      perror("mlock (best-effort)");
+    }
+  }
+
 
 #endif  /* __tile ********************************************************************************************/
-  memset((void*) cache_line, '1', size);
-
-	if (ID == 0)
-    {
-      uint32_t cl;
-      for (cl = 0; cl < test_cache_line_num; cl++)
-	{
-	  cache_line[cl].word[0] = 0;
-	  _mm_clflush((void*) (cache_line + cl));
-	}
-
-      if (test_test == LOAD_FROM_MEM_SIZE)
-	{
-	  create_rand_list_cl((volatile uint64_t*) cache_line, test_mem_size / sizeof(uint64_t));
+    /* Only memset when we need the whole region (LOAD_FROM_MEM_SIZE).
+     For single-line/stride tests, avoid touching all pages to reduce noise. */
+	if (test_test == LOAD_FROM_MEM_SIZE) {
+		memset((void*) cache_line, '1', size);
 	}
 
 
+	  if (ID == 0) {
+		if (test_test == LOAD_FROM_MEM_SIZE)
+			{
+			/* Touch all pages and build the random list */
+			uint32_t cl;
+			for (cl = 0; cl < test_cache_line_num; cl++)
+				{
+				cache_line[cl].word[0] = 0;
+				_mm_clflush((void*) (cache_line + cl));
+				}
+			create_rand_list_cl((volatile uint64_t*) cache_line, test_mem_size / sizeof(uint64_t));
+			}
+		else
+			{
+			/* Minimal first-touch: only the first line we actually use */
+			cache_line[0].word[0] = 0;
+			_mm_clflush((void*) (cache_line + 0));
+			}
     }
+
 
   _mm_mfence();
   return cache_line;
