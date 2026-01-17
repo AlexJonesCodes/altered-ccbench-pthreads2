@@ -2700,71 +2700,100 @@ static void free_jagged(size_t **a, size_t *cols, size_t rows) {
 }
 
 int parse_jagged_array(
-	const char *s,
-	size_t ***out,
-	size_t *rows,
-	size_t **cols
+  const char *s,
+  size_t ***out,
+  size_t *rows,
+  size_t **cols
 ) {
-    const char *p = s;
-	size_t r = 0;
+  const char *p = s;
+  size_t r = 0;
+  size_t **data = NULL;
+  size_t *col_counts = NULL;
 
-	size_t **data = NULL;
-	size_t *col_counts = NULL;
+  while (*p) {
+    while (*p && *p != '[') p++;
+    if (!*p) break;
+    p++; /* enter row */
 
-    while (*p) {
-        if (*p != '[') {
-            p++;
-            continue;
+    /* dynamic vector for this row */
+    size_t cap = 16, len = 0;
+    size_t *row = (size_t*) malloc(cap * sizeof *row);
+    if (!row) goto fail;
+
+    while (*p && *p != ']') {
+      /* skip until number or '-' */
+      while (*p && !isdigit((unsigned char)*p) && *p != '-' && *p != ']') p++;
+      if (!*p || *p == ']') break;
+
+      /* parse first integer (start or single) */
+      char *endptr = NULL;
+      long long a = strtoll(p, &endptr, 10);
+      if (p == endptr) { free(row); goto fail; }
+      p = endptr;
+
+      /* look ahead for ellipsis */
+      const char *save = p;
+      while (*p == ' ' || *p == '\t' || *p == ',') p++;
+      int has_ellipsis = (p[0]=='.' && p[1]=='.' && p[2]=='.');
+
+      if (has_ellipsis) {
+        p += 3;
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        long long b = strtoll(p, &endptr, 10);
+        if (p == endptr) { free(row); goto fail; }
+        p = endptr;
+
+        long long step = (b >= a) ? 1 : -1;
+        for (long long v = a;; v += step) {
+          if (len == cap) {
+            cap *= 2;
+            size_t *tmp = (size_t*) realloc(row, cap * sizeof *row);
+            if (!tmp) { free(row); goto fail; }
+            row = tmp;
+          }
+          row[len++] = (size_t) v;
+          if (v == b) break;
         }
-
-        p++; /* enter row */
-
-        /* ---------- count elements in this row ---------- */
-        size_t count = 0;
-        const char *q = p;
-
-        while (*q && *q != ']') {
-            if (isdigit(*q) || *q == '-') {
-                count++;
-                while (isdigit(*q) || *q == '-') q++;
-            } else {
-                q++;
-            }
+      } else {
+        /* single value */
+        p = save; /* rewind to after the number; separators are skipped below */
+        if (len == cap) {
+          cap *= 2;
+          size_t *tmp = (size_t*) realloc(row, cap * sizeof *row);
+          if (!tmp) { free(row); goto fail; }
+          row = tmp;
         }
+        row[len++] = (size_t) a;
+      }
 
-        if (*q != ']') goto fail;
-
-        /* ---------- grow row arrays ---------- */
-		size_t **tmp_data = realloc(data, (r + 1) * sizeof *data);
-        size_t *tmp_cols = realloc(col_counts, (r + 1) * sizeof *col_counts);
-        if (!tmp_data || !tmp_cols) goto fail;
-
-        data = tmp_data;
-        col_counts = tmp_cols;
-
-		data[r] = malloc(count * sizeof **data);
-        if (!data[r]) goto fail;
-
-		col_counts[r] = count;
-
-        /* ---------- parse values ---------- */
-        for (size_t j = 0; j < count; j++) {
-            while (*p && !isdigit(*p) && *p != '-') p++;
-			data[r][j] = (size_t)strtol(p, (char **)&p, 10);
-        }
-
-        r++;
-        p = q + 1;
+      /* advance to next number or ']' */
+      while (*p && *p != ']' && !(isdigit((unsigned char)*p) || *p=='-')) p++;
     }
 
-	if (r == 0) goto fail;
+    if (*p != ']') { free(row); goto fail; }
+    p++; /* leave row */
 
-	*out  = data;
-	*rows = r;
-	*cols = col_counts;
-	return 0;
+    /* shrink row to size and append to outputs */
+    size_t *final = len ? (size_t*) realloc(row, len * sizeof *row) : row;
+    if (!final && len) { free(row); goto fail; }
+
+    size_t **tmpd = (size_t**) realloc(data, (r + 1) * sizeof *data);
+    size_t *tmpc = (size_t*) realloc(col_counts, (r + 1) * sizeof *col_counts);
+    if (!tmpd || !tmpc) { free(final); goto fail; }
+    data = tmpd; col_counts = tmpc;
+
+    data[r] = final;
+    col_counts[r] = len;
+    r++;
+  }
+
+  if (r == 0) goto fail;
+  *out = data;
+  *rows = r;
+  *cols = col_counts;
+  return 0;
 
 fail:
-    free_jagged(data, col_counts, r);
-    return -1;
+  free_jagged(data, col_counts, r);
+  return -1;
 }
