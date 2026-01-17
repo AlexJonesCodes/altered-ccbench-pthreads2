@@ -745,8 +745,9 @@ run_benchmark(void* arg)
 #endif
 
   set_cpu(core);
-  printf("Requested core: %zu, now running on cpu: %d, test is: %d\n", core, sched_getcpu(), my_test);
-
+  { const char* tname = (my_test >= 0 && my_test < NUM_EVENTS) ? moesi_type_des[my_test] : "UNKNOWN"; 
+	printf("Requested core: %zu, now running on cpu: %d, test is: %d (%s)\n", core, sched_getcpu(), (int) my_test, tname); }
+  
 #if defined(__tile__)
   tmc_cmem_init(0);		/*   initialize shared memory */
 #endif  /* TILERA */
