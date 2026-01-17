@@ -1588,13 +1588,18 @@ run_benchmark(void* arg)
             wins_sock[sock] += win_counts_per_rank[r];
           }
         }
+	  #if defined(XeonGold6142) 
       if (cnt_sock[0] || cnt_sock[1]) {
         printf("Per-socket summary:\n");
-        if (cnt_sock[0]) printf("  Socket 0: mean avg %6.1f cycles, wins %u\n", sum_avg_sock[0]/cnt_sock[0], wins_sock[0]);
-        if (cnt_sock[1]) printf("  Socket 1: mean avg %6.1f cycles, wins %u\n", sum_avg_sock[1]/cnt_sock[1], wins_sock[1]);
+        if (cnt_sock[0]) printf("  Socket 0: mean avg %6.1f cycles, total wins %u, avg wins for socket %6.1f\n",
+								sum_avg_sock[0]/cnt_sock[0], wins_sock[0],
+								(double)wins_sock[0]/(double)cnt_sock[0]);
+        if (cnt_sock[1]) printf("  Socket 1: mean avg %6.1f cycles, total wins %u, avg wins for socket %6.1f\n",
+								sum_avg_sock[1]/cnt_sock[1], wins_sock[1],
+								(double)wins_sock[1]/(double)cnt_sock[1]);
         printf("\n");
       }
-
+	  #endif
 
       if (cores_with_stats > 0)
         {

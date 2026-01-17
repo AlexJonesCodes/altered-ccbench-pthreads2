@@ -69,6 +69,11 @@ ifeq ($(UNAME), i9_13900HX)
   CC = gcc
 endif
 
+ifeq ($(UNAME), XeonGold6142)
+  PLATFORM = XeonGold6142
+  CC = gcc
+endif
+
 ifeq ($(PLATFORM),)
   PLATFORM = DEFAULT
   CC = gcc

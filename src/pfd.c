@@ -134,6 +134,8 @@ pfd_store_init(uint32_t num_entries)
             ad.avg = 25;
         #elif defined(I9_13900HX)
             ad.avg = 14;
+        #elif defined(XeonGold6142)
+            ad.avg = 14;
         #else
               default_pdf_bool = 0;
         #endif

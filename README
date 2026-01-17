@@ -12,6 +12,7 @@ try:
 make UNAME=i3_7020U
 or I9_13900HX
 or RYZEN53600
+or XeonGold6142
 
 For 13th Gen Intel(R) Core(TM) i9-13900HX systems, the profiler now auto-detects the
 processor model at runtime and applies the platform default pfd correction even if
