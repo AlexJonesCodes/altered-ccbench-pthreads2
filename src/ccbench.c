@@ -1464,7 +1464,8 @@ run_benchmark(void* arg)
 	      PFDO(0, reps);
 	    }
 	  break;
-	case CAS_UNTIL_SUCCESS: 
+	case CAS_UNTIL_SUCCESS:  /* 33 */
+		{
 		if (role == 0) { 
 			sum += cas_until_success(cache_line, reps); 
 			B1; 
@@ -1477,8 +1478,9 @@ run_benchmark(void* arg)
 			B1; 
 		} 
 		break;
+	}
 
-	case PROFILER:		/* 30 */
+	case PROFILER:		/* 34 */
 	default:
 	  PFDI(0);
 	  asm volatile ("");
@@ -1689,7 +1691,7 @@ run_benchmark(void* arg)
 	        /* Report first-op winners across all repetitions (generalised) */
       if (win_counts_per_rank)
         {
-          printf("\nFirst-op winners per thread (out of %zu reps):\n", test_reps);
+          printf("\nFirst-success winners per thread (out of %zu reps):\n", test_reps);
           for (uint32_t r = 0; r < test_cores; r++)
             {
               printf("  Group %u role %u on thread %u (thread ID %u): %u wins\n",
