@@ -123,6 +123,7 @@ typedef enum
     PROFILER,
     PAUSE,
     NOP,
+    CAS_UNTIL_SUCCESS,
     NUM_EVENTS,			/* placeholder for printing the num of events */
   } moesi_type_t;
 
@@ -162,6 +163,7 @@ const char* moesi_type_des[] =
     "PROFILER",
     "PAUSE",
     "NOP",
+    "CAS_UNTIL_SUCCESS",
   };
 
 

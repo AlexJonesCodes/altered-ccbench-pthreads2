@@ -270,8 +270,8 @@ get_abs_deviation(volatile ticks* vals, const size_t num_vals, abs_deviation_t* 
 
   double avg = sum_vals / (double) num_vals;
   abs_dev->avg = avg;
-  double max_val = 0;
-  double min_val = DBL_MAX;
+  double max_val = -DBL_MAX;
+  double min_val =  DBL_MAX;
   uint64_t max_val_idx = 0, min_val_idx = 0;
   uint32_t num_dev_10p = 0; ticks sum_vals_10p = 0; double dev_10p = 0.1 * avg;
   uint32_t num_dev_25p = 0; ticks sum_vals_25p = 0; double dev_25p = 0.25 * avg;
@@ -285,16 +285,8 @@ get_abs_deviation(volatile ticks* vals, const size_t num_vals, abs_deviation_t* 
     {
       double diff = vals[i] - avg;
       double ad = absd(diff);
-      if (vals[i] > max_val)
-	{
-	  max_val = vals[i];
-	  max_val_idx = i;
-	}
-      else if (vals[i] < min_val)
-	{
-	  min_val = vals[i];
-	  min_val_idx = i;
-	}
+      if (vals[i] > max_val) { max_val = vals[i]; max_val_idx = i; }
+      if (vals[i] < min_val) { min_val = vals[i]; min_val_idx = i; }
 
       if (ad <= dev_10p)
 	{

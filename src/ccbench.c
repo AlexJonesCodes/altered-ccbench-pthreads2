@@ -82,6 +82,10 @@ static int cache_line_from_numa = 0;
 /* Per-thread and per-repetition winner tracking (generalised for all tests) */
 static uint32_t* win_counts_per_rank = NULL;   /* size: test_cores */
 static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX means unclaimed */
+/* Round start (common t0 per repetition) and per-thread, per-rep latency from t0 to success */
+static ticks* round_start = NULL;                 /* size: test_reps */
+static uint64_t* common_latency_cycles = NULL;    /* size: test_cores * test_reps */
+
 
 /* Thread-local current repetition index for ops that don't take 'reps' param */
 __thread uint64_t current_rep_idx = 0;
@@ -146,6 +150,7 @@ static uint32_t cas_no_pf(volatile cache_line_t* cache_line, volatile uint64_t r
 static uint32_t fai(volatile cache_line_t* cache_line, volatile uint64_t reps);
 static uint8_t tas(volatile cache_line_t* cl, volatile uint64_t reps);
 static uint32_t swap(volatile cache_line_t* cl, volatile uint64_t reps);
+static uint32_t cas_until_success(volatile cache_line_t* cache_line, volatile uint64_t reps);
 
 static size_t parse_size(char* optarg);
 static void create_rand_list_cl(volatile uint64_t* list, size_t n);
@@ -479,6 +484,12 @@ int main(int argc, char** argv)
 
 	first_winner_per_rep = (uint32_t*) malloc(sizeof(uint32_t) * test_reps);
 	if (!first_winner_per_rep) { perror("malloc"); exit(1); }
+	round_start = (ticks*) calloc(test_reps, sizeof(ticks));
+	if (!round_start) { perror("calloc"); exit(1); }
+
+	common_latency_cycles = (uint64_t*) calloc((size_t)test_cores * test_reps, sizeof(uint64_t));
+	if (!common_latency_cycles) { perror("calloc"); exit(1); }
+
 	for (size_t i_init = 0; i_init < test_reps; i_init++)
 	{
 		first_winner_per_rep[i_init] = UINT32_MAX; /* unclaimed */
@@ -624,6 +635,8 @@ int main(int argc, char** argv)
   free(core_summaries);
   free(args);
   free(threads);
+  if (common_latency_cycles) { free(common_latency_cycles); common_latency_cycles = NULL; }
+  if (round_start) { free(round_start); round_start = NULL; }
   if (first_winner_per_rep) {
 	free(first_winner_per_rep);
 	first_winner_per_rep = NULL;
@@ -675,22 +688,24 @@ static void* seeder_main(void* arg)
   /* Pin this helper thread to the seed core */
   set_cpu(seed_core);
 
-  for (uint64_t reps = 0; reps < test_reps; reps++) {
-    /* Prime: place line Modified in seed cache and leave value = o (so contenders can CAS it) */
-	uint8_t o = (uint8_t)(reps & 0x1);
-	cache_line->word[0] = o;
-	_mm_mfence();
+	for (uint64_t reps = 0; reps < test_reps; reps++) {
+		uint8_t o = (uint8_t)(reps & 0x1);
+		cache_line->word[0] = o;
+		_mm_mfence();
 
+		if (first_winner_per_rep) {
+			first_winner_per_rep[reps] = UINT32_MAX;
+			_mm_mfence();
+		}
 
-    /* Reset first-winner for this repetition (seed owns this step) */
-    if (first_winner_per_rep) {
-      first_winner_per_rep[reps] = UINT32_MAX;
-      _mm_mfence();
-    }
+		if (round_start) {
+			round_start[reps] = getticks();
+			_mm_mfence();
+		}
 
-    /* Release contenders: workers will be waiting at B4 */
-    B4;
-  }
+		B4; /* release contenders */
+	}
+
   return NULL;
 }
 
@@ -777,6 +792,10 @@ run_benchmark(void* arg)
 	uint8_t o = (uint8_t)(reps & 0x1);
 	cache_line->word[0] = o;
 	_mm_mfence();
+	if (round_start) {
+		round_start[reps] = getticks();
+		_mm_mfence();
+	}
 	}
 
 	/* Start contention phase: workers wait for the seed (in-thread or helper) */
@@ -789,7 +808,8 @@ run_benchmark(void* arg)
 		case FAI:        sum += fai(cache_line, reps); break;                /* 13 */
 		case TAS:        sum += tas(cache_line, reps);
 						_mm_mfence(); cache_line->word[0] = 0; break;       /* keep TAS re-entrant */
-		case SWAP:       sum += swap(cache_line, reps); break;               /* 15 */
+		case SWAP:       sum += swap(cache_line, reps); break;  
+		case CAS_UNTIL_SUCCESS: sum += cas_until_success(cache_line, reps); break;             /* 15 */
 
 		case STORE_ON_MODIFIED:
 		case STORE_ON_MODIFIED_NO_SYNC:
@@ -1444,6 +1464,20 @@ run_benchmark(void* arg)
 	      PFDO(0, reps);
 	    }
 	  break;
+	case CAS_UNTIL_SUCCESS: 
+		if (role == 0) { 
+			sum += cas_until_success(cache_line, reps); 
+			B1; 
+		} 
+		else if (role == 1) { 
+			B1; 
+			sum += cas_until_success(cache_line, reps); 
+		} 
+		else { 
+			B1; 
+		} 
+		break;
+
 	case PROFILER:		/* 30 */
 	default:
 	  PFDI(0);
@@ -1612,6 +1646,46 @@ run_benchmark(void* arg)
           PRINT(" Summary : no statistics captured");
         }
 	  
+	  /* Mean common-start latency per thread (from B4 to this thread’s success) */
+		if (common_latency_cycles) {
+		printf("\nCommon-start latency (B4 -> success), per thread:\n");
+		for (uint32_t r = 0; r < test_cores; r++) {
+			double sum = 0.0, minv = DBL_MAX, maxv = 0.0;
+			for (size_t k = 0; k < test_reps; k++) {
+			double v = (double) common_latency_cycles[(size_t)r * test_reps + k];
+			sum += v;
+			if (v < minv) minv = v;
+			if (v > maxv) maxv = v;
+			}
+			double mean = sum / (double)test_reps;
+			printf("  thread ID %u (core %zu): mean %6.1f cycles, min %6.1f, max %6.1f\n",
+				r, core_for_rank ? core_for_rank[r] : (size_t)r, mean, minv, maxv);
+		}
+		printf("\n");
+
+		/* Optional: check how often the winner is the fastest (argmin) for that rep */
+		if (first_winner_per_rep) {
+			size_t matches = 0, valid = 0;
+			for (size_t rep = 0; rep < test_reps; rep++) {
+			uint32_t win = first_winner_per_rep[rep];
+			if (win == UINT32_MAX) continue;
+			valid++;
+			uint32_t best = 0;
+			uint64_t bestv = UINT64_MAX;
+			for (uint32_t r = 0; r < test_cores; r++) {
+				uint64_t v = common_latency_cycles[(size_t)r * test_reps + rep];
+				if (v < bestv) { bestv = v; best = r; }
+			}
+			if (best == win) matches++;
+			}
+			if (valid) {
+			printf("Winner==argmin(B4->success) in %zu/%zu reps (%.1f%%)\n",
+					matches, valid, 100.0 * (double)matches / (double)valid);
+			}
+			printf("\n");
+		}
+		}
+
 	        /* Report first-op winners across all repetitions (generalised) */
       if (win_counts_per_rank)
         {
@@ -1970,6 +2044,46 @@ cas_no_pf(volatile cache_line_t* cl, volatile uint64_t reps)
   return (r == o);
 }
 
+static uint32_t
+cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
+{
+  /* Random-walk until we reach the target line (cln==0) without timing. */
+  uint32_t cln;
+  do {
+    cln = clrand();
+  } while (cln > 0);
+
+  volatile uint32_t* w = &cl[0].word[0];
+
+  uint32_t attempts = 0;
+
+  /* We keep the original PFD “attempt->success” timing as-is */
+  PFDI(0);
+  for (;;) {
+    attempts++;
+    uint32_t expect = *w;           /* read current value */
+    uint32_t desired = expect ^ 1;  /* flip LSB */
+    uint32_t old = CAS_U32(w, expect, desired);
+    if (old == expect) {
+      /* First successful CAS may claim the win for this rep */
+      race_try_win((uint64_t) reps);
+      break;
+    }
+    _mm_pause();
+  }
+  PFDO(0, reps);
+
+  /* Also store the common-start latency (B4->this success) */
+  if (common_latency_cycles && round_start) {
+    ticks t_end = getticks();
+    common_latency_cycles[(size_t)ID * test_reps + (size_t)reps] =
+      (uint64_t)(t_end - round_start[reps]);
+  }
+
+  return 1; /* indicates success */
+}
+
+
 uint32_t
 cas_0_eventually(volatile cache_line_t* cl, volatile uint64_t reps)
 {
@@ -1978,12 +2092,16 @@ cas_0_eventually(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t r;
 
   uint32_t cln = 0;
-    RACE_TRY_WITH_REP(reps);
 
   do
     {
       cln = clrand();
       volatile cache_line_t* cl1 = cl + cln;
+
+	  if (cln == 0) {           // reached the target line
+		RACE_TRY_WITH_REP(reps);  // claim winner here
+	  }
+
       PFDI(0);
       r = CAS_U32(cl1->word, o, no);
       PFDO(0, reps);
@@ -1999,11 +2117,13 @@ fai(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t t = 0;
 
   uint32_t cln = 0;
-    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
       volatile cache_line_t* cl1 = cl + cln;
+	  if (cln == 0) {           // reached the target line
+		RACE_TRY_WITH_REP(reps);  // claim winner here
+	  }
       PFDI(0);
       t = FAI_U32(cl1->word);
       PFDO(0, reps);
@@ -2019,7 +2139,6 @@ tas(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint8_t r;
   
   uint32_t cln = 0;
-    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
@@ -2029,7 +2148,9 @@ tas(volatile cache_line_t* cl, volatile uint64_t reps)
 #else
       volatile uint8_t* b = (volatile uint8_t*) cl1->word;
 #endif
-
+	if (cln == 0) {           // reached the target line
+		RACE_TRY_WITH_REP(reps);  // claim winner here
+	}
       PFDI(0);
       r = TAS_U8(b);
       PFDO(0, reps);
@@ -2045,11 +2166,13 @@ swap(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t res;
 
   uint32_t cln = 0;
-    RACE_TRY_WITH_REP(reps);
   do
     {
       cln = clrand();
       volatile cache_line_t* cl1 = cl + cln;
+	  if (cln == 0) {           // reached the target line
+		RACE_TRY_WITH_REP(reps);  // claim winner here
+	  }
       PFDI(0);
       res = SWAP_U32(cl1->word, ID);
       PFDO(0, reps);
