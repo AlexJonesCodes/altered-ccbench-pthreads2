@@ -17,4 +17,12 @@ For 13th Gen Intel(R) Core(TM) i9-13900HX systems, the profiler now auto-detects
 processor model at runtime and applies the platform default pfd correction even if
 the build was not compiled with `UNAME=i9_13900HX`.
 
-to set cpus to run on, use "./ccbench -c 4 -x [0,1,2,3]" where c is the number of cores and x is the array of cores to run n
+typical run command is 
+./ccbench -r 10000 -t "[12,12,12]" -x "[1,2,3]" -b 0
+this means 10000 repititions, run 3 tests of cas(12) every iteration, put the cache line in thread 0's cache and have cores 1 2 3 compete to get the cache line first.
+
+libnuma will need to be installed when running make, run 
+sudo -i
+apt-get update
+apt-get install 
+apt-get install libnuma-dev
