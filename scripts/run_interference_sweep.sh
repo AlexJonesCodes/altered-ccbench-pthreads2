@@ -178,42 +178,38 @@ parse_stats() {
       -v runs_csv="$runs_csv" \
       -v threads_csv="$threads_csv" '
     /Summary : mean avg/ {
-      for (i = 1; i <= NF; i++) {
-        if ($i == "avg") {
-          mean_avg = $(i+1)
-          gsub(/[^0-9.]/, "", mean_avg)
-        }
+      if (match($0, /mean avg[[:space:]]*([0-9.]+)/, m)) {
+        mean_avg = m[1]
       }
     }
     /Core number/ {
-      core = $3
-      thread = $7
-      avg = $10
-      min = $13
-      max = $16
-      std = $21
-      abs = $24
-      gsub(/[^0-9.]/, "", core)
-      gsub(/[^0-9.]/, "", thread)
-      gsub(/[^0-9.]/, "", avg)
-      gsub(/[^0-9.]/, "", min)
-      gsub(/[^0-9.]/, "", max)
-      gsub(/[^0-9.]/, "", std)
-      gsub(/[^0-9.]/, "", abs)
-      avg_by_thread[thread] = avg
-      core_by_thread[thread] = core
-      min_by_thread[thread] = min
-      max_by_thread[thread] = max
-      std_by_thread[thread] = std
-      abs_by_thread[thread] = abs
-      thread_seen[thread] = 1
+      if (match($0, /Core number[[:space:]]+([0-9]+)[^0-9]+thread:[[:space:]]+([0-9]+).*avg[[:space:]]+([0-9.]+)[^0-9]+min[[:space:]]+([0-9.]+)[^0-9]+max[[:space:]]+([0-9.]+)[^0-9]+std dev:[[:space:]]+([0-9.]+)[^0-9]+abs dev:[[:space:]]+([0-9.]+)/, m)) {
+        core = m[1]
+        thread = m[2]
+        avg = m[3]
+        min = m[4]
+        max = m[5]
+        std = m[6]
+        abs = m[7]
+        if (thread != "") {
+          avg_by_thread[thread] = avg
+          core_by_thread[thread] = core
+          min_by_thread[thread] = min
+          max_by_thread[thread] = max
+          std_by_thread[thread] = std
+          abs_by_thread[thread] = abs
+          thread_seen[thread] = 1
+        }
+      }
     }
     /wins$/ {
-      wins = $NF
-      thread = $(NF-2)
-      gsub(/[^0-9]/, "", wins)
-      gsub(/[^0-9]/, "", thread)
-      wins_by_thread[thread] = wins
+      if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+        thread = m[1]
+        wins = m[2]
+        if (thread != "") {
+          wins_by_thread[thread] = wins
+        }
+      }
     }
     END {
       sum = 0
@@ -221,6 +217,7 @@ parse_stats() {
       wins_sum = 0
       count = 0
       for (t in thread_seen) {
+        if (t == "") continue
         count++
         val = wins_by_thread[t]
         if (val == "" || val == 0) {
@@ -246,11 +243,12 @@ parse_stats() {
         success_rate = wins_sum / (count * reps)
       }
 
-      printf "%s,%s,%s,%s,%s,%s,%s,%.3f,%.6f,%.6f\n", \
+      printf "%s,%s,%s,%s,\"%s\",\"%s\",%s,%.3f,%.6f,%.6f\n", \
         run_id, phase, topology, threads, tests, cores, reps, mean_avg + 0, fairness, success_rate \
         >> runs_csv
 
       for (t in thread_seen) {
+        if (t == "") continue
         wins = wins_by_thread[t]
         if (wins == "") wins = 0
         sr = 0
