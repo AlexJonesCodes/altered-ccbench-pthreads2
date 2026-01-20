@@ -1,0 +1,10 @@
+Question: how much extra latency comes purely from moving a cache line’s ownership across the interconnect?
+Question: does op A harm op B more than B harms A?
+Question: when contention increases, does the system slow down evenly or does it start starving some threads?
+Question: do coherence events create long stalls that only show up in the tail?
+Question: how much interference comes from sharing the same cache line vs “nearby” but distinct lines?
+Question: how much do readers suffer when a writer is bouncing ownership?
+Question: are there stable “winners” (same core dominates every time), or does dominance rotate?
+Question: does an SMT sibling thread make coherence effects worse or better? (multithreaded q though)
+Question: does who “owns” the line first shape the outcome?
+Question: does a hot contended atomic line slow down unrelated atomics elsewhere?
