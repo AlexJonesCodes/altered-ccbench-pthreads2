@@ -15,7 +15,7 @@ CCBENCH_PATH = "../../ccbench"
 # Tests to run on each SMT pair. Example: [13, 14, 15, 34]
 TEST_IDS = [13, 14, 15, 34]
 
-# Number of iterations to repeat the entire test matrix (per test, per pair, per seed)
+# Number of iterations to repeat the test per (test, pair, seed)
 ITERATIONS = 3  # runs each combination 3 times to check repeatability
 
 # Repetitions per run (per seed core)
@@ -34,7 +34,7 @@ ONLY_PAIRS = True
 
 # Output files
 test_dir = "./results/r53600/smt_fairness/"
-CSV_FILE = os.path.join(test_dir, "smt_fairness_simple.csv")  # adds new column: itteration
+CSV_FILE = os.path.join(test_dir, "smt_fairness_simple.csv")  # wide per-iteration columns
 LOG_FILE = os.path.join(test_dir, "ccbench_all.log")          # a single long log file (append-only)
 
 # ==============================
@@ -102,14 +102,17 @@ def ensure_csv_with_header(path):
     Open the CSV file in append mode and write the header if the file is empty or missing.
     Returns an open file handle ready for appending rows.
 
-    NOTE: This script now writes an extra 'itteration' column. If you have an old CSV
-    from a previous version (without this column), delete or archive it before running.
+    NOTE: This schema uses per-iteration columns, not an 'itteration' column.
+    Delete/backup any old CSV that used the older schema before running.
     """
     exists = os.path.exists(path)
     f = open(path, "a")
     if not exists or os.stat(path).st_size == 0:
-        # New schema includes 'itteration'
-        f.write("test_num,itteration,pinned_thread,thread1,thread2,thread1_wins,thread2_wins\n")
+        cols = ["test_num", "pinned_thread", "thread1", "thread2"]
+        cols += [f"thread1_rep_{i}_wins" for i in range(1, ITERATIONS + 1)]
+        cols += [f"thread2_rep_{i}_wins" for i in range(1, ITERATIONS + 1)]
+        cols += ["thread1_total_wins", "thread2_total_wins", "total"]
+        f.write(",".join(cols) + "\n")
         f.flush()
     return f
 
@@ -183,9 +186,12 @@ def main():
                 # Keep thread1 < thread2 for consistent CSV ordering
                 thread1, thread2 = sorted((a, b))
 
-                # Repeat full seed sweep ITERATIONS times
-                for it in range(1, ITERATIONS + 1):
-                    for seed in seeds:
+                # For each seed core across the machine, accumulate ITERATIONS then write one row
+                for seed in seeds:
+                    t1_rep = [0] * ITERATIONS
+                    t2_rep = [0] * ITERATIONS
+
+                    for it in range(1, ITERATIONS + 1):
                         header = (f"ccbench run: test={test_id} iter={it} pair=({thread1},{thread2}) "
                                   f"seed={seed} reps={REPS} stride={STRIDE}")
                         wins_by_core, raw = run_ccbench_once(test_id, thread1, thread2, seed)
@@ -195,13 +201,29 @@ def main():
                         w1 = wins_by_core.get(thread1, 0)
                         w2 = wins_by_core.get(thread2, 0)
 
-                        # Append CSV row (now includes 'itteration')
-                        row = f"{test_id},{it},{seed},{thread1},{thread2},{w1},{w2}\n"
-                        csv_f.write(row)
-                        csv_f.flush()
+                        t1_rep[it - 1] = int(w1)
+                        t2_rep[it - 1] = int(w2)
 
                         print(f"Run complete: test={test_id} iter={it} pair=({thread1},{thread2}) seed={seed} "
                               f"-> wins {thread1}:{w1}, {thread2}:{w2}")
+
+                    # After ITERATIONS finished, compute totals and write a single CSV row
+                    t1_total = sum(t1_rep)
+                    t2_total = sum(t2_rep)
+                    total = t1_total + t2_total
+
+                    cols = [
+                        str(test_id),
+                        str(seed),
+                        str(thread1),
+                        str(thread2),
+                    ]
+                    cols += [str(v) for v in t1_rep]
+                    cols += [str(v) for v in t2_rep]
+                    cols += [str(t1_total), str(t2_total), str(total)]
+
+                    csv_f.write(",".join(cols) + "\n")
+                    csv_f.flush()
 
     finally:
         csv_f.close()

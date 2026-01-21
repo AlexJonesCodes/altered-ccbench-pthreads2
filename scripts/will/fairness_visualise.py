@@ -2,16 +2,24 @@
 """
 SMT fairness visualisation using Jain's fairness index per instruction type (test_num).
 
-Input CSV schema (one row per run):
-  test_num,pinned_thread,thread1,thread2,thread1_wins,thread2_wins
+Supports BOTH input schemas:
+
+A) Original (long) per-run schema:
+   test_num,pinned_thread,thread1,thread2,thread1_wins,thread2_wins
+
+B) New (wide) per-iteration schema (one row per test/pair/seed with iteration columns):
+   test_num,pinned_thread,thread1,thread2,
+   thread1_rep_1_wins,...,thread1_rep_N_wins,
+   thread2_rep_1_wins,...,thread2_rep_N_wins,
+   thread1_total_wins,thread2_total_wins,total
 
 This script produces three types of visualisations:
 1) Pair-seed fairness bars (per test_num):
-   - For each thread pair (a,b), compute Jain’s index using only runs where -b ∈ {a,b}.
+   - For each thread pair (a,b), compute Jain’s index using only rows where -b ∈ {a,b}.
    - X-axis: core pairs (e.g., "0-6"), Y-axis: Jain’s index (1.0 is perfectly fair).
 
 2) All-seed fairness bars (per test_num):
-   - For each thread pair (a,b), compute Jain’s index using all runs (aggregate across all -b).
+   - For each thread pair (a,b), compute Jain’s index using all rows (aggregate across all -b).
 
 3) Wins-A super-combined scatter (one figure for ALL tests):
    - Single scatter plot combining ALL datapoints across tests.
@@ -83,27 +91,61 @@ def test_label(tid: int) -> str:
 def prepare_dataframe(csv_path: str) -> pd.DataFrame:
     """
     Load CSV, enforce numeric dtypes, define canonical pair (a-b),
-    and compute wins mapped to (a,b) consistently:
-      wins_a = wins for the smaller core id of the pair
-      wins_b = wins for the larger core id of the pair
+    and compute wins mapped to (a,b) consistently (wins_a, wins_b, total).
+
+    Supports both legacy long schema and new wide per-iteration schema.
     """
     df = pd.read_csv(csv_path)
-    # Ensure numeric
-    for c in ["test_num", "pinned_thread", "thread1", "thread2", "thread1_wins", "thread2_wins"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["test_num", "pinned_thread", "thread1", "thread2", "thread1_wins", "thread2_wins"]).copy()
+
+    # Detect schema (long vs wide)
+    has_long = {"thread1_wins", "thread2_wins"}.issubset(df.columns)
+    has_wide = {"thread1_total_wins", "thread2_total_wins"}.issubset(df.columns)
+
+    # Ensure numeric across both possible sets
+    num_cols_common = ["test_num", "pinned_thread", "thread1", "thread2"]
+    num_cols_long = ["thread1_wins", "thread2_wins"]
+    num_cols_wide = ["thread1_total_wins", "thread2_total_wins", "total"]
+
+    for c in num_cols_common:
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+    if has_long:
+        for c in num_cols_long:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    if has_wide:
+        for c in num_cols_wide:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Basic required fields check
+    req = ["test_num", "pinned_thread", "thread1", "thread2"]
+    if not set(req).issubset(df.columns):
+        missing = [c for c in req if c not in df.columns]
+        raise ValueError(f"Missing required columns: {missing}")
 
     # Canonical pair a-b with a < b
     df["a"] = df[["thread1", "thread2"]].min(axis=1).astype(int)
     df["b"] = df[["thread1", "thread2"]].max(axis=1).astype(int)
     df["pair"] = df.apply(lambda r: f"{r['a']}-{r['b']}", axis=1)
 
-    # Map wins to (a,b) irrespective of (thread1,thread2) ordering in the row
-    df["wins_a"] = np.where(df["thread1"] == df["a"], df["thread1_wins"], df["thread2_wins"])
-    df["wins_b"] = np.where(df["thread2"] == df["b"], df["thread2_wins"], df["thread1_wins"])
+    # Construct wins_a/wins_b and total for downstream (based on schema)
+    if has_long:
+        df = df.dropna(subset=req + num_cols_long).copy()
+        # Map wins to (a,b) irrespective of (thread1,thread2) ordering in the row
+        df["wins_a"] = np.where(df["thread1"] == df["a"], df["thread1_wins"], df["thread2_wins"])
+        df["wins_b"] = np.where(df["thread2"] == df["b"], df["thread2_wins"], df["thread1_wins"])
+        df["total"] = df["wins_a"] + df["wins_b"]
+    elif has_wide:
+        df = df.dropna(subset=req + ["thread1_total_wins", "thread2_total_wins"]).copy()
+        # Use the per-row totals (sum over iterations) as wins
+        # Map totals to (a,b) irrespective of (thread1,thread2) ordering
+        df["wins_a"] = np.where(df["thread1"] == df["a"], df["thread1_total_wins"], df["thread2_total_wins"])
+        df["wins_b"] = np.where(df["thread2"] == df["b"], df["thread2_total_wins"], df["thread1_total_wins"])
+        # Prefer provided 'total' if present and valid; else sum
+        if "total" not in df.columns or df["total"].isna().any():
+            df["total"] = df["wins_a"] + df["wins_b"]
+    else:
+        raise ValueError("Neither long (thread1_wins/thread2_wins) nor wide (thread1_total_wins/thread2_total_wins) schema detected.")
 
-    # For safety, ensure totals make sense
-    df["total"] = df["wins_a"] + df["wins_b"]
+    # Filter invalid totals
     df = df[df["total"] > 0].copy()
 
     return df
@@ -123,7 +165,6 @@ def fairness_summary_for_mode(df: pd.DataFrame, mode: str) -> pd.DataFrame:
     """
     rows = []
 
-    # Unique groups
     groups = df[["test_num", "pair", "a", "b"]].drop_duplicates().sort_values(["test_num", "a", "b"])
     for _, g in groups.iterrows():
         t = int(g["test_num"])
@@ -178,7 +219,6 @@ def plot_fairness_bars(fair_df: pd.DataFrame, test_num: int, title_suffix: str, 
     ax.set_ylabel("Jain fairness")
     ax.set_xticks(np.arange(len(pairs)))
     ax.set_xticklabels(pairs, rotation=45, ha="right")
-    # Adjust y-limits gently around [0.9,1.0+epsilon]
     ymin = min(0.9, float(np.nanmin(y)) - 0.02) if len(y) else 0.9
     ax.set_ylim(ymin, 1.02)
     ax.grid(True, axis="y", alpha=0.3)
@@ -240,13 +280,12 @@ def generate_wins_a_points_supercombined(df: pd.DataFrame) -> None:
         common_total = vals[np.argmax(counts)]
         ax.axhline(common_total / 2.0, color="k", linestyle="--", linewidth=1, alpha=0.6,
                    label=f"50% of {int(common_total)}")
-        # Place legend outside on the right
-        legend = ax.legend(handles=handles + [ax.lines[-1]],
-                           labels=labels + [f"50% of {int(common_total)}"],
-                           loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
+        ax.legend(handles=handles + [ax.lines[-1]],
+                  labels=labels + [f"50% of {int(common_total)}"],
+                  loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
     else:
-        legend = ax.legend(handles=handles, labels=labels,
-                           loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
+        ax.legend(handles=handles, labels=labels,
+                  loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
 
     ax.set_title(f"Wins for lower-ID thread (a) — ALL tests combined (N={len(df_sorted)})")
     ax.set_xlabel("global datapoint index")
@@ -298,12 +337,13 @@ def main():
         raise FileNotFoundError(f"CSV not found: {INPUT_CSV}")
 
     df = prepare_dataframe(INPUT_CSV)
-    print(df.sort_values("thread1_wins").head(10))
+
+    print(df.sort_values("wins_a").head(10))
 
     # Generate visualisations (comment out any you want to skip)
-    #fair_pair_seeds = generate_pair_seed_bars(df)        # comment out to skip
+    fair_pair_seeds = generate_pair_seed_bars(df)        # comment out to skip
     fair_all_seeds  = generate_all_seed_bars(df)         # comment out to skip
-    #generate_wins_a_points_supercombined(df)             # comment out to skip
+    generate_wins_a_points_supercombined(df)           # comment out to skip
 
     # Save long-format summary (pair vs all) if you want a combined table
     if 'fair_pair_seeds' in locals() and 'fair_all_seeds' in locals():
