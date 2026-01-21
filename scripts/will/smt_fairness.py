@@ -15,6 +15,9 @@ CCBENCH_PATH = "../../ccbench"
 # Tests to run on each SMT pair. Example: [13, 14, 15, 34]
 TEST_IDS = [13, 14, 15, 34]
 
+# Number of iterations to repeat the entire test matrix (per test, per pair, per seed)
+ITERATIONS = 3  # runs each combination 3 times to check repeatability
+
 # Repetitions per run (per seed core)
 REPS = 1000
 
@@ -30,8 +33,8 @@ USE_MLOCK = False     # add -K if True
 ONLY_PAIRS = True
 
 # Output files
-test_dir = "./results/smt_fairness/"
-CSV_FILE = os.path.join(test_dir, "smt_fairness_simple.csv")  # test_num,pinned_thread,thread1,thread2,thread1_wins,thread2_wins
+test_dir = "./results/r53600/smt_fairness/"
+CSV_FILE = os.path.join(test_dir, "smt_fairness_simple.csv")  # adds new column: itteration
 LOG_FILE = os.path.join(test_dir, "ccbench_all.log")          # a single long log file (append-only)
 
 # ==============================
@@ -98,11 +101,15 @@ def ensure_csv_with_header(path):
     """
     Open the CSV file in append mode and write the header if the file is empty or missing.
     Returns an open file handle ready for appending rows.
+
+    NOTE: This script now writes an extra 'itteration' column. If you have an old CSV
+    from a previous version (without this column), delete or archive it before running.
     """
     exists = os.path.exists(path)
     f = open(path, "a")
     if not exists or os.stat(path).st_size == 0:
-        f.write("test_num,pinned_thread,thread1,thread2,thread1_wins,thread2_wins\n")
+        # New schema includes 'itteration'
+        f.write("test_num,itteration,pinned_thread,thread1,thread2,thread1_wins,thread2_wins\n")
         f.flush()
     return f
 
@@ -162,7 +169,7 @@ def main():
 
     print(f"Discovered SMT pairs: {pairs}")
     print(f"Seeding on all online CPUs: {seeds}")
-    print(f"Config: TEST_IDS={TEST_IDS}, REPS={REPS}, STRIDE={STRIDE}, flags: "
+    print(f"Config: TEST_IDS={TEST_IDS}, ITERATIONS={ITERATIONS}, REPS={REPS}, STRIDE={STRIDE}, flags: "
           f"{'-n ' if DISABLE_NUMA else ''}{'-v ' if VERBOSE else ''}{'-K' if USE_MLOCK else ''}")
     print(f"Appending raw output to: {LOG_FILE}")
     print(f"Appending CSV rows to:   {CSV_FILE}")
@@ -176,24 +183,25 @@ def main():
                 # Keep thread1 < thread2 for consistent CSV ordering
                 thread1, thread2 = sorted((a, b))
 
-                # For each seed core across the machine
-                for seed in seeds:
-                    header = (f"ccbench run: test={test_id} pair=({thread1},{thread2}) "
-                              f"seed={seed} reps={REPS} stride={STRIDE}")
-                    wins_by_core, raw = run_ccbench_once(test_id, thread1, thread2, seed)
-                    append_log(header, raw)
+                # Repeat full seed sweep ITERATIONS times
+                for it in range(1, ITERATIONS + 1):
+                    for seed in seeds:
+                        header = (f"ccbench run: test={test_id} iter={it} pair=({thread1},{thread2}) "
+                                  f"seed={seed} reps={REPS} stride={STRIDE}")
+                        wins_by_core, raw = run_ccbench_once(test_id, thread1, thread2, seed)
+                        append_log(header, raw)
 
-                    # Map wins to the two thread cores; default to 0 if not present
-                    w1 = wins_by_core.get(thread1, 0)
-                    w2 = wins_by_core.get(thread2, 0)
+                        # Map wins to the two thread cores; default to 0 if not present
+                        w1 = wins_by_core.get(thread1, 0)
+                        w2 = wins_by_core.get(thread2, 0)
 
-                    # Append CSV row
-                    row = f"{test_id},{seed},{thread1},{thread2},{w1},{w2}\n"
-                    csv_f.write(row)
-                    csv_f.flush()
+                        # Append CSV row (now includes 'itteration')
+                        row = f"{test_id},{it},{seed},{thread1},{thread2},{w1},{w2}\n"
+                        csv_f.write(row)
+                        csv_f.flush()
 
-                    print(f"Run complete: test={test_id} pair=({thread1},{thread2}) seed={seed} "
-                          f"-> wins {thread1}:{w1}, {thread2}:{w2}")
+                        print(f"Run complete: test={test_id} iter={it} pair=({thread1},{thread2}) seed={seed} "
+                              f"-> wins {thread1}:{w1}, {thread2}:{w2}")
 
     finally:
         csv_f.close()
