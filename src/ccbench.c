@@ -788,58 +788,59 @@ run_benchmark(void* arg)
 	B0;            /* BARRIER 0 */
 	/* Seed mode: either seed is inside -x (seed_rank >= 0) or we have a helper seeder thread */
 	if (seed_rank >= 0 || have_seeder_thread) {
-	if (seed_rank >= 0 && (int)ID == seed_rank) {
-	/* In-thread priming when seed is part of -x: leave value = o */
-	uint8_t o = (uint8_t)(reps & 0x1);
-	cache_line->word[0] = o;
-	_mm_mfence();
-	if (round_start) {
-		round_start[reps] = getticks();
-		_mm_mfence();
-	}
-	}
+		int i_am_seeder = (seed_rank >= 0 && (int)ID == seed_rank);
 
-	/* Start contention phase: workers wait for the seed (in-thread or helper) */
-	B4;
+		if (i_am_seeder) {
+			/* In-thread priming when seed is part of -x: leave value = o */
+			uint8_t o = (uint8_t)(reps & 0x1);
+			cache_line->word[0] = o;
+			_mm_mfence();
+			if (round_start) {
+			round_start[reps] = getticks();
+			_mm_mfence();
+			}
+		}
 
-	if (!(seed_rank >= 0 && (int)ID == seed_rank)) {
-		/* Dispatch this thread's assigned test */
+		/* Start contention phase: release all contenders (including the seeder) */
+		B4;
+
+		/* Dispatch this thread's assigned test (seeder joins the race) */
 		switch (my_test) {
-		case CAS:        sum += cas_0_eventually(cache_line, reps); break;  /* 12 */
-		case FAI:        sum += fai(cache_line, reps); break;                /* 13 */
-		case TAS:        sum += tas(cache_line, reps);
-						_mm_mfence(); cache_line->word[0] = 0; break;       /* keep TAS re-entrant */
-		case SWAP:       sum += swap(cache_line, reps); break;  
-		case CAS_UNTIL_SUCCESS: sum += cas_until_success(cache_line, reps); break;             /* 15 */
+			case CAS:        sum += cas_0_eventually(cache_line, reps); break;  /* 12 */
+			case FAI:        sum += fai(cache_line, reps); break;                /* 13 */
+			case TAS:        sum += tas(cache_line, reps);
+							_mm_mfence(); cache_line->word[0] = 0; break;       /* keep TAS re-entrant */
+			case SWAP:       sum += swap(cache_line, reps); break;               /* 15 */
+			case CAS_UNTIL_SUCCESS:
+							sum += cas_until_success(cache_line, reps); break;  /* 33 */
 
-		case STORE_ON_MODIFIED:
-		case STORE_ON_MODIFIED_NO_SYNC:
-		case STORE_ON_EXCLUSIVE:
-		case STORE_ON_SHARED:
-		case STORE_ON_OWNED_MINE:
-		case STORE_ON_OWNED:
-		case STORE_ON_INVALID:
+			case STORE_ON_MODIFIED:
+			case STORE_ON_MODIFIED_NO_SYNC:
+			case STORE_ON_EXCLUSIVE:
+			case STORE_ON_SHARED:
+			case STORE_ON_OWNED_MINE:
+			case STORE_ON_OWNED:
+			case STORE_ON_INVALID:
 			store_0_eventually(cache_line, reps);
 			break;
 
-		case LOAD_FROM_MODIFIED:
-		case LOAD_FROM_EXCLUSIVE:
-		case LOAD_FROM_SHARED:
-		case LOAD_FROM_OWNED:
-		case LOAD_FROM_INVALID:
-		case LOAD_FROM_L1:
+			case LOAD_FROM_MODIFIED:
+			case LOAD_FROM_EXCLUSIVE:
+			case LOAD_FROM_SHARED:
+			case LOAD_FROM_OWNED:
+			case LOAD_FROM_INVALID:
+			case LOAD_FROM_L1:
 			sum += load_0_eventually(cache_line, reps);
 			break;
 
-		default:
+			default:
 			/* keep counts aligned */
 			PFDI(0); asm volatile(""); PFDO(0, reps);
 			break;
 		}
-	}
 
-	/* Optional per-group sync to keep loop structure */
-	B1;
+		/* Optional per-group sync to keep loop structure */
+		B1;
 	continue; /* skip the normal test switch for this repetition */
 	}
 

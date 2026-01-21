@@ -1,0 +1,37 @@
+Per-thread ops in group 0:
+  Test 33 on core 1
+  Test 33 on core 7
+
+  / fence:  none
+Main pinned to seed core 1 for first-touch placement
+Requested core: 1, now running on cpu: 1, test is: 33 (NOP)
+Requested core: 7, now running on cpu: 7, test is: 33 (NOP)
+thread 1: set pfd correction to 33 (std dev: 29.0%) WARN: std is high and no fallback pfd correction
+thread 7: set pfd correction to 32 (std dev: 33.3%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   36] [  5:    1] [  6:   36] [  7:   36] [  8:   36] [  9:   36] [ 10:   36] [ 11:    1] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:    1] [ 18:   72] [ 19:    1] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   35] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:   35] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:    1] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:   36] [ 67:    1] [ 68:   36] [ 69:    1] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   35] [ 77:   36] [ 78:   36] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   35] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   71] [ 95:   35] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] [  0:    4] [  1:    4] [  2:    4] [  3:    4] [  4:    4] [  5:    4] [  6:    4] [  7:    4] [  8:    4] [  9:    4] [ 10:    4] [ 11:    4] [ 12:  -31] [ 13:    4] [ 14:    4] [ 15:    4] [ 16:    4] [ 17:    4] [ 18:    4] [ 19:    4] [ 20:    4] [ 21:    4] [ 22:    4] [ 23:    4] [ 24:    4] [ 25:    4] [ 26:    4] [ 27:  -31] [ 28:    4] [ 29:    4] [ 30:    4] [ 31:    4] [ 32:    4] [ 33:  -31] [ 34:    4] [ 35:    4] [ 36:    4] [ 37:    4] [ 38:    4] [ 39:  -31] [ 40:    4] [ 41:    4] [ 42:    4] [ 43:    4] [ 44:    4] [ 45:    4] [ 46:    4] [ 47:    4] [ 48:    4] [ 49:    4] [ 50:  -31] [ 51:    4] [ 52:    4] [ 53:    4] [ 54:    4] [ 55:    4] [ 56:    4] [ 57:    4] [ 58:    4] [ 59:  -31] [ 60:    4] [ 61:    4] [ 62:    4] [ 63:    4] [ 64:    4] [ 65:  -31] [ 66:    4] [ 67:    4] [ 68:    4] [ 69:  -31] [ 70:    4] [ 71:    4] [ 72:    4] [ 73:    4] [ 74:    4] [ 75:    4] [ 76:  -31] [ 77:    4] [ 78:    4] [ 79:    4] [ 80:    4] [ 81:    4] [ 82:    4] [ 83:    4] [ 84:    4] [ 85:    4] [ 86:    4] [ 87:    4] [ 88:    4] [ 89:    4] [ 90:  -31] [ 91:    4] [ 92:    4] [ 93:    4] [ 94:    4] [ 95:    4] [ 96:    4] [ 97:    4] [ 98:    4] [ 99:    4] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 1. with: avg  33.4 cycles (min   1.0 | max 108.0), std dev:   9.7, abs dev:   5.0
+Core number 1 is using thread: 7. with: avg  21.9 cycles (min   0.0 | max 1156.0), std dev:  18.9, abs dev:  18.2
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     27.6 cycles | min avg     21.9 (core 7) | max avg     33.4 (core 1)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 1): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 7): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 1 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 7 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0

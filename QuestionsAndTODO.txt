@@ -8,3 +8,9 @@ Question: are there stable “winners” (same core dominates every time), or do
 Question: does an SMT sibling thread make coherence effects worse or better? (multithreaded q though)
 Question: does who “owns” the line first shape the outcome?
 Question: does a hot contended atomic line slow down unrelated atomics elsewhere?
+
+
+Will: Do different instruction types effect the overall fairness of the system? 
+
+# do 13->15, 34 tests
+

@@ -1,0 +1,504 @@
+
+================================================================================
+[2026-01-21 17:09:13] ccbench run: test=33 pair=(0,6) seed=0 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 0
+  Test 33 on core 6
+
+  / fence:  none
+Main pinned to seed core 0 for first-touch placement
+Requested core: 0, now running on cpu: 0, test is: 33 (NOP)
+Requested core: 6, now running on cpu: 6, test is: 33 (NOP)
+thread 6: set pfd correction to 34 (std dev: 26.0%) WARN: std is high and no fallback pfd correction
+thread 0: set pfd correction to 34 (std dev: 25.7%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   36] [  5:   36] [  6:   36] [  7:   36] [  8:   36] [  9:    1] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:    1] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   71] [ 32:   35] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:   35] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:   35] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   35] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:    1] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:   36] [ 79:    1] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   35] [ 94:   36] [ 95:   72] [ 96:   35] [ 97:   36] [ 98:   36] [ 99:   36] [  0:  -33] [  1:    2] [  2:    2] [  3:    2] [  4:    2] [  5:    2] [  6:    2] [  7:    2] [  8:    2] [  9:    2] [ 10:    2] [ 11:    2] [ 12:    2] [ 13:    2] [ 14:    2] [ 15:    2] [ 16:    2] [ 17:    2] [ 18:    2] [ 19:    2] [ 20:    2] [ 21:    2] [ 22:    2] [ 23:    2] [ 24:    2] [ 25:    2] [ 26:    2] [ 27:  -33] [ 28:  -33] [ 29:    2] [ 30:    2] [ 31:    2] [ 32:    2] [ 33:    2] [ 34:    2] [ 35:    2] [ 36:    2] [ 37:    2] [ 38:    2] [ 39:    2] [ 40:    2] [ 41:    2] [ 42:    2] [ 43:    2] [ 44:    2] [ 45:    2] [ 46:    2] [ 47:   38] [ 48:    2] [ 49:    2] [ 50:    2] [ 51:  -33] [ 52:    2] [ 53:    2] [ 54:    2] [ 55:    2] [ 56:    2] [ 57:    2] [ 58:    2] [ 59:    2] [ 60:    2] [ 61:    2] [ 62:    2] [ 63:    2] [ 64:    2] [ 65:    2] [ 66:    2] [ 67:    2] [ 68:    2] [ 69:    2] [ 70:    2] [ 71:    2] [ 72:    2] [ 73:    2] [ 74:    2] [ 75:    2] [ 76:    2] [ 77:    2] [ 78:    2] [ 79:    2] [ 80:    2] [ 81:    2] [ 82:    2] [ 83:    2] [ 84:    2] [ 85:    2] [ 86:    2] [ 87:    2] [ 88:    2] [ 89:    2] [ 90:    2] [ 91:    2] [ 92:    2] [ 93:    2] [ 94:    2] [ 95:    2] [ 96:    2] [ 97:    2] [ 98:    2] [ 99:    2] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 0. with: avg  34.6 cycles (min   0.0 | max  72.0), std dev:   8.9, abs dev:   3.5
+Core number 1 is using thread: 6. with: avg   2.0 cycles (min   0.0 | max 1190.0), std dev:   6.2, abs dev:   0.3
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     18.3 cycles | min avg      2.0 (core 6) | max avg     34.6 (core 0)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 0): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 6): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 0 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 6 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:14] ccbench run: test=33 pair=(0,6) seed=6 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 0
+  Test 33 on core 6
+
+  / fence:  none
+Main pinned to seed core 6 for first-touch placement
+Requested core: 0, now running on cpu: 0, test is: 33 (NOP)
+Requested core: 6, now running on cpu: 6, test is: 33 (NOP)
+thread 6: set pfd correction to 33 (std dev: 29.8%) WARN: std is high and no fallback pfd correction
+thread 0: set pfd correction to 33 (std dev: 29.4%) WARN: std is high and no fallback pfd correction
+[  0:  -32] [  1:    3] [  2:    3] [  3:    3] [  4:  -32] [  5:    3] [  6:    3] [  7:    3] [  8:    3] [  9:    3] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:    3] [ 14:    3] [ 15:    3] [ 16:    3] [ 17:    3] [ 18:    3] [ 19:    3] [ 20:    3] [ 21:  -32] [ 22:  -32] [ 23:    3] [ 24:    3] [ 25:    3] [ 26:    3] [ 27:    3] [ 28:    3] [ 29:    3] [ 30:    3] [ 31:    3] [ 32:   39] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:    3] [ 39:    3] [ 40:    3] [ 41:    3] [ 42:    3] [ 43:    3] [ 44:    3] [ 45:    3] [ 46:    3] [ 47:    3] [ 48:    3] [ 49:    3] [ 50:  -32] [ 51:    3] [ 52:    3] [ 53:    3] [ 54:    3] [ 55:    3] [ 56:    3] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:  -32] [ 65:    3] [ 66:    3] [ 67:    3] [ 68:    3] [ 69:    3] [ 70:    3] [ 71:    3] [ 72:    3] [ 73:  -32] [ 74:    3] [ 75:    3] [ 76:  -32] [ 77:    3] [ 78:    3] [ 79:    3] [ 80:    3] [ 81:    3] [ 82:    3] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:    3] [ 91:    3] [ 92:    3] [ 93:    3] [ 94:    3] [ 95:    3] [ 96:    3] [ 97:  -32] [ 98:    3] [ 99:    3] [  0:   36] [  1:   36] [  2:    1] [  3:   36] [  4:   36] [  5:   36] [  6:   36] [  7:   36] [  8:    1] [  9:   36] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:    1] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:    1] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:    1] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   35] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:    1] [ 39:   36] [ 40:   36] [ 41:   36] [ 42:   36] [ 43:    1] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:    1] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   35] [ 56:   36] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   35] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:   36] [ 67:   35] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:    1] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:    1] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   35] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:    1] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   36] [ 95:    1] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 0. with: avg   2.8 cycles (min   0.0 | max 795.0), std dev:   3.8, abs dev:   0.5
+Core number 1 is using thread: 6. with: avg  33.8 cycles (min   1.0 | max  72.0), std dev:  10.1, abs dev:   4.9
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     18.3 cycles | min avg      2.8 (core 0) | max avg     33.8 (core 6)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 0): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 6): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 0 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 6 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:16] ccbench run: test=33 pair=(1,7) seed=1 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 1
+  Test 33 on core 7
+
+  / fence:  none
+Main pinned to seed core 1 for first-touch placement
+Requested core: 1, now running on cpu: 1, test is: 33 (NOP)
+Requested core: 7, now running on cpu: 7, test is: 33 (NOP)
+thread 1: set pfd correction to 34 (std dev: 27.6%) WARN: std is high and no fallback pfd correction
+thread 7: set pfd correction to 32 (std dev: 30.7%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   35] [  5:   36] [  6:   36] [  7:   36] [  8:   36] [  9:   36] [ 10:   36] [ 11:    1] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   35] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   35] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   35] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:   35] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   35] [ 49:   36] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:    1] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   35] [ 64:   36] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:    1] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:    1] [ 78:   36] [ 79:   36] [ 80:   35] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   35] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   35] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] [  0:    4] [  1:    4] [  2:    4] [  3:    4] [  4:    4] [  5:    4] [  6:    4] [  7:    4] [  8:    4] [  9:    4] [ 10:  -31] [ 11:    4] [ 12:    4] [ 13:    4] [ 14:    4] [ 15:    4] [ 16:    4] [ 17:    4] [ 18:    4] [ 19:    4] [ 20:    4] [ 21:    4] [ 22:    4] [ 23:    4] [ 24:    4] [ 25:    4] [ 26:    4] [ 27:    4] [ 28:  -31] [ 29:    4] [ 30:    4] [ 31:    4] [ 32:    4] [ 33:    4] [ 34:    4] [ 35:    4] [ 36:    4] [ 37:    4] [ 38:    4] [ 39:    4] [ 40:    4] [ 41:    4] [ 42:    4] [ 43:    4] [ 44:    4] [ 45:    4] [ 46:    4] [ 47:    4] [ 48:    4] [ 49:    4] [ 50:    4] [ 51:    4] [ 52:    4] [ 53:    4] [ 54:  -31] [ 55:    4] [ 56:    4] [ 57:    4] [ 58:    4] [ 59:    4] [ 60:    4] [ 61:    4] [ 62:    4] [ 63:    4] [ 64:    4] [ 65:    4] [ 66:    4] [ 67:    4] [ 68:    4] [ 69:    4] [ 70:  -31] [ 71:  -31] [ 72:    4] [ 73:    4] [ 74:    4] [ 75:    4] [ 76:    4] [ 77:    4] [ 78:    4] [ 79:    4] [ 80:    4] [ 81:    4] [ 82:   40] [ 83:    4] [ 84:    4] [ 85:    4] [ 86:    4] [ 87:    4] [ 88:    4] [ 89:    4] [ 90:    4] [ 91:    4] [ 92:    4] [ 93:    4] [ 94:    4] [ 95:  -31] [ 96:    4] [ 97:    4] [ 98:    4] [ 99:    4] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 1. with: avg  34.2 cycles (min   0.0 | max 143.0), std dev:   9.4, abs dev:   4.1
+Core number 1 is using thread: 7. with: avg  19.7 cycles (min   0.0 | max 508.0), std dev:  18.8, abs dev:  17.9
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     26.9 cycles | min avg     19.7 (core 7) | max avg     34.2 (core 1)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 1): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 7): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 1 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 7 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:18] ccbench run: test=33 pair=(1,7) seed=7 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 1
+  Test 33 on core 7
+
+  / fence:  none
+Main pinned to seed core 7 for first-touch placement
+Requested core: 1, now running on cpu: 1, test is: 33 (NOP)
+Requested core: 7, now running on cpu: 7, test is: 33 (NOP)
+thread 1: set pfd correction to 33 (std dev: 27.6%) WARN: std is high and no fallback pfd correction
+thread 7: set pfd correction to 32 (std dev: 31.5%) WARN: std is high and no fallback pfd correction
+[  0:    3] [  1:    3] [  2:    3] [  3:    3] [  4:  -32] [  5:    3] [  6:  -32] [  7:    3] [  8:    3] [  9:    3] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:    3] [ 14:    3] [ 15:    3] [ 16:    3] [ 17:  -32] [ 18:  -32] [ 19:    3] [ 20:  -32] [ 21:    3] [ 22:    3] [ 23:    3] [ 24:    3] [ 25:    3] [ 26:    3] [ 27:    3] [ 28:    3] [ 29:    3] [ 30:    3] [ 31:    3] [ 32:    3] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:    3] [ 39:    3] [ 40:    3] [ 41:    3] [ 42:    3] [ 43:    3] [ 44:    3] [ 45:    3] [ 46:    3] [ 47:    3] [ 48:    3] [ 49:    3] [ 50:    3] [ 51:  -32] [ 52:    3] [ 53:    3] [ 54:    3] [ 55:    3] [ 56:  -32] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:    3] [ 65:    3] [ 66:    3] [ 67:    3] [ 68:  -32] [ 69:    3] [ 70:    3] [ 71:    3] [ 72:  -32] [ 73:  -32] [ 74:    3] [ 75:    3] [ 76:  -32] [ 77:    3] [ 78:  -32] [ 79:    3] [ 80:    3] [ 81:    3] [ 82:    3] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:    3] [ 91:    3] [ 92:    3] [ 93:    3] [ 94:    3] [ 95:    3] [ 96:    3] [ 97:  -32] [ 98:  -32] [ 99:    3] [  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:    1] [  5:   36] [  6:   36] [  7:   36] [  8:   36] [  9:    1] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:    1] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:    1] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   35] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:    1] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   35] [ 38:   36] [ 39:   36] [ 40:   36] [ 41:   36] [ 42:   35] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:    1] [ 48:   36] [ 49:   36] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   35] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:    1] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   35] [ 64:   36] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:    1] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   36] [ 74:   35] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:   36] [ 79:    1] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:    1] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   35] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   36] [ 95:   35] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 1. with: avg  16.4 cycles (min   0.0 | max 471.0), std dev:  18.2, abs dev:  17.1
+Core number 1 is using thread: 7. with: avg  32.7 cycles (min   1.0 | max 108.0), std dev:  10.3, abs dev:   5.9
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     24.6 cycles | min avg     16.4 (core 1) | max avg     32.7 (core 7)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 1): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 7): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 1 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 7 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:20] ccbench run: test=33 pair=(2,8) seed=2 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 2
+  Test 33 on core 8
+
+  / fence:  none
+Main pinned to seed core 2 for first-touch placement
+Requested core: 2, now running on cpu: 2, test is: 33 (NOP)
+Requested core: 8, now running on cpu: 8, test is: 33 (NOP)
+thread 8: set pfd correction to 34 (std dev: 26.5%) WARN: std is high and no fallback pfd correction
+thread 2: set pfd correction to 34 (std dev: 26.5%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   72] [  2:   35] [  3:   36] [  4:   36] [  5:   36] [  6:   36] [  7:   36] [  8:   36] [  9:   36] [ 10:   36] [ 11:   36] [ 12:    1] [ 13:   36] [ 14:   36] [ 15:   35] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:   35] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:   36] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:    1] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:    1] [ 70:   36] [ 71:   36] [ 72:   35] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:    1] [ 77:   36] [ 78:   36] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   35] [ 93:   36] [ 94:   36] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] [  0:    2] [  1:    2] [  2:    2] [  3:    2] [  4:    2] [  5:    2] [  6:    2] [  7:    2] [  8:    2] [  9:    2] [ 10:    2] [ 11:    2] [ 12:    2] [ 13:    2] [ 14:    2] [ 15:    2] [ 16:  -33] [ 17:    2] [ 18:    2] [ 19:    2] [ 20:    2] [ 21:    2] [ 22:    2] [ 23:    2] [ 24:    2] [ 25:    2] [ 26:    2] [ 27:    2] [ 28:    2] [ 29:    2] [ 30:    2] [ 31:    2] [ 32:    2] [ 33:  -33] [ 34:    2] [ 35:    2] [ 36:    2] [ 37:    2] [ 38:    2] [ 39:  -33] [ 40:    2] [ 41:    2] [ 42:    2] [ 43:    2] [ 44:    2] [ 45:    2] [ 46:    2] [ 47:    2] [ 48:    2] [ 49:    2] [ 50:    2] [ 51:  -33] [ 52:    2] [ 53:    2] [ 54:    2] [ 55:    2] [ 56:    2] [ 57:    2] [ 58:    2] [ 59:  -33] [ 60:    2] [ 61:    2] [ 62:    2] [ 63:    2] [ 64:  -33] [ 65:  -33] [ 66:    2] [ 67:    2] [ 68:    2] [ 69:    2] [ 70:    2] [ 71:    2] [ 72:    2] [ 73:    2] [ 74:    2] [ 75:    2] [ 76:    2] [ 77:    2] [ 78:    2] [ 79:    2] [ 80:    2] [ 81:   38] [ 82:    2] [ 83:    2] [ 84:    2] [ 85:    2] [ 86:    2] [ 87:    2] [ 88:    2] [ 89:  -33] [ 90:    2] [ 91:    2] [ 92:    2] [ 93:    2] [ 94:    2] [ 95:  -33] [ 96:  -33] [ 97:    2] [ 98:    2] [ 99:    2] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 2. with: avg  34.4 cycles (min   0.0 | max 144.0), std dev:   9.1, abs dev:   3.8
+Core number 1 is using thread: 8. with: avg  13.3 cycles (min   0.0 | max 1226.0), std dev:  18.2, abs dev:  15.6
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     23.8 cycles | min avg     13.3 (core 8) | max avg     34.4 (core 2)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 2): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 8): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 2 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 8 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:22] ccbench run: test=33 pair=(2,8) seed=8 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 2
+  Test 33 on core 8
+
+  / fence:  none
+Main pinned to seed core 8 for first-touch placement
+Requested core: 2, now running on cpu: 2, test is: 33 (NOP)
+Requested core: 8, now running on cpu: 8, test is: 33 (NOP)
+thread 8: set pfd correction to 34 (std dev: 27.1%) WARN: std is high and no fallback pfd correction
+thread 2: set pfd correction to 34 (std dev: 26.7%) WARN: std is high and no fallback pfd correction
+[  0:    2] [  1:    2] [  2:    2] [  3:    2] [  4:  -33] [  5:    2] [  6:    2] [  7:  -33] [  8:    2] [  9:    2] [ 10:    2] [ 11:    2] [ 12:    2] [ 13:    2] [ 14:    2] [ 15:    2] [ 16:    2] [ 17:  -33] [ 18:    2] [ 19:  -33] [ 20:    2] [ 21:    2] [ 22:    2] [ 23:    2] [ 24:    2] [ 25:    2] [ 26:    2] [ 27:    2] [ 28:    2] [ 29:    2] [ 30:  -33] [ 31:    2] [ 32:    2] [ 33:    2] [ 34:    2] [ 35:    2] [ 36:    2] [ 37:    2] [ 38:    2] [ 39:    2] [ 40:    2] [ 41:    2] [ 42:    2] [ 43:    2] [ 44:    2] [ 45:    2] [ 46:    2] [ 47:    2] [ 48:  -33] [ 49:    2] [ 50:    2] [ 51:  -33] [ 52:    2] [ 53:    2] [ 54:  -33] [ 55:    2] [ 56:    2] [ 57:    2] [ 58:    2] [ 59:    2] [ 60:    2] [ 61:    2] [ 62:    2] [ 63:    2] [ 64:    2] [ 65:    2] [ 66:    2] [ 67:    2] [ 68:    2] [ 69:    2] [ 70:    2] [ 71:    2] [ 72:   38] [ 73:    2] [ 74:    2] [ 75:    2] [ 76:    2] [ 77:    2] [ 78:    2] [ 79:    2] [ 80:    2] [ 81:  -33] [ 82:    2] [ 83:    2] [ 84:    2] [ 85:    2] [ 86:    2] [ 87:    2] [ 88:    2] [ 89:  -33] [ 90:    2] [ 91:    2] [ 92:    2] [ 93:    2] [ 94:    2] [ 95:    2] [ 96:    2] [ 97:    2] [ 98:    2] [ 99:    2] [  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   36] [  5:   36] [  6:   35] [  7:   36] [  8:   36] [  9:   36] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:    1] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:   36] [ 22:   35] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:    1] [ 29:   36] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:    1] [ 37:    1] [ 38:   36] [ 39:   36] [ 40:   36] [ 41:   36] [ 42:   36] [ 43:    1] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:    1] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   35] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:    1] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   35] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:   36] [ 79:    1] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   35] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:    1] [ 94:   36] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:    1] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 2. with: avg  10.6 cycles (min   0.0 | max 470.0), std dev:  16.0, abs dev:  13.3
+Core number 1 is using thread: 8. with: avg  34.4 cycles (min   0.0 | max  72.0), std dev:   9.3, abs dev:   3.9
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     22.5 cycles | min avg     10.6 (core 2) | max avg     34.4 (core 8)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 2): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 8): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 2 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 8 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:23] ccbench run: test=33 pair=(3,9) seed=3 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 3
+  Test 33 on core 9
+
+  / fence:  none
+Main pinned to seed core 3 for first-touch placement
+Requested core: 3, now running on cpu: 3, test is: 33 (NOP)
+Requested core: 9, now running on cpu: 9, test is: 33 (NOP)
+thread 3: set pfd correction to 33 (std dev: 28.6%) WARN: std is high and no fallback pfd correction
+thread 9: set pfd correction to 33 (std dev: 29.8%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   36] [  5:   36] [  6:   36] [  7:    1] [  8:   36] [  9:   36] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:    1] [ 19:   36] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:    1] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:    1] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:   36] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:    1] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   35] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   35] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   71] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:   35] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:    1] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   36] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] [  0:    3] [  1:    3] [  2:    3] [  3:    3] [  4:    3] [  5:    3] [  6:    3] [  7:    3] [  8:    3] [  9:    3] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:    3] [ 14:    3] [ 15:   39] [ 16:    3] [ 17:    3] [ 18:    3] [ 19:    3] [ 20:    3] [ 21:   39] [ 22:    3] [ 23:    3] [ 24:    3] [ 25:    3] [ 26:    3] [ 27:    3] [ 28:    3] [ 29:    3] [ 30:    3] [ 31:    3] [ 32:    3] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:  -32] [ 39:    3] [ 40:    3] [ 41:    3] [ 42:    3] [ 43:    3] [ 44:    3] [ 45:  -32] [ 46:    3] [ 47:    3] [ 48:    3] [ 49:    3] [ 50:    3] [ 51:    3] [ 52:    3] [ 53:    3] [ 54:    3] [ 55:    3] [ 56:    3] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:    3] [ 65:    3] [ 66:  -32] [ 67:    3] [ 68:  -32] [ 69:  -32] [ 70:    3] [ 71:    3] [ 72:    3] [ 73:    3] [ 74:    3] [ 75:    3] [ 76:    3] [ 77:    3] [ 78:    3] [ 79:    3] [ 80:    3] [ 81:    3] [ 82:  -32] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:    3] [ 91:    3] [ 92:    3] [ 93:    3] [ 94:  -32] [ 95:    3] [ 96:  -32] [ 97:    3] [ 98:    3] [ 99:    3] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 3. with: avg  33.7 cycles (min   1.0 | max 108.0), std dev:   9.6, abs dev:   4.7
+Core number 1 is using thread: 9. with: avg   6.5 cycles (min   0.0 | max 1191.0), std dev:  13.0, abs dev:   6.8
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     20.1 cycles | min avg      6.5 (core 9) | max avg     33.7 (core 3)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 3): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 9): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 3 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 9 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:25] ccbench run: test=33 pair=(3,9) seed=9 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 3
+  Test 33 on core 9
+
+  / fence:  none
+Main pinned to seed core 9 for first-touch placement
+Requested core: 3, now running on cpu: 3, test is: 33 (NOP)
+Requested core: 9, now running on cpu: 9, test is: 33 (NOP)
+thread 3: set pfd correction to 33 (std dev: 28.4%) WARN: std is high and no fallback pfd correction
+thread 9: set pfd correction to 33 (std dev: 28.5%) WARN: std is high and no fallback pfd correction
+[  0:    3] [  1:    3] [  2:    3] [  3:    3] [  4:    3] [  5:    3] [  6:    3] [  7:    3] [  8:    3] [  9:  -32] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:    3] [ 14:    3] [ 15:    3] [ 16:    3] [ 17:    3] [ 18:    3] [ 19:  -32] [ 20:    3] [ 21:    3] [ 22:    3] [ 23:    3] [ 24:  -32] [ 25:  -32] [ 26:    3] [ 27:    3] [ 28:    3] [ 29:  -32] [ 30:    3] [ 31:  -32] [ 32:    3] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:    3] [ 39:    3] [ 40:    3] [ 41:    3] [ 42:    3] [ 43:  -32] [ 44:    3] [ 45:    3] [ 46:    3] [ 47:    3] [ 48:   39] [ 49:    3] [ 50:  -32] [ 51:    3] [ 52:    3] [ 53:    3] [ 54:    3] [ 55:  -32] [ 56:  -32] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:    3] [ 65:  -32] [ 66:    3] [ 67:    3] [ 68:    3] [ 69:  -32] [ 70:  -32] [ 71:    3] [ 72:    3] [ 73:    3] [ 74:    3] [ 75:    3] [ 76:    3] [ 77:    3] [ 78:    3] [ 79:    3] [ 80:  -32] [ 81:    3] [ 82:    3] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:  -32] [ 91:    3] [ 92:    3] [ 93:    3] [ 94:    3] [ 95:    3] [ 96:    3] [ 97:    3] [ 98:    3] [ 99:    3] [  0:   36] [  1:   36] [  2:    1] [  3:   72] [  4:   36] [  5:   36] [  6:   35] [  7:   36] [  8:   36] [  9:   36] [ 10:    1] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   35] [ 21:    1] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:    1] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:    1] [ 40:   36] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:   35] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:    1] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   72] [ 72:   35] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:    1] [ 77:   36] [ 78:   36] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   36] [ 95:   36] [ 96:   36] [ 97:   35] [ 98:   36] [ 99:   36] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 3. with: avg  22.1 cycles (min   0.0 | max 543.0), std dev:  19.2, abs dev:  18.2
+Core number 1 is using thread: 9. with: avg  33.5 cycles (min   0.0 | max 108.0), std dev:   9.5, abs dev:   4.8
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     27.8 cycles | min avg     22.1 (core 3) | max avg     33.5 (core 9)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 3): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 9): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 3 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 9 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:27] ccbench run: test=33 pair=(4,10) seed=4 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 4
+  Test 33 on core 10
+
+  / fence:  none
+Main pinned to seed core 4 for first-touch placement
+Requested core: 4, now running on cpu: 4, test is: 33 (NOP)
+Requested core: 10, now running on cpu: 10, test is: 33 (NOP)
+thread 4: set pfd correction to 34 (std dev: 26.2%) WARN: std is high and no fallback pfd correction
+thread 10: set pfd correction to 33 (std dev: 27.0%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   72] [  2:   36] [  3:   36] [  4:   36] [  5:   35] [  6:   36] [  7:   36] [  8:   36] [  9:    1] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   35] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:    1] [ 40:   36] [ 41:   36] [ 42:    1] [ 43:    1] [ 44:   36] [ 45:    1] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:   36] [ 51:   36] [ 52:   35] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   36] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:   36] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:    1] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] [  0:    3] [  1:    3] [  2:    3] [  3:    3] [  4:    3] [  5:    3] [  6:    3] [  7:    3] [  8:    3] [  9:    3] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:    3] [ 14:    3] [ 15:    3] [ 16:    3] [ 17:    3] [ 18:    3] [ 19:    3] [ 20:    3] [ 21:    3] [ 22:    3] [ 23:    3] [ 24:    3] [ 25:    3] [ 26:    3] [ 27:    3] [ 28:    3] [ 29:    3] [ 30:  -32] [ 31:    3] [ 32:    3] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:    3] [ 39:    3] [ 40:    3] [ 41:    3] [ 42:    3] [ 43:    3] [ 44:    3] [ 45:    3] [ 46:    3] [ 47:    3] [ 48:    3] [ 49:    3] [ 50:    3] [ 51:    3] [ 52:    3] [ 53:    3] [ 54:    3] [ 55:    3] [ 56:    3] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:    3] [ 65:    3] [ 66:    3] [ 67:    3] [ 68:    3] [ 69:    3] [ 70:    3] [ 71:    3] [ 72:    3] [ 73:    3] [ 74:    3] [ 75:    3] [ 76:    3] [ 77:    3] [ 78:    3] [ 79:    3] [ 80:    3] [ 81:    3] [ 82:    3] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:    3] [ 91:    3] [ 92:    3] [ 93:    3] [ 94:    3] [ 95:    3] [ 96:    3] [ 97:    3] [ 98:    3] [ 99:    3] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 4. with: avg  34.0 cycles (min   0.0 | max 108.0), std dev:   8.9, abs dev:   4.0
+Core number 1 is using thread: 10. with: avg   3.0 cycles (min   0.0 | max 1191.0), std dev:  11.0, abs dev:   0.5
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     18.5 cycles | min avg      3.0 (core 10) | max avg     34.0 (core 4)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 4): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 10): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 4 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 10 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:28] ccbench run: test=33 pair=(4,10) seed=10 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 4
+  Test 33 on core 10
+
+  / fence:  none
+Main pinned to seed core 10 for first-touch placement
+Requested core: 4, now running on cpu: 4, test is: 33 (NOP)
+Requested core: 10, now running on cpu: 10, test is: 33 (NOP)
+thread 4: set pfd correction to 34 (std dev: 25.9%) WARN: std is high and no fallback pfd correction
+thread 10: set pfd correction to 33 (std dev: 27.7%) WARN: std is high and no fallback pfd correction
+[  0:    2] [  1:    2] [  2:    2] [  3:    2] [  4:    2] [  5:  -33] [  6:  -33] [  7:    2] [  8:    2] [  9:    2] [ 10:    2] [ 11:    2] [ 12:    2] [ 13:    2] [ 14:    2] [ 15:    2] [ 16:    2] [ 17:    2] [ 18:    2] [ 19:    2] [ 20:    2] [ 21:    2] [ 22:    2] [ 23:    2] [ 24:    2] [ 25:    2] [ 26:    2] [ 27:    2] [ 28:    2] [ 29:    2] [ 30:    2] [ 31:    2] [ 32:    2] [ 33:    2] [ 34:    2] [ 35:    2] [ 36:    2] [ 37:    2] [ 38:    2] [ 39:    2] [ 40:    2] [ 41:    2] [ 42:    2] [ 43:    2] [ 44:    2] [ 45:    2] [ 46:    2] [ 47:    2] [ 48:    2] [ 49:    2] [ 50:  -33] [ 51:    2] [ 52:    2] [ 53:    2] [ 54:    2] [ 55:    2] [ 56:    2] [ 57:    2] [ 58:    2] [ 59:    2] [ 60:    2] [ 61:    2] [ 62:    2] [ 63:    2] [ 64:    2] [ 65:    2] [ 66:    2] [ 67:    2] [ 68:    2] [ 69:    2] [ 70:  -33] [ 71:    2] [ 72:    2] [ 73:    2] [ 74:    2] [ 75:  -33] [ 76:    2] [ 77:    2] [ 78:    2] [ 79:    2] [ 80:    2] [ 81:    2] [ 82:    2] [ 83:    2] [ 84:    2] [ 85:    2] [ 86:    2] [ 87:  -33] [ 88:    2] [ 89:    2] [ 90:    2] [ 91:  -33] [ 92:    2] [ 93:    2] [ 94:    2] [ 95:    2] [ 96:    2] [ 97:    2] [ 98:  -33] [ 99:    2] [  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   36] [  5:   36] [  6:   36] [  7:   36] [  8:   36] [  9:   36] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:    1] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:    1] [ 31:   36] [ 32:    1] [ 33:   36] [ 34:    1] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:    1] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:    1] [ 57:   36] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:    1] [ 62:   36] [ 63:    1] [ 64:    1] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:    1] [ 76:   36] [ 77:   36] [ 78:   36] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:    1] [ 93:   36] [ 94:   36] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   36] [ 99:   36] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 4. with: avg   2.0 cycles (min   0.0 | max 1406.0), std dev:   5.3, abs dev:   0.3
+Core number 1 is using thread: 10. with: avg  33.5 cycles (min   1.0 | max 468.0), std dev:   9.3, abs dev:   4.6
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     17.8 cycles | min avg      2.0 (core 4) | max avg     33.5 (core 10)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 4): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 10): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 4 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 10 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:30] ccbench run: test=33 pair=(5,11) seed=5 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 5
+  Test 33 on core 11
+
+  / fence:  none
+Main pinned to seed core 5 for first-touch placement
+Requested core: 5, now running on cpu: 5, test is: 33 (NOP)
+Requested core: 11, now running on cpu: 11, test is: 33 (NOP)
+thread 5: set pfd correction to 33 (std dev: 28.6%) WARN: std is high and no fallback pfd correction
+thread 11: set pfd correction to 33 (std dev: 28.7%) WARN: std is high and no fallback pfd correction
+[  0:   36] [  1:   36] [  2:   36] [  3:   36] [  4:   36] [  5:   36] [  6:    1] [  7:   36] [  8:   36] [  9:   36] [ 10:   36] [ 11:   36] [ 12:   36] [ 13:    1] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:   35] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   36] [ 27:   36] [ 28:   36] [ 29:    1] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   35] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   36] [ 40:   36] [ 41:   36] [ 42:    1] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:    1] [ 50:   36] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   35] [ 57:    1] [ 58:   36] [ 59:   36] [ 60:   36] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   36] [ 65:   36] [ 66:    1] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   35] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   36] [ 78:   36] [ 79:   35] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:    1] [ 85:   36] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   35] [ 92:   36] [ 93:   36] [ 94:   36] [ 95:   36] [ 96:   36] [ 97:   36] [ 98:   35] [ 99:   36] [  0:    3] [  1:    3] [  2:    3] [  3:    3] [  4:    3] [  5:    3] [  6:    3] [  7:    3] [  8:    3] [  9:    3] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:  -32] [ 14:    3] [ 15:    3] [ 16:    3] [ 17:    3] [ 18:    3] [ 19:    3] [ 20:    3] [ 21:    3] [ 22:    3] [ 23:  -32] [ 24:    3] [ 25:    3] [ 26:    3] [ 27:    3] [ 28:    3] [ 29:    3] [ 30:    3] [ 31:    3] [ 32:    3] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:    3] [ 39:    3] [ 40:    3] [ 41:    3] [ 42:    3] [ 43:    3] [ 44:    3] [ 45:    3] [ 46:    3] [ 47:    3] [ 48:  -32] [ 49:    3] [ 50:    3] [ 51:    3] [ 52:    3] [ 53:  -32] [ 54:    3] [ 55:    3] [ 56:  -32] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:    3] [ 65:    3] [ 66:    3] [ 67:    3] [ 68:    3] [ 69:    3] [ 70:    3] [ 71:    3] [ 72:    3] [ 73:    3] [ 74:    3] [ 75:    3] [ 76:    3] [ 77:    3] [ 78:    3] [ 79:    3] [ 80:    3] [ 81:    3] [ 82:    3] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:    3] [ 91:    3] [ 92:    3] [ 93:  -32] [ 94:    3] [ 95:    3] [ 96:    3] [ 97:    3] [ 98:    3] [ 99:    3] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 5. with: avg  33.8 cycles (min   0.0 | max 108.0), std dev:   9.7, abs dev:   4.7
+Core number 1 is using thread: 11. with: avg   7.6 cycles (min   0.0 | max 1191.0), std dev:  14.5, abs dev:   8.4
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     20.7 cycles | min avg      7.6 (core 11) | max avg     33.8 (core 5)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 5): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 11): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 5 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 11 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
+
+================================================================================
+[2026-01-21 17:09:31] ccbench run: test=33 pair=(5,11) seed=11 reps=100000 stride=1
+================================================================================
+Per-thread ops in group 0:
+  Test 33 on core 5
+  Test 33 on core 11
+
+  / fence:  none
+Main pinned to seed core 11 for first-touch placement
+Requested core: 5, now running on cpu: 5, test is: 33 (NOP)
+Requested core: 11, now running on cpu: 11, test is: 33 (NOP)
+thread 5: set pfd correction to 33 (std dev: 28.3%) WARN: std is high and no fallback pfd correction
+thread 11: set pfd correction to 33 (std dev: 28.3%) WARN: std is high and no fallback pfd correction
+[  0:    3] [  1:    3] [  2:    3] [  3:    3] [  4:    3] [  5:    3] [  6:    3] [  7:    3] [  8:    3] [  9:    3] [ 10:    3] [ 11:    3] [ 12:    3] [ 13:    3] [ 14:    3] [ 15:    3] [ 16:  -32] [ 17:    3] [ 18:    3] [ 19:    3] [ 20:    3] [ 21:    3] [ 22:    3] [ 23:    3] [ 24:    3] [ 25:    3] [ 26:    3] [ 27:  -32] [ 28:    3] [ 29:    3] [ 30:    3] [ 31:    3] [ 32:    3] [ 33:    3] [ 34:    3] [ 35:    3] [ 36:    3] [ 37:    3] [ 38:    3] [ 39:  -32] [ 40:    3] [ 41:  -32] [ 42:    3] [ 43:    3] [ 44:  -32] [ 45:    3] [ 46:    3] [ 47:  -32] [ 48:    3] [ 49:  -32] [ 50:    3] [ 51:    3] [ 52:  -32] [ 53:    3] [ 54:    3] [ 55:    3] [ 56:    3] [ 57:    3] [ 58:    3] [ 59:    3] [ 60:    3] [ 61:    3] [ 62:    3] [ 63:    3] [ 64:    3] [ 65:  -32] [ 66:    3] [ 67:    3] [ 68:    3] [ 69:    3] [ 70:    3] [ 71:    3] [ 72:    3] [ 73:    3] [ 74:    3] [ 75:    3] [ 76:    3] [ 77:    3] [ 78:    3] [ 79:    3] [ 80:    3] [ 81:    3] [ 82:    3] [ 83:    3] [ 84:    3] [ 85:    3] [ 86:    3] [ 87:    3] [ 88:    3] [ 89:    3] [ 90:    3] [ 91:    3] [ 92:    3] [ 93:    3] [ 94:    3] [ 95:    3] [ 96:    3] [ 97:    3] [ 98:    3] [ 99:    3] [  0:   36] [  1:   36] [  2:   36] [  3:   35] [  4:   36] [  5:   36] [  6:   36] [  7:   36] [  8:   36] [  9:   36] [ 10:    1] [ 11:   36] [ 12:   36] [ 13:   36] [ 14:   36] [ 15:   36] [ 16:   36] [ 17:   36] [ 18:   36] [ 19:   36] [ 20:   36] [ 21:   36] [ 22:   36] [ 23:   36] [ 24:   36] [ 25:   36] [ 26:   35] [ 27:   36] [ 28:   36] [ 29:   36] [ 30:   36] [ 31:   36] [ 32:   36] [ 33:   36] [ 34:   36] [ 35:   36] [ 36:   36] [ 37:   36] [ 38:   36] [ 39:   35] [ 40:   36] [ 41:   36] [ 42:   36] [ 43:   36] [ 44:   36] [ 45:   36] [ 46:   36] [ 47:   36] [ 48:   36] [ 49:   36] [ 50:    1] [ 51:   36] [ 52:   36] [ 53:   36] [ 54:   36] [ 55:   36] [ 56:   35] [ 57:   72] [ 58:    1] [ 59:   36] [ 60:    1] [ 61:   36] [ 62:   36] [ 63:   36] [ 64:   35] [ 65:   36] [ 66:   36] [ 67:   36] [ 68:   36] [ 69:   36] [ 70:   36] [ 71:   36] [ 72:   36] [ 73:   36] [ 74:   36] [ 75:   36] [ 76:   36] [ 77:   35] [ 78:   36] [ 79:   36] [ 80:   36] [ 81:   36] [ 82:   36] [ 83:   36] [ 84:   36] [ 85:    1] [ 86:   36] [ 87:   36] [ 88:   36] [ 89:   36] [ 90:   36] [ 91:   36] [ 92:   36] [ 93:   36] [ 94:   36] [ 95:   36] [ 96:   35] [ 97:   36] [ 98:   36] [ 99:   36] 
+
+---- Cross-core summary ------------------------------------------------------------
+Test number 0 uses test ID 33
+Core number 0 is using thread: 5. with: avg   2.8 cycles (min   0.0 | max 219.0), std dev:   2.8, abs dev:   0.5
+Core number 1 is using thread: 11. with: avg  33.9 cycles (min   1.0 | max 108.0), std dev:   9.6, abs dev:   4.5
+End test 0 results for ID 33
+
+
+[00]  Summary : mean avg     18.4 cycles | min avg      2.8 (core 5) | max avg     33.9 (core 11)
+
+Common-start latency (B4 -> success), per thread:
+  thread ID 0 (core 5): mean    0.0 cycles, min    0.0, max    0.0
+  thread ID 1 (core 11): mean    0.0 cycles, min    0.0, max    0.0
+
+Per-group Borda fairness (Jain over cumulative finish ranks; higher is fairer, max 1.0):
+  Group 0: Jain(Borda) mean 0.9000, min 0.9000, max 0.9000 over 100000 reps
+
+
+
+First-success winners per thread (out of 100000 reps):
+  Group 0 role 0 on thread 5 (thread ID 0): 0 wins
+  Group 0 role 1 on thread 11 (thread ID 1): 0 wins
+
+[00]  ** Results from Core 0 and 1 : store on modified
+[00]  value of cl is 1          / sum is 0
+[01]  value of cl is 1          / sum is 0
+
