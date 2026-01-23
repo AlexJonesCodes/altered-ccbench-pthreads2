@@ -63,6 +63,8 @@ static int have_seeder_thread = 0;  /* seed core not in -x => spawn helper */
 static pthread_t seeder_pth;        /* helper thread handle */
 static int opt_mlock = 0;
 int opt_numa = 1;
+static int test_backoff = 0;
+static uint32_t test_backoff_max = 1024;
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -167,6 +169,8 @@ static struct option long_options[] = {
 	{"cores_array",              required_argument, NULL, 'x'},
 	{"seed",                     required_argument, NULL, 'b'},
 	{"mem-size",                 required_argument, NULL, 'm'},
+	{"backoff",                  no_argument,       NULL, 'B'},
+	{"backoff-max",              required_argument, NULL, 'M'},
 	{"flush",                    no_argument,       NULL, 'f'},
 	{"success",                  no_argument,       NULL, 'u'},
 	{"verbose",                  no_argument,       NULL, 'v'},
@@ -183,7 +187,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -230,6 +234,10 @@ int main(int argc, char** argv)
 		 "        5 = full-none fences / 6 = none-full fences / 7 = full-store fences / 8 = load-full fences \n"
 		 "  -m, --mem-size <int>\n"
 		 "        What memory size to use (in cache lines) (default=" XSTR(CACHE_LINE_NUM) ")\n"
+		 "  -B, --backoff\n"
+		 "        Enable exponential backoff after CAS_UNTIL_SUCCESS failures\n"
+		 "  -M, --backoff-max <int>\n"
+		 "        Max pause iterations for backoff (default=1024)\n"
 		 "  -u, --success\n"
 		 "        Make all atomic operations be successfull (e.g, TAS_ON_SHARED)\n"
 		 "  -n, --no-numa\n"
@@ -259,6 +267,13 @@ int main(int argc, char** argv)
 	break;
 	case 'b': /* --seed: physical core id where the line is primed each repetition */
 		seed_core = atoi(optarg);
+		break;
+	case 'B': /* --backoff: enable exponential backoff for CAS_UNTIL_SUCCESS */
+		test_backoff = 1;
+		break;
+	case 'M': /* --backoff-max: cap for backoff pause iterations */
+		test_backoff_max = (uint32_t) atoi(optarg);
+		if (test_backoff_max < 1) test_backoff_max = 1;
 		break;
 	case 't':
 		if ((parse_jagged_array(optarg, &test_num_array, &test_rows, &test_cols) != 0) || test_rows != 1){
@@ -2060,6 +2075,7 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t* w = &cl[0].word[0];
 
   uint32_t attempts = 0;
+  uint32_t backoff = 1;
 
   /* We keep the original PFD “attempt->success” timing as-is */
   PFDI(0);
@@ -2073,7 +2089,17 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
       race_try_win((uint64_t) reps);
       break;
     }
-    _mm_pause();
+    if (test_backoff) {
+      for (uint32_t i = 0; i < backoff; i++) {
+        _mm_pause();
+      }
+      if (backoff < test_backoff_max) {
+        backoff = backoff << 1;
+        if (backoff > test_backoff_max) backoff = test_backoff_max;
+      }
+    } else {
+      _mm_pause();
+    }
   }
   PFDO(0, reps);
 
