@@ -810,6 +810,10 @@ run_benchmark(void* arg)
 			uint8_t o = (uint8_t)(reps & 0x1);
 			cache_line->word[0] = o;
 			_mm_mfence();
+			if (first_winner_per_rep) {
+			first_winner_per_rep[reps] = UINT32_MAX;
+			_mm_mfence();
+			}
 			if (round_start) {
 			round_start[reps] = getticks();
 			_mm_mfence();
