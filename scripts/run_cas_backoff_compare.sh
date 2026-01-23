@@ -145,11 +145,11 @@ parse_wins() {
       -v reps="$reps" \
       -v backoff="$backoff" \
       -v out_csv="$progress_csv" '
-    /wins$/ {
-      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
-        core = m[1]
-        thread = m[2]
-        wins = m[3]
+    /wins/ {
+      if (match($0, /Group[[:space:]]+([0-9]+)[^0-9]+role[[:space:]]+([0-9]+)[^0-9]+thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins/, m)) {
+        core = m[3]
+        thread = m[4]
+        wins = m[5]
         printf "%s,%s,%s,%s,%s,%s,%s,%s\n", \
           run_id, mode, threads, reps, backoff, thread, core, wins \
           >> out_csv
