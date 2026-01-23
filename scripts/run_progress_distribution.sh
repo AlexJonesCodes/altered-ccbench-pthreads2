@@ -154,7 +154,7 @@ parse_wins() {
       -v reps="$reps" \
       -v out_csv="$progress_csv" '
     /wins$/ {
-      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
         core = m[1]
         thread = m[2]
         wins = m[3]
