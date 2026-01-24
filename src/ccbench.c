@@ -87,6 +87,16 @@ static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX me
 /* Round start (common t0 per repetition) and per-thread, per-rep latency from t0 to success */
 static ticks* round_start = NULL;                 /* size: test_reps */
 static uint64_t* common_latency_cycles = NULL;    /* size: test_cores * test_reps */
+/* Record B4->success for this thread and repetition (only once). */
+static inline void rec_success(uint64_t rep)
+{
+  if (!common_latency_cycles || !round_start) return;
+  size_t idx = (size_t) ID * test_reps + (size_t) rep;
+  if (common_latency_cycles[idx] == 0) {
+    ticks t_end = getticks();
+    common_latency_cycles[idx] = (uint64_t)(t_end - round_start[rep]);
+  }
+}
 
 
 /* Thread-local current repetition index for ops that don't take 'reps' param */
@@ -2149,19 +2159,21 @@ uint32_t
 fai(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t t = 0;
-
   uint32_t cln = 0;
   do
-    {
-      cln = clrand();
-      volatile cache_line_t* cl1 = cl + cln;
-	  if (cln == 0) {           // reached the target line
-		RACE_TRY_WITH_REP(reps);  // claim winner here
-	  }
-      PFDI(0);
-      t = FAI_U32(cl1->word);
-      PFDO(0, reps);
+  {
+    cln = clrand();
+    volatile cache_line_t* cl1 = cl + cln;
+    if (cln == 0) {
+      RACE_TRY_WITH_REP(reps);
     }
+    PFDI(0);
+    t = FAI_U32(cl1->word);
+    PFDO(0, reps);
+    if (cln == 0) {
+      rec_success(reps);               /* B4 -> FAI completion (always success) */
+    }
+  }
   while (cln > 0);
 
   return t;
@@ -2170,47 +2182,60 @@ fai(volatile cache_line_t* cl, volatile uint64_t reps)
 uint8_t
 tas(volatile cache_line_t* cl, volatile uint64_t reps)
 {
-  volatile uint8_t r;
-  
   uint32_t cln = 0;
   do
-    {
-      cln = clrand();
-      volatile cache_line_t* cl1 = cl + cln;
+  {
+    cln = clrand();
+    volatile cache_line_t* cl1 = cl + cln;
 #if defined(TILERA)
-      volatile uint32_t* b = (volatile uint32_t*) cl1->word;
+    volatile uint32_t* b = (volatile uint32_t*) cl1->word;
 #else
-      volatile uint8_t* b = (volatile uint8_t*) cl1->word;
+    volatile uint8_t*  b = (volatile uint8_t*)  cl1->word;
 #endif
-	if (cln == 0) {           // reached the target line
-		RACE_TRY_WITH_REP(reps);  // claim winner here
-	}
+    if (cln == 0)
+    {
+      /* We reached the target line: first arrival marker (keeps existing fairness winner semantics) */
+      RACE_TRY_WITH_REP(reps);
+
+      /* Time the "attempts until TAS succeeds" region and record B4->success on success */
       PFDI(0);
-      r = TAS_U8(b);
-      PFDO(0, reps);
+      for (;;)
+      {
+        uint8_t r = TAS_U8(b);
+        if (r != 255) {
+          PFDO(0, reps);
+          rec_success(reps);          /* B4 -> TAS success */
+          break;
+        }
+        _mm_pause();
+      }
     }
+  }
   while (cln > 0);
 
-  return (r != 255);
+  /* We always succeed before leaving the cln==0 iteration */
+  return 1;
 }
 
 uint32_t
 swap(volatile cache_line_t* cl, volatile uint64_t reps)
 {
   volatile uint32_t res;
-
   uint32_t cln = 0;
   do
-    {
-      cln = clrand();
-      volatile cache_line_t* cl1 = cl + cln;
-	  if (cln == 0) {           // reached the target line
-		RACE_TRY_WITH_REP(reps);  // claim winner here
-	  }
-      PFDI(0);
-      res = SWAP_U32(cl1->word, ID);
-      PFDO(0, reps);
+  {
+    cln = clrand();
+    volatile cache_line_t* cl1 = cl + cln;
+    if (cln == 0) {
+      RACE_TRY_WITH_REP(reps);
     }
+    PFDI(0);
+    res = SWAP_U32(cl1->word, ID);
+    PFDO(0, reps);
+    if (cln == 0) {
+      rec_success(reps);               /* B4 -> SWAP completion (always success) */
+    }
+  }
   while (cln > 0);
 
   _mm_mfence();
