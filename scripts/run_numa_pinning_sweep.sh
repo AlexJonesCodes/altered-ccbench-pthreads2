@@ -69,7 +69,12 @@ if [[ "$threads" -lt 1 ]]; then
   exit 1
 fi
 
-if [[ "$seed_core" -ge 0 && "$seed_core" -ge "$total_cores" ]]; then
+if [[ "$seed_core" -lt 0 ]]; then
+  echo "CAS_UNTIL_SUCCESS requires a seed core; overriding --seed-core to 0." >&2
+  seed_core=0
+fi
+
+if [[ "$seed_core" -ge "$total_cores" ]]; then
   echo "--seed-core ($seed_core) must be less than total cores ($total_cores)." >&2
   exit 1
 fi

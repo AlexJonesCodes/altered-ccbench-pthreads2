@@ -87,6 +87,19 @@ mkdir -p "$output_dir/logs"
 IFS=',' read -r -a test_ids <<<"$tests"
 IFS=',' read -r -a thread_list <<<"$thread_counts"
 
+requires_seed=0
+for tid in "${test_ids[@]}"; do
+  if [[ "$tid" == "33" ]]; then
+    requires_seed=1
+    break
+  fi
+done
+
+if [[ "$requires_seed" -eq 1 && "$seed_core" -lt 0 ]]; then
+  echo "CAS_UNTIL_SUCCESS requires a seed core; overriding --seed-core to 0." >&2
+  seed_core=0
+fi
+
 run_id=0
 runs_csv="$output_dir/runs.csv"
 threads_csv="$output_dir/threads.csv"
