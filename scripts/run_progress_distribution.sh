@@ -75,11 +75,6 @@ if [[ -z "$thread_counts" ]]; then
   thread_counts=$(seq 1 "$max_threads" | paste -sd, -)
 fi
 
-if [[ "$seed_core" -ge 0 && "$seed_core" -ge "$total_cores" ]]; then
-  echo "--seed-core ($seed_core) must be less than total cores ($total_cores)." >&2
-  exit 1
-fi
-
 if [[ ! -x "$ccbench" ]]; then
   echo "ccbench binary not found or not executable: $ccbench" >&2
   exit 1
@@ -89,6 +84,24 @@ mkdir -p "$output_dir/logs"
 
 IFS=',' read -r -a thread_list <<<"$thread_counts"
 IFS=',' read -r -a test_list <<<"$tests"
+
+requires_seed=0
+for tid in "${test_list[@]}"; do
+  if [[ "$tid" == "33" ]]; then
+    requires_seed=1
+    break
+  fi
+done
+
+if [[ "$requires_seed" -eq 1 && "$seed_core" -lt 0 ]]; then
+  echo "CAS_UNTIL_SUCCESS requires a seed core; overriding --seed-core to 0." >&2
+  seed_core=0
+fi
+
+if [[ "$seed_core" -ge 0 && "$seed_core" -ge "$total_cores" ]]; then
+  echo "--seed-core ($seed_core) must be less than total cores ($total_cores)." >&2
+  exit 1
+fi
 
 declare -A test_names=(
   ["33"]="CAS_UNTIL_SUCCESS"
