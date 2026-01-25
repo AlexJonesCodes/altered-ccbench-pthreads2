@@ -5,13 +5,13 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/run_cas_latency_fairness.sh [options]
 
-Sweep thread counts for test ID 33 (CAS until success) and record
+Sweep thread counts for test ID 34 (CAS until success) and record
 latency + fairness metrics in CSVs.
 
 Options:
   --thread-counts LIST  Comma-separated thread counts (e.g., "1,2,4,8")
   --max-threads N       Maximum threads when --thread-counts omitted (default: all)
-  --test-id N           Test ID to run (default: 33)
+  --test-id N           Test ID to run (default: 34)
   --reps N              Repetitions per run (default: 10000)
   --seed-core N         Seed core for contended runs (default: 0, -1 disables)
   --ccbench PATH        Path to ccbench binary (default: ./ccbench)
@@ -27,7 +27,7 @@ USAGE
 
 thread_counts=""
 max_threads=""
-test_id=33
+test_id=34
 reps=10000
 seed_core=0
 ccbench=./ccbench
@@ -79,7 +79,7 @@ if [[ -z "$thread_counts" ]]; then
   thread_counts=$(seq 1 "$max_threads" | paste -sd, -)
 fi
 
-if [[ "$test_id" == "33" && "$seed_core" -lt 0 ]]; then
+if [[ "$test_id" == "34" && "$seed_core" -lt 0 ]]; then
   echo "CAS_UNTIL_SUCCESS requires a seed core; overriding --seed-core to 0." >&2
   seed_core=0
 fi

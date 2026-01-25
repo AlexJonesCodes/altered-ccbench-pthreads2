@@ -11,7 +11,7 @@ Defaults to CAS_UNTIL_SUCCESS, FAI, and CAS_CONCURRENT.
 Options:
   --thread-counts LIST  Comma-separated thread counts (e.g., "1,2,4,8")
   --max-threads N       Maximum threads when --thread-counts omitted (default: all)
-  --tests LIST          Comma-separated test IDs (default: "33,13,24")
+  --tests LIST          Comma-separated test IDs (default: "34,13,24")
   --reps N              Repetitions per run (default: 10000)
   --seed-core N         Seed core for contended runs (default: 0, -1 disables)
   --ccbench PATH        Path to ccbench binary (default: ./ccbench)
@@ -23,7 +23,7 @@ USAGE
 
 thread_counts=""
 max_threads=""
-tests="33,13,24"
+tests="34,13,24"
 reps=10000
 seed_core=0
 ccbench=./ccbench
@@ -87,7 +87,7 @@ IFS=',' read -r -a test_list <<<"$tests"
 
 requires_seed=0
 for tid in "${test_list[@]}"; do
-  if [[ "$tid" == "33" ]]; then
+  if [[ "$tid" == "34" ]]; then
     requires_seed=1
     break
   fi
@@ -104,7 +104,7 @@ if [[ "$seed_core" -ge 0 && "$seed_core" -ge "$total_cores" ]]; then
 fi
 
 declare -A test_names=(
-  ["33"]="CAS_UNTIL_SUCCESS"
+  ["34"]="CAS_UNTIL_SUCCESS"
   ["13"]="FAI"
   ["24"]="CAS_CONCURRENT"
 )
