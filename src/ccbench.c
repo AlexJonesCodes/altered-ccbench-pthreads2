@@ -841,7 +841,7 @@ run_benchmark(void* arg)
 							_mm_mfence(); cache_line->word[0] = 0; break;       /* keep TAS re-entrant */
 			case SWAP:       sum += swap(cache_line, reps); break;               /* 15 */
 			case CAS_UNTIL_SUCCESS:
-							sum += cas_until_success(cache_line, reps); break;  /* 33 */
+							sum += cas_until_success(cache_line, reps); break;  /* 34 */
 
 			case STORE_ON_MODIFIED:
 			case STORE_ON_MODIFIED_NO_SYNC:
@@ -1479,7 +1479,7 @@ run_benchmark(void* arg)
 	      PFDO(0, reps);
 	    }
 	  break;
-	case PAUSE:		/* 31 */
+	case PAUSE:		/* 32 */
 	  if (ID < 2)
 	    {
 	      PFDI(0);
@@ -1487,7 +1487,7 @@ run_benchmark(void* arg)
 	      PFDO(0, reps);
 	    }
 	  break;
-	case NOP:		/* 32 */
+	case NOP:		/* 33 */
 	  if (ID < 2)
 	    {
 	      PFDI(0);
@@ -1495,7 +1495,7 @@ run_benchmark(void* arg)
 	      PFDO(0, reps);
 	    }
 	  break;
-	case CAS_UNTIL_SUCCESS:  /* 33 */
+	case CAS_UNTIL_SUCCESS:  /* 34 */
 		{
 		if (role == 0) { 
 			sum += cas_until_success(cache_line, reps); 
@@ -1511,7 +1511,7 @@ run_benchmark(void* arg)
 		break;
 	}
 
-	case PROFILER:		/* 34 */
+	case PROFILER:		/* 31 */
 	default:
 	  PFDI(0);
 	  asm volatile ("");

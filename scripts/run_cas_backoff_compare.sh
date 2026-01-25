@@ -183,7 +183,7 @@ for threads in "${thread_list[@]}"; do
     exit 1
   fi
   cores=$(make_cores "$threads")
-  tests_list=$(make_list "$threads" 33)
+  tests_list=$(make_list "$threads" 34)
 
   for mode in baseline backoff; do
     run_id=$((run_id + 1))

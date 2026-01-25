@@ -89,7 +89,7 @@ IFS=',' read -r -a thread_list <<<"$thread_counts"
 
 requires_seed=0
 for tid in "${test_ids[@]}"; do
-  if [[ "$tid" == "33" ]]; then
+  if [[ "$tid" == "34" ]]; then
     requires_seed=1
     break
   fi

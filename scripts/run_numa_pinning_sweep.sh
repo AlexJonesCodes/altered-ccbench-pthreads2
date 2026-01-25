@@ -193,7 +193,7 @@ run_cmd() {
   "${cmd[@]}"
 }
 
-tests_list=$(make_list "$threads" 33)
+tests_list=$(make_list "$threads" 34)
 numactl_bin=""
 if command -v numactl >/dev/null 2>&1; then
   numactl_bin="numactl"
