@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
 """
-Visualise non-contention placement results:
-- Heatmap per test_id: rows = worker_thread, cols = seed_thread (-b), color = latency (cycles)
-- Grouped bar chart: x = worker_thread, y = fairness (Jain) across all seeds for that worker,
-  with one bar per test_id (different colors, legend)
+Placement visualisation with selectable axis ordering.
 
-Input CSV schema (from the noncontention runner):
+Input CSV (from non-contention runner):
   test_id,seed_thread,worker_thread,latency
 
-Edit INPUT_CSV and OUT_DIR below as needed.
+This script produces:
+- Heatmap per test_id:
+    rows = worker_thread, cols = seed_thread (-b), color = latency (cycles)
+    Axis order is selectable:
+      * default: numeric ascending
+      * XEON_E5_2630V3_ORDER: 0..7, 16..23, 8..15, 24..31 (labels outside 0..31 appended ascending)
+      * XEON_GOLD_6142_ORDER: even cores ascending, then odd cores ascending (e.g., 0,2,4,...,1,3,5,...)
+        (labels outside any expected range are naturally included and ordered by parity then value)
+    Ticks and tick labels show on all four sides. Each cell has a visible border grid.
+
+- Grouped bar chart:
+    x = worker_thread (same selected order),
+    y = fairness (Jain’s index) across seeds for that worker,
+    one bar per test_id per worker (different colors, legend).
+
+Select exactly one ordering mode by setting the booleans below, or set both False for default.
 """
 
 import os
-from typing import List, Dict
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -29,14 +41,18 @@ except Exception:
 # ==============================
 # Configuration
 # ==============================
-base_dir = "./r53600/"
-INPUT_CSV = os.path.join(base_dir, "noncontention_latency", "noncontention_latency.csv")
+base_dir = "./Xeon_Gold_6142/"
+INPUT_CSV = os.path.join(base_dir, "noncontention_latency.csv")
 
 OUT_DIR = os.path.join(base_dir, "noncontention_latency_plots")
 HEATMAP_PREFIX = "heatmap_latency_test"
 GROUPED_BARS_PNG = "fairness_across_seeds_grouped.png"
 
 FIG_DPI = 140
+
+# Select one ordering mode (mutually exclusive). If both False => default ascending.
+XEON_E5_2630V3_ORDER = False  # 0..7, 16..23, 8..15, 24..31
+XEON_GOLD_6142_ORDER = True   # even cores ascending, then odd cores ascending
 
 # White theme with black axes/spines
 plt.style.use("default")
@@ -75,7 +91,7 @@ def enforce_white_theme(ax):
     ax.tick_params(colors="black")
 
 def jain(values: np.ndarray) -> float:
-    """Jain’s fairness index over an array of non-negative values."""
+    """Jain’s fairness index over a 1D array of non-negative values."""
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
@@ -102,6 +118,37 @@ def load_and_prepare(path: str) -> pd.DataFrame:
     df["worker_thread"] = df["worker_thread"].astype(int)
     return df
 
+# ----- Ordering modes -----
+
+def e5v3_target_order() -> List[int]:
+    """Target order: 0..7, 16..23, 8..15, 24..31."""
+    return list(range(0, 8)) + list(range(16, 24)) + list(range(8, 16)) + list(range(24, 32))
+
+def gold6142_even_odd_order(labels: List[int]) -> List[int]:
+    """
+    Even-then-odd ordering for Xeon Gold 6142:
+    evens ascending first, then odds ascending. Works for any integer label set.
+    """
+    evens = sorted([x for x in labels if x % 2 == 0])
+    odds  = sorted([x for x in labels if x % 2 == 1])
+    return evens + odds
+
+def reorder_for_mode(labels: List[int]) -> List[int]:
+    """
+    Reorder axis labels according to the selected mode.
+    Only labels present in 'labels' are kept (no insertion).
+    If both order flags are False -> default ascending.
+    """
+    labels_unique_sorted = sorted(set(int(x) for x in labels))
+    if XEON_E5_2630V3_ORDER and XEON_GOLD_6142_ORDER:
+        raise ValueError("Select only one ordering mode: set either XEON_E5_2630V3_ORDER or XEON_GOLD_6142_ORDER to True, not both.")
+    if XEON_E5_2630V3_ORDER:
+        target = e5v3_target_order()
+        return [x for x in target if x in labels_unique_sorted] + [x for x in labels_unique_sorted if x not in target]
+    if XEON_GOLD_6142_ORDER:
+        return gold6142_even_odd_order(labels_unique_sorted)
+    return labels_unique_sorted
+
 # ==============================
 # Heatmaps per test
 # ==============================
@@ -113,16 +160,20 @@ def plot_heatmaps(df: pd.DataFrame, out_dir: str) -> None:
         if sub.empty:
             continue
 
-        # Build pivot: rows=worker, cols=seed, values=latency
+        # Pivot: rows=worker, cols=seed, values=latency
         piv = sub.pivot_table(index="worker_thread",
                               columns="seed_thread",
                               values="latency",
                               aggfunc="mean")
-        piv = piv.sort_index(axis=0).sort_index(axis=1)
+
+        # Default linear order then apply selected mode
+        row_order = reorder_for_mode(piv.index.astype(int).tolist())
+        col_order = reorder_for_mode(piv.columns.astype(int).tolist())
+        piv = piv.reindex(index=row_order, columns=col_order)
 
         n_rows, n_cols = piv.shape
-        fig_h = max(4.5, 0.4 * n_rows)
-        fig_w = max(8.0, 0.3 * n_cols + 6)
+        fig_h = max(5.0, 0.45 * n_rows)
+        fig_w = max(9.0, 0.32 * n_cols + 6)
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=FIG_DPI)
 
         data = piv.to_numpy(dtype=float)
@@ -139,26 +190,40 @@ def plot_heatmaps(df: pd.DataFrame, out_dir: str) -> None:
         else:
             vmin, vmax = None, None
 
-        # Draw image as a matrix of cells (no smoothing), keep square-ish cells
+        # Draw as grid of cells
         im = ax.imshow(data, aspect="equal", interpolation="nearest",
                        cmap=cmap_obj, vmin=vmin, vmax=vmax)
 
-        # Major ticks at cell centers with labels
+        # Major ticks/labels at cell centers
         ax.set_yticks(np.arange(n_rows))
-        ax.set_yticklabels(piv.index.tolist())
+        ax.set_yticklabels([str(x) for x in piv.index.tolist()])
         ax.set_xticks(np.arange(n_cols))
-        ax.set_xticklabels(piv.columns.tolist(), rotation=45, ha="right")
+        ax.set_xticklabels([str(x) for x in piv.columns.tolist()], rotation=45, ha="right")
 
-        # Turn off the global axis grid for this heatmap
+        # Cell borders via minor ticks
         ax.grid(False)
-
-        # Add thin grid lines around each cell using minor ticks on cell edges
         ax.set_xticks(np.arange(n_cols + 1) - 0.5, minor=True)
         ax.set_yticks(np.arange(n_rows + 1) - 0.5, minor=True)
         ax.grid(which="minor", color="#aaaaaa", linestyle="-", linewidth=0.5)
         ax.tick_params(which="minor", bottom=False, left=False)
 
-        ax.set_title(f"Latency heatmap — {test_label(t)} ({t})")
+        # Ticks on all four sides with labels
+        ax.tick_params(axis="both", which="both",
+                       direction="out",
+                       top=True, bottom=True, left=True, right=True,
+                       labeltop=True, labelbottom=True, labelleft=True, labelright=True)
+        ax.xaxis.set_ticks_position("both")
+        ax.yaxis.set_ticks_position("both")
+
+        # Title suffix for clarity
+        if XEON_E5_2630V3_ORDER:
+            suffix = " (order 0–7, 16–23, 8–15, 24–31)"
+        elif XEON_GOLD_6142_ORDER:
+            suffix = " (even-then-odd order)"
+        else:
+            suffix = " (ascending order)"
+        ax.set_title(f"Latency heatmap — {test_label(t)} ({t}){suffix}")
+
         ax.set_xlabel("seed_thread (-b)")
         ax.set_ylabel("worker_thread")
 
@@ -177,7 +242,7 @@ def plot_heatmaps(df: pd.DataFrame, out_dir: str) -> None:
 # ==============================
 
 def plot_grouped_fairness(df: pd.DataFrame, out_dir: str) -> None:
-    # Compute fairness per (test_id, worker_thread): Jain over latencies across seeds
+    # Compute fairness per (test_id, worker_thread): Jain over latencies across all seeds
     rows = []
     for (t, w), g in df.groupby(["test_id", "worker_thread"]):
         vals = g["latency"].to_numpy(dtype=float)
@@ -186,14 +251,15 @@ def plot_grouped_fairness(df: pd.DataFrame, out_dir: str) -> None:
     if fair.empty:
         return
 
-    # Set domain order
-    workers = sorted(fair["worker_thread"].unique())
+    # Domain order for workers according to selected mode
+    worker_order = reorder_for_mode(fair["worker_thread"].astype(int).unique().tolist())
     tests = sorted(fair["test_id"].unique())
-    # Build matrix workers x tests
-    mat = fair.pivot(index="worker_thread", columns="test_id", values="fairness")
-    mat = mat.reindex(index=workers, columns=tests)
 
-    n_workers = len(workers)
+    # Matrix: workers x tests
+    mat = fair.pivot(index="worker_thread", columns="test_id", values="fairness")
+    mat = mat.reindex(index=worker_order, columns=tests)
+
+    n_workers = len(worker_order)
     n_tests = len(tests)
     x = np.arange(n_workers)
 
@@ -205,8 +271,8 @@ def plot_grouped_fairness(df: pd.DataFrame, out_dir: str) -> None:
     cmap = plt.get_cmap("tab20")
     color_map = {t: cmap(i % 20) for i, t in enumerate(tests)}
 
-    fig_w = max(12, 0.75 * n_workers)
-    fig, ax = plt.subplots(figsize=(fig_w, 5.2), dpi=FIG_DPI)
+    fig_w = max(14, 0.8 * n_workers)
+    fig, ax = plt.subplots(figsize=(fig_w, 5.8), dpi=FIG_DPI)
 
     handles = []
     labels = []
@@ -220,11 +286,17 @@ def plot_grouped_fairness(df: pd.DataFrame, out_dir: str) -> None:
 
     # Formatting
     ax.axhline(1.0, color="k", linestyle="--", linewidth=1, label="J=1 (perfect)")
-    ax.set_title("Fairness (Jain) across seeds per worker thread")
+    if XEON_E5_2630V3_ORDER:
+        tsuffix = " (order 0–7, 16–23, 8–15, 24–31)"
+    elif XEON_GOLD_6142_ORDER:
+        tsuffix = " (even-then-odd order)"
+    else:
+        tsuffix = " (ascending order)"
+    ax.set_title(f"Fairness (Jain) across seeds per worker thread{tsuffix}")
     ax.set_xlabel("worker_thread")
     ax.set_ylabel("fairness (Jain across seeds)")
     ax.set_xticks(x)
-    ax.set_xticklabels([str(w) for w in workers], rotation=0, ha="center")
+    ax.set_xticklabels([str(w) for w in worker_order], rotation=0, ha="center")
 
     with np.errstate(all="ignore"):
         min_val = np.nanmin(mat.to_numpy())
@@ -248,6 +320,11 @@ def plot_grouped_fairness(df: pd.DataFrame, out_dir: str) -> None:
 
 def main():
     ensure_dir(OUT_DIR)
+
+    # Validate ordering selection early
+    if XEON_E5_2630V3_ORDER and XEON_GOLD_6142_ORDER:
+        raise SystemExit("Error: select only one ordering mode. Set either XEON_E5_2630V3_ORDER or XEON_GOLD_6142_ORDER to True, not both.")
+
     df = load_and_prepare(INPUT_CSV)
 
     # Heatmaps per test_id
