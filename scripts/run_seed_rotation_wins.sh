@@ -142,6 +142,9 @@ format_wins_line() {
 
   awk -v skip="$skip_thread" -v count="$thread_count" '
     /wins$/ {
+      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
+        wins[m[2]] = m[3]
+      } else if (match($0, /thread ID[[:space:]]+([0-9]+)[^0-9]*:[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
       if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
         wins[m[1]] = m[2]
       }
