@@ -21,6 +21,18 @@ Options:
   --output-dir DIR      Output directory for logs/CSVs (default: results/progress_distribution)
   --dry-run             Print commands without running them
   -h, --help            Show this help
+
+Examples:
+  scripts/run_progress_distribution.sh \
+    --cores "2,3,4" \
+    --seed-cores "1,2,3" \
+    --tests "34" \
+    --reps 10000 \
+    --output-dir results/progress_distribution
+
+  Results are written to:
+    results/progress_distribution/progress.csv
+    results/progress_distribution/logs/
 USAGE
 }
 
