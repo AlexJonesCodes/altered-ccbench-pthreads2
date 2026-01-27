@@ -10,6 +10,7 @@ and fairness metrics.
 
 Options:
   --tests LIST            Comma-separated test IDs (e.g., "12,13,14")
+  --single-tests LIST     Comma-separated test IDs to run alone (op=op per run)
   --thread-counts LIST    Comma-separated thread counts (e.g., "2,4,8")
   --topology NAME=CORES   Named topology with a core list (e.g., same_ccx=[0,1,2,3])
                           May be provided multiple times.
@@ -30,6 +31,7 @@ EOF
 }
 
 tests=""
+single_tests=""
 thread_counts=""
 reps=10000
 seed_core=0
@@ -43,6 +45,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tests)
       tests="$2"; shift 2 ;;
+    --single-tests)
+      single_tests="$2"; shift 2 ;;
     --thread-counts)
       thread_counts="$2"; shift 2 ;;
     --topology)
@@ -71,8 +75,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$tests" || -z "$thread_counts" || "${#topology_names[@]}" -eq 0 ]]; then
-  echo "--tests, --thread-counts, and at least one --topology are required." >&2
+if [[ -z "$tests" && -z "$single_tests" ]]; then
+  echo "--tests or --single-tests are required." >&2
+  usage
+  exit 1
+fi
+
+if [[ -z "$thread_counts" || "${#topology_names[@]}" -eq 0 ]]; then
+  echo "--thread-counts and at least one --topology are required." >&2
   usage
   exit 1
 fi
@@ -84,11 +94,23 @@ fi
 
 mkdir -p "$output_dir/logs"
 
-IFS=',' read -r -a test_ids <<<"$tests"
+if [[ -n "$tests" ]]; then
+  IFS=',' read -r -a test_ids <<<"$tests"
+else
+  test_ids=()
+fi
+if [[ -n "$single_tests" ]]; then
+  IFS=',' read -r -a single_test_ids <<<"$single_tests"
+else
+  single_test_ids=()
+fi
 IFS=',' read -r -a thread_list <<<"$thread_counts"
 
 requires_seed=0
-for tid in "${test_ids[@]}"; do
+for tid in "${test_ids[@]}" "${single_test_ids[@]}"; do
+  if [[ -z "$tid" ]]; then
+    continue
+  fi
   if [[ "$tid" == "34" ]]; then
     requires_seed=1
     break
@@ -316,6 +338,44 @@ for idx in "${!topology_names[@]}"; do
         run_cmd "${cmd[@]}" | tee "$log_file"
         parse_stats "$log_file" "$run_id" "contended" "$topology" "$threads" "$tests_list" "$cores" "$reps"
       done
+    done
+
+    for op in "${single_test_ids[@]}"; do
+      if [[ -z "$op" ]]; then
+        continue
+      fi
+      run_id=$((run_id + 1))
+      tests_list=$(join_tests "$threads" "$op" "$op")
+
+      if [[ "$dry_run" -eq 0 ]]; then
+        printf '\n[run %d] topology=%s threads=%s tests=%s cores=%s\n' \
+          "$run_id" "$topology" "$threads" "$tests_list" "$cores"
+      fi
+
+      if [[ "$dry_run" -eq 0 ]]; then
+        IFS=',' read -r -a core_array <<<"$(echo "$cores" | tr -d '[]')"
+        IFS=',' read -r -a test_array <<<"$(echo "$tests_list" | tr -d '[]')"
+        for i in "${!core_array[@]}"; do
+          core="${core_array[$i]}"
+          op="${test_array[$i]}"
+          baseline_log="$output_dir/logs/baseline_run_${run_id}_core_${core}_op_${op}.log"
+          cmd=("$ccbench" -r "$reps" -t "[$op]" -x "[$core]" -b "$core")
+          run_cmd "${cmd[@]}" | tee "$baseline_log"
+          parse_stats "$baseline_log" "${run_id}_b${i}" "baseline" "$topology" 1 "[$op]" "[$core]" "$reps"
+        done
+      fi
+
+      log_file="$output_dir/logs/run_${run_id}_t${threads}_single_${op}.log"
+      cmd=("$ccbench" -r "$reps" -t "$tests_list" -x "$cores")
+      if [[ "$seed_core" -ge 0 ]]; then
+        cmd+=(-b "$seed_core")
+      fi
+      if [[ "$dry_run" -eq 1 ]]; then
+        run_cmd "${cmd[@]}"
+        continue
+      fi
+      run_cmd "${cmd[@]}" | tee "$log_file"
+      parse_stats "$log_file" "$run_id" "contended" "$topology" "$threads" "$tests_list" "$cores" "$reps"
     done
   done
 done
