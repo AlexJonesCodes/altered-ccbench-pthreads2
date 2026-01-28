@@ -6,10 +6,10 @@ usage() {
 Usage: scripts/run_seed_rotation_wins.sh [options]
 
 Rotate the seed (pinned) thread across cores and record per-thread wins for
-CAS_UNTIL_SUCCESS (test ID 34) under contention.
+CAS/FAI/TAS/CAS_UNTIL_SUCCESS under contention, plus fairness stats.
 
 Options:
-  --op NAME              Atomic op name: CAS_UNTIL_SUCCESS (default: CAS_UNTIL_SUCCESS)
+  --op NAME              Atomic op name: CAS, FAI, TAS, CAS_UNTIL_SUCCESS (default: CAS_UNTIL_SUCCESS)
   --cores LIST           Core list (e.g., "[0,1,2,3,4]") (required)
   --threads N            Use only the first N cores from --cores (optional)
   --reps N               Repetitions per run (default: 10000)
@@ -20,7 +20,7 @@ Options:
 
 Example:
   scripts/run_seed_rotation_wins.sh \
-    --op CAS_UNTIL_SUCCESS \
+    --op CAS \
     --cores "[0,1,2,3,16,17]" \
     --threads 4 \
     --reps 20000 \
@@ -72,10 +72,16 @@ if [[ ! -x "$ccbench" ]]; then
 fi
 
 case "${op^^}" in
+  CAS|12)
+    test_id=12 ;;
+  FAI|13)
+    test_id=13 ;;
+  TAS|14)
+    test_id=14 ;;
   CAS_UNTIL_SUCCESS|34)
     test_id=34 ;;
   *)
-    echo "Unsupported --op '${op}'. Use CAS_UNTIL_SUCCESS." >&2
+    echo "Unsupported --op '${op}'. Use CAS, FAI, TAS, or CAS_UNTIL_SUCCESS." >&2
     exit 1 ;;
 esac
 
@@ -167,6 +173,55 @@ format_wins_line() {
   ' "$log_file"
 }
 
+format_fairness_line() {
+  local log_file="$1"
+  local skip_thread="$2"
+  local thread_count="$3"
+
+  awk -v skip="$skip_thread" -v count="$thread_count" '
+    /wins$/ {
+      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
+        wins[m[2]] = m[3]
+      } else if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+        wins[m[1]] = m[2]
+      }
+    }
+    END {
+      sum_all = 0
+      sum_sq_all = 0
+      sum_workers = 0
+      sum_sq_workers = 0
+      count_all = 0
+      count_workers = 0
+
+      for (i = 0; i < count; i++) {
+        val = wins[i]
+        if (val == "") val = 0
+        sum_all += val
+        sum_sq_all += val * val
+        count_all++
+        if (i != skip) {
+          sum_workers += val
+          sum_sq_workers += val * val
+          count_workers++
+        }
+      }
+
+      fairness_all = 0
+      if (count_all > 0 && sum_sq_all > 0) {
+        fairness_all = (sum_all * sum_all) / (count_all * sum_sq_all)
+      }
+      fairness_workers = 0
+      if (count_workers > 0 && sum_sq_workers > 0) {
+        fairness_workers = (sum_workers * sum_workers) / (count_workers * sum_sq_workers)
+      }
+
+      printf "fairness (Jain) all threads: %.6f\n", fairness_all
+      printf "fairness (Jain) workers only: %.6f\n", fairness_workers
+    }
+  ' "$log_file"
+}
+
 mapfile -t core_array < <(parse_cores "$cores")
 thread_count=${#core_array[@]}
 if [[ "$thread_count" -lt 1 ]]; then
@@ -196,6 +251,7 @@ for ((i=0; i<thread_count; i++)); do
     printf 'pinned thread: t%d (core %s)\n' "$((i + 1))" "$seed_core"
     printf 'wins per thread:\n'
     format_wins_line "$log_file" "$i" "$thread_count"
+    format_fairness_line "$log_file" "$i" "$thread_count"
     printf '\n'
   } >>"$report_file"
 
