@@ -10,28 +10,37 @@ Required:
 
 Options:
   --reps <int>           Repetitions per run (default: 10000)
-  --levels <int>         Number of backoff levels to generate (default: 3)
-  --level-max <int>      Max backoff for generated levels (default: 1024)
+  --levels <int>         Number of backoff levels to generate (default: 4)
+  --level-base <int>     Base multiplier for generated levels (default: 8)
+  --level-max <int>      Max backoff for generated levels (default: 4096)
   --level-values <list>  Comma-separated backoff max values (overrides --levels)
   --results-dir <path>   Results directory (default: results/retry_dominance)
   --ccbench <path>       Path to ccbench binary (default: ./ccbench)
+  --stride <int>         Stride size (default: 1)
+  --flush                Flush cache line before each rep (default: off)
+  --seed-core <int>      Fixed seed core (disables seed rotation)
+  --test-id <int>        Test id to run (default: 34)
   -h, --help             Show this help
 
 Notes:
-  - Rotates the seed (pinned) core across the provided list.
+  - Rotates the seed (pinned) core across the provided list (unless --seed-core is set).
   - Rotates backoff levels across threads so each thread experiences each level.
-  - Uses CAS_UNTIL_SUCCESS (test 34).
+  - Uses CAS_UNTIL_SUCCESS (test 34) by default.
 EOF
 }
 
 cores_input=""
 reps=10000
-levels=3
-level_max=1024
+levels=4
+level_base=8
+level_max=4096
 level_values_input=""
 results_dir="results/retry_dominance"
 ccbench="./ccbench"
 test_id=34
+stride=1
+flush=0
+seed_core_override=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,6 +60,10 @@ while [[ $# -gt 0 ]]; do
       level_max="$2"
       shift 2
       ;;
+    --level-base)
+      level_base="$2"
+      shift 2
+      ;;
     --level-values)
       level_values_input="$2"
       shift 2
@@ -61,6 +74,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ccbench)
       ccbench="$2"
+      shift 2
+      ;;
+    --test-id)
+      test_id="$2"
+      shift 2
+      ;;
+    --stride)
+      stride="$2"
+      shift 2
+      ;;
+    --flush)
+      flush=1
+      shift
+      ;;
+    --seed-core)
+      seed_core_override="$2"
       shift 2
       ;;
     -h|--help)
@@ -97,12 +126,17 @@ else
     echo "--levels must be >= 1" >&2
     exit 1
   fi
+  if [[ "$level_base" -lt 2 ]]; then
+    echo "--level-base must be >= 2" >&2
+    exit 1
+  fi
+  val=1
   for ((i=0; i<levels; i++)); do
-    val=$((1 << i))
     if [[ "$val" -gt "$level_max" ]]; then
       val="$level_max"
     fi
     level_values+=("$val")
+    val=$((val * level_base))
   done
 fi
 
@@ -132,7 +166,14 @@ echo "run_id,seed_core,rotation,thread_id,core,backoff_max,wins" > "$runs_csv"
 num_threads=${#cores[@]}
 num_levels=${#level_values[@]}
 
-for seed_core in "${cores[@]}"; do
+seed_cores=()
+if [[ -n "$seed_core_override" ]]; then
+  seed_cores=("$seed_core_override")
+else
+  seed_cores=("${cores[@]}")
+fi
+
+for seed_core in "${seed_cores[@]}"; do
   for ((rotation=0; rotation<num_threads; rotation++)); do
     declare -a backoff_assignment=()
     for ((i=0; i<num_threads; i++)); do
@@ -143,7 +184,11 @@ for seed_core in "${cores[@]}"; do
     backoff_array="[$(IFS=','; echo "${backoff_assignment[*]}")]"
     log_file="${results_dir}/run_seed${seed_core}_rot${rotation}.log"
 
-    "$ccbench" -x "$core_array" -t "[$test_id]" -r "$reps" -b "$seed_core" -A "$backoff_array" > "$log_file"
+    cmd=("$ccbench" -x "$core_array" -t "[$test_id]" -r "$reps" -b "$seed_core" -A "$backoff_array" -s "$stride")
+    if [[ "$flush" -eq 1 ]]; then
+      cmd+=(-f)
+    fi
+    "${cmd[@]}" > "$log_file"
 
     declare -A thread_wins=()
     while read -r tid wins; do
