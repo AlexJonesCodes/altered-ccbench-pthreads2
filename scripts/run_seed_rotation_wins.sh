@@ -241,30 +241,36 @@ append_thread_csv() {
   awk -v op="$op_label" -v seed="$seed_core" -v csv_file="$csv_file" '
     /Core number/ {
       if (match($0, /Core number[[:space:]]+([0-9]+)[^0-9]+thread:[[:space:]]+([0-9]+).*avg[[:space:]]+([0-9.]+)/, m)) {
-        core = m[1]
-        thread = m[2]
+        core = m[2]
         avg = m[3]
-        avg_by_thread[thread] = avg
-        core_by_thread[thread] = core
-        thread_seen[thread] = 1
+        avg_by_core[core] = avg
       }
     }
     /wins$/ {
       if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
-        wins[m[2]] = m[3]
+        core = m[1]
+        thread = m[2]
+        wins[thread] = m[3]
+        core_by_thread[thread] = core
+        thread_seen[thread] = 1
+        if (thread > max_thread) max_thread = thread
       } else if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
-        wins[m[1]] = m[2]
+        thread = m[1]
+        wins[thread] = m[2]
+        thread_seen[thread] = 1
+        if (thread > max_thread) max_thread = thread
       }
     }
     END {
-      for (t in thread_seen) {
-        if (t == "") continue
-        core = core_by_thread[t]
-        avg = avg_by_thread[t]
-        win = wins[t]
-        if (win == "") win = 0
+      for (i = 0; i <= max_thread; i++) {
+        if (!thread_seen[i]) continue
+        core = core_by_thread[i]
+        avg = avg_by_core[core]
+        win = wins[i]
+        if (core == "") core = 0
         if (avg == "") avg = 0
-        printf "%s,%s,%s,%s,%.3f,%s\n", op, seed, t, core, avg + 0, win \
+        if (win == "") win = 0
+        printf "%s,%s,%s,%s,%.3f,%s\n", op, seed, i, core, avg + 0, win \
           >> csv_file
       }
     }
