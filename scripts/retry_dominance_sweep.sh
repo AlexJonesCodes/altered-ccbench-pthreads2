@@ -143,7 +143,7 @@ for seed_core in "${cores[@]}"; do
     backoff_array="[$(IFS=','; echo "${backoff_assignment[*]}")]"
     log_file="${results_dir}/run_seed${seed_core}_rot${rotation}.log"
 
-    "$ccbench" -x "$core_array" -t "$test_id" -r "$reps" -b "$seed_core" -A "$backoff_array" > "$log_file"
+    "$ccbench" -x "$core_array" -t "[$test_id]" -r "$reps" -b "$seed_core" -A "$backoff_array" > "$log_file"
 
     declare -A thread_wins=()
     while read -r tid wins; do
