@@ -16,6 +16,7 @@ Options:
   --reps N               Repetitions per run (default: 10000)
   --ccbench PATH         Path to ccbench binary (default: ./ccbench)
   --output-dir DIR       Output directory for logs/report (default: results)
+                         Reports: seed_rotation_wins_<OP>.txt and .csv
   --dry-run              Print commands without running them
   -h, --help             Show this help
 
@@ -231,6 +232,45 @@ format_fairness_line() {
   ' "$log_file"
 }
 
+append_thread_csv() {
+  local log_file="$1"
+  local op_label="$2"
+  local seed_core="$3"
+  local csv_file="$4"
+
+  awk -v op="$op_label" -v seed="$seed_core" '
+    /Core number/ {
+      if (match($0, /Core number[[:space:]]+([0-9]+)[^0-9]+thread:[[:space:]]+([0-9]+).*avg[[:space:]]+([0-9.]+)/, m)) {
+        core = m[1]
+        thread = m[2]
+        avg = m[3]
+        avg_by_thread[thread] = avg
+        core_by_thread[thread] = core
+        thread_seen[thread] = 1
+      }
+    }
+    /wins$/ {
+      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
+        wins[m[2]] = m[3]
+      } else if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+        wins[m[1]] = m[2]
+      }
+    }
+    END {
+      for (t in thread_seen) {
+        if (t == "") continue
+        core = core_by_thread[t]
+        avg = avg_by_thread[t]
+        win = wins[t]
+        if (win == "") win = 0
+        if (avg == "") avg = 0
+        printf "%s,%s,%s,%s,%.3f,%s\n", op, seed, t, core, avg + 0, win \
+          >> csv_file
+      }
+    }
+  ' "$log_file"
+}
+
 mapfile -t core_array < <(parse_cores "$cores")
 thread_count=${#core_array[@]}
 if [[ "$thread_count" -lt 1 ]]; then
@@ -250,8 +290,10 @@ for op_name in "${ops[@]}"; do
   tests_list=$(build_tests_list "$thread_count")
 
   report_file="$output_dir/seed_rotation_wins_${op_label}.txt"
+  csv_file="$output_dir/seed_rotation_wins_${op_label}.csv"
   if [[ "$dry_run" -eq 0 ]]; then
     : >"$report_file"
+    printf "op,seed_core,thread_id,core,avg_latency,wins\n" >"$csv_file"
   fi
 
   for ((i=0; i<thread_count; i++)); do
@@ -272,6 +314,7 @@ for op_name in "${ops[@]}"; do
       format_fairness_line "$log_file" "$i" "$thread_count"
       printf '\n'
     } >>"$report_file"
+    append_thread_csv "$log_file" "$op_label" "$seed_core" "$csv_file"
 
   done
 done
@@ -282,5 +325,6 @@ if [[ "$dry_run" -eq 0 ]]; then
     op_entry=$(normalize_op "$op_name") || continue
     op_label="${op_entry%%:*}"
     printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.txt"
+    printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.csv"
   done
 fi
