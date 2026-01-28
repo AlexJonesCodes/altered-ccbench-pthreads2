@@ -238,7 +238,7 @@ append_thread_csv() {
   local seed_core="$3"
   local csv_file="$4"
 
-  awk -v op="$op_label" -v seed="$seed_core" '
+  awk -v op="$op_label" -v seed="$seed_core" -v csv_file="$csv_file" '
     /Core number/ {
       if (match($0, /Core number[[:space:]]+([0-9]+)[^0-9]+thread:[[:space:]]+([0-9]+).*avg[[:space:]]+([0-9.]+)/, m)) {
         core = m[1]
