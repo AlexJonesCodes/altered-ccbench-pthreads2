@@ -9,7 +9,8 @@ Rotate the seed (pinned) thread across cores and record per-thread wins for
 CAS/FAI/TAS/CAS_UNTIL_SUCCESS under contention, plus fairness stats.
 
 Options:
-  --op NAME              Atomic op name: CAS, FAI, TAS, CAS_UNTIL_SUCCESS (default: CAS_UNTIL_SUCCESS)
+  --op NAME              Atomic op name: CAS, FAI, TAS, CAS_UNTIL_SUCCESS, ALL (default: ALL)
+                         ALL runs FAI, TAS, and CAS_UNTIL_SUCCESS in sequence.
   --cores LIST           Core list (e.g., "[0,1,2,3,4]") (required)
   --threads N            Use only the first N cores from --cores (optional)
   --reps N               Repetitions per run (default: 10000)
@@ -20,7 +21,7 @@ Options:
 
 Example:
   scripts/run_seed_rotation_wins.sh \
-    --op CAS \
+    --op ALL \
     --cores "[0,1,2,3,16,17]" \
     --threads 4 \
     --reps 20000 \
@@ -28,7 +29,7 @@ Example:
 HELP
 }
 
-op="CAS_UNTIL_SUCCESS"
+op="ALL"
 cores=""
 threads=""
 reps=10000
@@ -71,19 +72,27 @@ if [[ ! -x "$ccbench" ]]; then
   exit 1
 fi
 
-case "${op^^}" in
-  CAS|12)
-    test_id=12 ;;
-  FAI|13)
-    test_id=13 ;;
-  TAS|14)
-    test_id=14 ;;
-  CAS_UNTIL_SUCCESS|34)
-    test_id=34 ;;
-  *)
-    echo "Unsupported --op '${op}'. Use CAS, FAI, TAS, or CAS_UNTIL_SUCCESS." >&2
-    exit 1 ;;
-esac
+normalize_op() {
+  local raw="${1^^}"
+  case "$raw" in
+    CAS|12)
+      echo "CAS:12" ;;
+    FAI|13)
+      echo "FAI:13" ;;
+    TAS|14)
+      echo "TAS:14" ;;
+    CAS_UNTIL_SUCCESS|34)
+      echo "CAS_UNTIL_SUCCESS:34" ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+if [[ "${op^^}" == "ALL" ]]; then
+  ops=("FAI" "TAS" "CAS_UNTIL_SUCCESS")
+else
+  ops=("$op")
+fi
 
 mkdir -p "$output_dir/logs"
 
@@ -230,33 +239,48 @@ if [[ "$thread_count" -lt 1 ]]; then
 fi
 
 cores_list=$(build_cores_list "${core_array[@]}")
-tests_list=$(build_tests_list "$thread_count")
 
-report_file="$output_dir/seed_rotation_wins.txt"
-if [[ "$dry_run" -eq 0 ]]; then
-  : >"$report_file"
-fi
+for op_name in "${ops[@]}"; do
+  op_entry=$(normalize_op "$op_name") || {
+    echo "Unsupported --op '${op_name}'. Use CAS, FAI, TAS, CAS_UNTIL_SUCCESS, or ALL." >&2
+    exit 1
+  }
+  op_label="${op_entry%%:*}"
+  test_id="${op_entry##*:}"
+  tests_list=$(build_tests_list "$thread_count")
 
-for ((i=0; i<thread_count; i++)); do
-  seed_core="${core_array[$i]}"
-  log_file="$output_dir/logs/seed_t$((i + 1))_core_${seed_core}_op_${test_id}.log"
-  cmd=("$ccbench" -r "$reps" -t "$tests_list" -x "$cores_list" -b "$seed_core")
-  if [[ "$dry_run" -eq 1 ]]; then
-    run_cmd "${cmd[@]}"
-    continue
+  report_file="$output_dir/seed_rotation_wins_${op_label}.txt"
+  if [[ "$dry_run" -eq 0 ]]; then
+    : >"$report_file"
   fi
-  run_cmd "${cmd[@]}" | tee "$log_file" >/dev/null
 
-  {
-    printf 'pinned thread: t%d (core %s)\n' "$((i + 1))" "$seed_core"
-    printf 'wins per thread:\n'
-    format_wins_line "$log_file" "$i" "$thread_count"
-    format_fairness_line "$log_file" "$i" "$thread_count"
-    printf '\n'
-  } >>"$report_file"
+  for ((i=0; i<thread_count; i++)); do
+    seed_core="${core_array[$i]}"
+    log_file="$output_dir/logs/seed_t$((i + 1))_core_${seed_core}_op_${test_id}.log"
+    cmd=("$ccbench" -r "$reps" -t "$tests_list" -x "$cores_list" -b "$seed_core")
+    if [[ "$dry_run" -eq 1 ]]; then
+      run_cmd "${cmd[@]}"
+      continue
+    fi
+    run_cmd "${cmd[@]}" | tee "$log_file" >/dev/null
 
+    {
+      printf 'operation: %s (test %s)\n' "$op_label" "$test_id"
+      printf 'pinned thread: t%d (core %s)\n' "$((i + 1))" "$seed_core"
+      printf 'wins per thread:\n'
+      format_wins_line "$log_file" "$i" "$thread_count"
+      format_fairness_line "$log_file" "$i" "$thread_count"
+      printf '\n'
+    } >>"$report_file"
+
+  done
 done
 
 if [[ "$dry_run" -eq 0 ]]; then
-  printf 'Completed. Report written to: %s\n' "$report_file"
+  printf 'Completed. Reports written to:\n'
+  for op_name in "${ops[@]}"; do
+    op_entry=$(normalize_op "$op_name") || continue
+    op_label="${op_entry%%:*}"
+    printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.txt"
+  done
 fi
