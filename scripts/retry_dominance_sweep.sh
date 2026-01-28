@@ -19,12 +19,13 @@ Options:
   --stride <int>         Stride size (default: 1)
   --flush                Flush cache line before each rep (default: off)
   --seed-core <int>      Fixed seed core (disables seed rotation)
+  --test-id <int>        Test id to run (default: 34)
   -h, --help             Show this help
 
 Notes:
   - Rotates the seed (pinned) core across the provided list (unless --seed-core is set).
   - Rotates backoff levels across threads so each thread experiences each level.
-  - Uses CAS_UNTIL_SUCCESS (test 34).
+  - Uses CAS_UNTIL_SUCCESS (test 34) by default.
 EOF
 }
 
@@ -73,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ccbench)
       ccbench="$2"
+      shift 2
+      ;;
+    --test-id)
+      test_id="$2"
       shift 2
       ;;
     --stride)
