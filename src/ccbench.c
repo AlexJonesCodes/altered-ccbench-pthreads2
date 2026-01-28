@@ -91,6 +91,10 @@ static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX me
 /* Round start (common t0 per repetition) and per-thread, per-rep latency from t0 to success */
 static ticks* round_start = NULL;                 /* size: test_reps */
 static uint64_t* common_latency_cycles = NULL;    /* size: test_cores * test_reps */
+/* Per-thread CAS-until-success retry stats */
+static uint64_t* cas_attempts_per_rank = NULL;    /* size: test_cores */
+static uint64_t* cas_failures_per_rank = NULL;    /* size: test_cores */
+static uint64_t* cas_successes_per_rank = NULL;   /* size: test_cores */
 /* Record B4->success for this thread and repetition (only once). */
 static inline void rec_success(uint64_t rep)
 {
@@ -543,6 +547,12 @@ int main(int argc, char** argv)
 
 	common_latency_cycles = (uint64_t*) calloc((size_t)test_cores * test_reps, sizeof(uint64_t));
 	if (!common_latency_cycles) { perror("calloc"); exit(1); }
+	cas_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+	if (!cas_attempts_per_rank) { perror("calloc"); exit(1); }
+	cas_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+	if (!cas_failures_per_rank) { perror("calloc"); exit(1); }
+	cas_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+	if (!cas_successes_per_rank) { perror("calloc"); exit(1); }
 
 	for (size_t i_init = 0; i_init < test_reps; i_init++)
 	{
@@ -690,6 +700,9 @@ int main(int argc, char** argv)
   free(args);
   free(threads);
   if (common_latency_cycles) { free(common_latency_cycles); common_latency_cycles = NULL; }
+  if (cas_attempts_per_rank) { free(cas_attempts_per_rank); cas_attempts_per_rank = NULL; }
+  if (cas_failures_per_rank) { free(cas_failures_per_rank); cas_failures_per_rank = NULL; }
+  if (cas_successes_per_rank) { free(cas_successes_per_rank); cas_successes_per_rank = NULL; }
   if (round_start) { free(round_start); round_start = NULL; }
   if (first_winner_per_rep) {
 	free(first_winner_per_rep);
@@ -1719,7 +1732,7 @@ run_benchmark(void* arg)
         }
 	  
 	  /* Mean common-start latency per thread (from B4 to this thread’s success) */
-		if (common_latency_cycles) {
+      if (common_latency_cycles) {
 		printf("\nCommon-start latency (B4 -> success), per thread:\n");
 		for (uint32_t r = 0; r < test_cores; r++) {
 			double sum = 0.0, minv = DBL_MAX, maxv = 0.0;
@@ -1756,7 +1769,26 @@ run_benchmark(void* arg)
 			}
 			printf("\n");
 		}
-		}
+      }
+
+      if (cas_attempts_per_rank && cas_failures_per_rank && cas_successes_per_rank) {
+        printf("CAS retry stats per thread:\n");
+        for (uint32_t r = 0; r < test_cores; r++) {
+          uint64_t attempts = cas_attempts_per_rank[r];
+          uint64_t failures = cas_failures_per_rank[r];
+          uint64_t successes = cas_successes_per_rank[r];
+          double retries_per_success = successes ? ((double) failures / (double) successes) : 0.0;
+          double success_prob = attempts ? ((double) successes / (double) attempts) : 0.0;
+          printf("  thread ID %u (core %zu): attempts %llu, failures %llu, successes %llu, retries_per_success %.3f, success_prob %.6f\n",
+                 r, core_for_rank ? core_for_rank[r] : (size_t)r,
+                 (unsigned long long) attempts,
+                 (unsigned long long) failures,
+                 (unsigned long long) successes,
+                 retries_per_success,
+                 success_prob);
+        }
+        printf("\n");
+      }
 
 	        /* Report first-op winners across all repetitions (generalised) */
       if (win_counts_per_rank)
@@ -2138,13 +2170,22 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
   PFDI(0);
   for (;;) {
     attempts++;
+    if (cas_attempts_per_rank) {
+      cas_attempts_per_rank[ID]++;
+    }
     uint32_t expect = *w;           /* read current value */
     uint32_t desired = expect ^ 1;  /* flip LSB */
     uint32_t old = CAS_U32(w, expect, desired);
     if (old == expect) {
       /* First successful CAS may claim the win for this rep */
       race_try_win((uint64_t) reps);
+      if (cas_successes_per_rank) {
+        cas_successes_per_rank[ID]++;
+      }
       break;
+    }
+    if (cas_failures_per_rank) {
+      cas_failures_per_rank[ID]++;
     }
     if (test_backoff) {
       for (uint32_t i = 0; i < backoff; i++) {

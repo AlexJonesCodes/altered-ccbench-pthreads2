@@ -39,3 +39,8 @@ outputs per-run logs plus a summary CSV of average wins per backoff level.
 
 This uses the new `--backoff-array` option (e.g., `-A "[1,2,4,8]"`) to supply
 per-thread backoff caps. The array length must match the total thread count.
+
+The sweep script also records per-thread CAS retry statistics (attempts,
+failures, successes, retries_per_success, success_prob) and emits a
+`per_run_correlations.csv` file with Spearman correlations between backoff or
+retry metrics and wins (including a variant that excludes the seed core).
