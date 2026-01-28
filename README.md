@@ -29,3 +29,18 @@ Common reasons to see zero wins in the output/logs include:
   mode that bypasses the CAS-until-success switch entirely).
 * Log parsing expects the exact "Group … wins" lines; if those lines are absent,
   downstream CSVs will show zero wins even though no wins were recorded.
+
+## Retry dominance sweep helper
+
+For experiments that rotate the seed (pinned) core and per-thread backoff levels,
+use `scripts/retry_dominance_sweep.sh`. The script accepts a core list, rotates
+the seed core across runs, assigns different backoff maxima per thread, and
+outputs per-run logs plus a summary CSV of average wins per backoff level.
+
+This uses the new `--backoff-array` option (e.g., `-A "[1,2,4,8]"`) to supply
+per-thread backoff caps. The array length must match the total thread count.
+
+The sweep script also records per-thread CAS retry statistics (attempts,
+failures, successes, retries_per_success, success_prob) and emits a
+`per_run_correlations.csv` file with Spearman correlations between backoff or
+retry metrics and wins (including a variant that excludes the seed core).

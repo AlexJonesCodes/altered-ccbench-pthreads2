@@ -65,6 +65,10 @@ static int opt_mlock = 0;
 int opt_numa = 1;
 static int test_backoff = 0;
 static uint32_t test_backoff_max = 1024;
+static size_t **backoff_max_array = NULL;
+static size_t backoff_rows = 0;
+static size_t *backoff_cols = NULL;
+static uint32_t *backoff_max_per_rank = NULL;
 uint32_t test_core_others = DEFAULT_CORE_OTHERS;
 uint32_t test_flush = DEFAULT_FLUSH;
 uint32_t test_verbose = DEFAULT_VERBOSE;
@@ -87,6 +91,10 @@ static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX me
 /* Round start (common t0 per repetition) and per-thread, per-rep latency from t0 to success */
 static ticks* round_start = NULL;                 /* size: test_reps */
 static uint64_t* common_latency_cycles = NULL;    /* size: test_cores * test_reps */
+/* Per-thread CAS-until-success retry stats */
+static uint64_t* cas_attempts_per_rank = NULL;    /* size: test_cores */
+static uint64_t* cas_failures_per_rank = NULL;    /* size: test_cores */
+static uint64_t* cas_successes_per_rank = NULL;   /* size: test_cores */
 /* Record B4->success for this thread and repetition (only once). */
 static inline void rec_success(uint64_t rep)
 {
@@ -181,6 +189,7 @@ static struct option long_options[] = {
 	{"mem-size",                 required_argument, NULL, 'm'},
 	{"backoff",                  no_argument,       NULL, 'B'},
 	{"backoff-max",              required_argument, NULL, 'M'},
+	{"backoff-array",            required_argument, NULL, 'A'},
 	{"flush",                    no_argument,       NULL, 'f'},
 	{"success",                  no_argument,       NULL, 'u'},
 	{"verbose",                  no_argument,       NULL, 'v'},
@@ -197,7 +206,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -248,6 +257,8 @@ int main(int argc, char** argv)
 		 "        Enable exponential backoff after CAS_UNTIL_SUCCESS failures\n"
 		 "  -M, --backoff-max <int>\n"
 		 "        Max pause iterations for backoff (default=1024)\n"
+		 "  -A, --backoff-array <array>\n"
+		 "        Per-thread backoff max array, e.g. [1,2,4,8] (length must match threads)\n"
 		 "  -u, --success\n"
 		 "        Make all atomic operations be successfull (e.g, TAS_ON_SHARED)\n"
 		 "  -n, --no-numa\n"
@@ -284,6 +295,13 @@ int main(int argc, char** argv)
 	case 'M': /* --backoff-max: cap for backoff pause iterations */
 		test_backoff_max = (uint32_t) atoi(optarg);
 		if (test_backoff_max < 1) test_backoff_max = 1;
+		break;
+	case 'A': /* --backoff-array: per-thread backoff max array */
+		if (parse_jagged_array(optarg, &backoff_max_array, &backoff_rows, &backoff_cols) != 0) {
+			fprintf(stderr, "Invalid format for -A\n");
+			exit(EXIT_FAILURE);
+		}
+		test_backoff = 1;
 		break;
 	case 't':
 		if ((parse_jagged_array(optarg, &test_num_array, &test_rows, &test_cols) != 0) || test_rows != 1){
@@ -503,6 +521,21 @@ int main(int argc, char** argv)
 		}
 	}
 
+	if (backoff_max_array) {
+		if (backoff_rows != 1 || backoff_cols[0] != test_cores) {
+			fprintf(stderr, "Mismatch between --backoff-array and thread count\n");
+			exit(EXIT_FAILURE);
+		}
+		backoff_max_per_rank = (uint32_t*) malloc(sizeof(uint32_t) * test_cores);
+		if (!backoff_max_per_rank) { perror("malloc"); exit(1); }
+		for (size_t r = 0; r < test_cores; r++) {
+			size_t v = backoff_max_array[0][r];
+			if (v < 1) v = 1;
+			backoff_max_per_rank[r] = (uint32_t) v;
+		}
+		test_backoff = 1;
+	}
+
 	/* Allocate winner tracking arrays */
 	win_counts_per_rank = (uint32_t*) calloc(test_cores, sizeof(uint32_t));
 	if (!win_counts_per_rank) { perror("calloc"); exit(1); }
@@ -514,6 +547,12 @@ int main(int argc, char** argv)
 
 	common_latency_cycles = (uint64_t*) calloc((size_t)test_cores * test_reps, sizeof(uint64_t));
 	if (!common_latency_cycles) { perror("calloc"); exit(1); }
+	cas_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+	if (!cas_attempts_per_rank) { perror("calloc"); exit(1); }
+	cas_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+	if (!cas_failures_per_rank) { perror("calloc"); exit(1); }
+	cas_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+	if (!cas_successes_per_rank) { perror("calloc"); exit(1); }
 
 	for (size_t i_init = 0; i_init < test_reps; i_init++)
 	{
@@ -661,6 +700,9 @@ int main(int argc, char** argv)
   free(args);
   free(threads);
   if (common_latency_cycles) { free(common_latency_cycles); common_latency_cycles = NULL; }
+  if (cas_attempts_per_rank) { free(cas_attempts_per_rank); cas_attempts_per_rank = NULL; }
+  if (cas_failures_per_rank) { free(cas_failures_per_rank); cas_failures_per_rank = NULL; }
+  if (cas_successes_per_rank) { free(cas_successes_per_rank); cas_successes_per_rank = NULL; }
   if (round_start) { free(round_start); round_start = NULL; }
   if (first_winner_per_rep) {
 	free(first_winner_per_rep);
@@ -687,6 +729,10 @@ int main(int argc, char** argv)
 		free(group_for_rank);
 		group_for_rank = NULL;
 	}
+	if (backoff_max_per_rank) {
+		free(backoff_max_per_rank);
+		backoff_max_per_rank = NULL;
+	}
 
 	/* free parsed jagged arrays if they were allocated */
 	if (test_num_array) {
@@ -700,6 +746,12 @@ int main(int argc, char** argv)
 		test_cores_array = NULL;
 		core_cols = NULL;
 		core_rows = 0;
+	}
+	if (backoff_max_array) {
+		free_jagged(backoff_max_array, backoff_cols, backoff_rows);
+		backoff_max_array = NULL;
+		backoff_cols = NULL;
+		backoff_rows = 0;
 	}
   return 0;
 
@@ -1680,7 +1732,7 @@ run_benchmark(void* arg)
         }
 	  
 	  /* Mean common-start latency per thread (from B4 to this thread’s success) */
-		if (common_latency_cycles) {
+      if (common_latency_cycles) {
 		printf("\nCommon-start latency (B4 -> success), per thread:\n");
 		for (uint32_t r = 0; r < test_cores; r++) {
 			double sum = 0.0, minv = DBL_MAX, maxv = 0.0;
@@ -1717,7 +1769,26 @@ run_benchmark(void* arg)
 			}
 			printf("\n");
 		}
-		}
+      }
+
+      if (cas_attempts_per_rank && cas_failures_per_rank && cas_successes_per_rank) {
+        printf("CAS retry stats per thread:\n");
+        for (uint32_t r = 0; r < test_cores; r++) {
+          uint64_t attempts = cas_attempts_per_rank[r];
+          uint64_t failures = cas_failures_per_rank[r];
+          uint64_t successes = cas_successes_per_rank[r];
+          double retries_per_success = successes ? ((double) failures / (double) successes) : 0.0;
+          double success_prob = attempts ? ((double) successes / (double) attempts) : 0.0;
+          printf("  thread ID %u (core %zu): attempts %llu, failures %llu, successes %llu, retries_per_success %.3f, success_prob %.6f\n",
+                 r, core_for_rank ? core_for_rank[r] : (size_t)r,
+                 (unsigned long long) attempts,
+                 (unsigned long long) failures,
+                 (unsigned long long) successes,
+                 retries_per_success,
+                 success_prob);
+        }
+        printf("\n");
+      }
 
 	        /* Report first-op winners across all repetitions (generalised) */
       if (win_counts_per_rank)
@@ -2090,26 +2161,39 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
 
   uint32_t attempts = 0;
   uint32_t backoff = 1;
+  uint32_t max_backoff = test_backoff_max;
+  if (backoff_max_per_rank) {
+    max_backoff = backoff_max_per_rank[ID];
+  }
 
   /* We keep the original PFD “attempt->success” timing as-is */
   PFDI(0);
   for (;;) {
     attempts++;
+    if (cas_attempts_per_rank) {
+      cas_attempts_per_rank[ID]++;
+    }
     uint32_t expect = *w;           /* read current value */
     uint32_t desired = expect ^ 1;  /* flip LSB */
     uint32_t old = CAS_U32(w, expect, desired);
     if (old == expect) {
       /* First successful CAS may claim the win for this rep */
       race_try_win((uint64_t) reps);
+      if (cas_successes_per_rank) {
+        cas_successes_per_rank[ID]++;
+      }
       break;
+    }
+    if (cas_failures_per_rank) {
+      cas_failures_per_rank[ID]++;
     }
     if (test_backoff) {
       for (uint32_t i = 0; i < backoff; i++) {
         _mm_pause();
       }
-      if (backoff < test_backoff_max) {
+      if (backoff < max_backoff) {
         backoff = backoff << 1;
-        if (backoff > test_backoff_max) backoff = test_backoff_max;
+        if (backoff > max_backoff) backoff = max_backoff;
       }
     } else {
       _mm_pause();
