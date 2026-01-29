@@ -151,9 +151,11 @@ mkdir -p "$output_dir/logs"
 
 runs_csv="$output_dir/runs.csv"
 threads_csv="$output_dir/threads.csv"
+summary_csv="$output_dir/summary.csv"
 
 printf "run_id,atomic,seed_core,threads,tests,cores,reps,mean_avg,jain_fairness,success_rate\n" >"$runs_csv"
 printf "run_id,atomic,thread_id,core,avg,min,max,std_dev,abs_dev,wins,success_rate\n" >"$threads_csv"
+printf "atomic,threads,run_count,mean_avg_mean,mean_avg_min,mean_avg_max,fairness_mean,success_rate_mean,seed_cores\n" >"$summary_csv"
 
 print_key_stats() {
   cat <<'NOTES'
@@ -367,4 +369,46 @@ if [[ "$dry_run" -eq 0 ]]; then
   printf '\nCompleted. Summary CSVs:\n'
   printf '  Runs   : %s\n' "$runs_csv"
   printf '  Threads: %s\n' "$threads_csv"
+  printf '  Summary: %s\n' "$summary_csv"
+
+  awk -F',' '
+    NR == 1 { next }
+    {
+      atomic = $2
+      threads = $4
+      key = atomic SUBSEP threads
+      run_count[key]++
+      mean_avg = $8 + 0
+      fairness = $9 + 0
+      success = $10 + 0
+
+      mean_avg_sum[key] += mean_avg
+      fairness_sum[key] += fairness
+      success_sum[key] += success
+
+      if (!(key in mean_avg_min) || mean_avg < mean_avg_min[key]) mean_avg_min[key] = mean_avg
+      if (!(key in mean_avg_max) || mean_avg > mean_avg_max[key]) mean_avg_max[key] = mean_avg
+
+      seed = $3
+      if (seed != "" && !(seed_seen[key, seed])) {
+        seed_seen[key, seed] = 1
+        if (seed_list[key] == "") seed_list[key] = seed
+        else seed_list[key] = seed_list[key] ";" seed
+      }
+    }
+    END {
+      for (k in run_count) {
+        split(k, parts, SUBSEP)
+        atomic = parts[1]
+        threads = parts[2]
+        count = run_count[k]
+        mean_avg_mean = mean_avg_sum[k] / count
+        fairness_mean = fairness_sum[k] / count
+        success_mean = success_sum[k] / count
+        printf "%s,%s,%d,%.3f,%.3f,%.3f,%.6f,%.6f,%s\n", \
+          atomic, threads, count, mean_avg_mean, mean_avg_min[k], mean_avg_max[k], \
+          fairness_mean, success_mean, seed_list[k]
+      }
+    }
+  ' "$runs_csv" >>"$summary_csv"
 fi
