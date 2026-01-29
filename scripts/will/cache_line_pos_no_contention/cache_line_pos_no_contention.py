@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Non-contention placement latency sweep.
+Non-contention placement latency sweep (dual metrics).
 
 Runs ccbench with a single worker thread (-x has one core) while sweeping the seed (-b)
 across all selected cores, for tests 13 (FAI), 14 (TAS), 15 (SWAP), and 34 (CAS_UNTIL_SUCCESS).
-Writes a CSV:
 
-  test_id,seed_thread,worker_thread,latency
+Writes a CSV with both metrics:
+  test_id,seed_thread,worker_thread,latency_b4,latency_avg
 
-Where 'latency' prefers the "Common-start latency (B4 -> success), per thread" mean cycles
-(if present for that test), and falls back to the per-core average from the "Cross-core summary"
-if common-start is not populated.
+- latency_b4: from "Common-start latency (B4 -> success), per thread" (thread ID 0 mean cycles)
+- latency_avg: from "Cross-core summary" per-core average (Core number 0)
+
+Notes:
+- For tests that don’t populate the Common-start latency (e.g., FAI/TAS/SWAP in stock builds),
+  latency_b4 may be 0.0 or absent; we record NaN if the section is missing.
+- For CAS_UNTIL_SUCCESS, latency_b4 should be meaningful.
 
 Configure paths and core sets below.
 """
@@ -53,8 +57,8 @@ WORKER_CORES = [0, 6, 1, 7]   # example
 SEED_CORES   = [0, 1, 2, 3]   # example
 
 # Output
-OUT_DIR  = "./r53600/noncontention_latency"
-CSV_FILE = os.path.join(OUT_DIR, "noncontention_latency.csv")
+OUT_DIR  = "./r53600"
+CSV_FILE = os.path.join(OUT_DIR, "noncontention_latency_dual.csv")
 SAVE_LOGS = True
 LOG_DIR  = os.path.join(OUT_DIR, "logs")
 
@@ -99,11 +103,14 @@ def write_csv_header(path: str):
     if exists and os.path.getsize(path) > 0:
         return
     with open(path, "w") as f:
-        f.write("test_id,seed_thread,worker_thread,latency\n")
+        f.write("test_id,seed_thread,worker_thread,latency_b4,latency_avg\n")
 
-def append_csv(path: str, test_id: int, seed_core: int, worker_core: int, latency: float):
+def append_csv(path: str, test_id: int, seed_core: int, worker_core: int,
+               latency_b4: float, latency_avg: float):
+    def fmt(x):
+        return f"{x:.1f}" if (x == x) else "nan"  # NaN-safe
     with open(path, "a") as f:
-        f.write(f"{test_id},{seed_core},{worker_core},{latency:.1f}\n")
+        f.write(f"{test_id},{seed_core},{worker_core},{fmt(latency_b4)},{fmt(latency_avg)}\n")
 
 def run_ccbench(test_id: int, worker_core: int, seed_core: int) -> str:
     # -t and -x for one worker
@@ -126,26 +133,26 @@ def run_ccbench(test_id: int, worker_core: int, seed_core: int) -> str:
                 f.write(out)
         raise
 
-def parse_latency(stdout: str, worker_core: int) -> float:
+def parse_b4_latency(stdout: str) -> float:
     """
-    Prefer Common-start latency for thread ID 0; fallback to Cross-core avg for Core number 0 if needed.
+    Parse Common-start mean cycles for thread ID 0.
+    Returns float or NaN if not found.
     """
-    # Try Common-start
-    cs_latency = None
     for line in stdout.splitlines():
         m = LAT_CS_RE.search(line)
-        if m:
-            tid = int(m.group(1))
-            mean = float(m.group(3))
-            if tid == 0:
-                cs_latency = mean
-                break
+        if not m:
+            continue
+        tid = int(m.group(1))
+        mean = float(m.group(3))
+        if tid == 0:
+            return mean
+    return float("nan")
 
-    if cs_latency is not None:
-        return cs_latency
-
-    # Fallback: Cross-core summary avg for role 0
-    role0_avg = None
+def parse_crosscore_avg(stdout: str) -> float:
+    """
+    Parse Cross-core summary avg cycles for Core number 0.
+    Returns float or NaN if not found.
+    """
     for line in stdout.splitlines():
         m = CORE_AVG_RE.search(line)
         if not m:
@@ -153,13 +160,7 @@ def parse_latency(stdout: str, worker_core: int) -> float:
         role = int(m.group(1))
         avg  = float(m.group(3))
         if role == 0:
-            role0_avg = avg
-            break
-
-    if role0_avg is not None:
-        return role0_avg
-
-    # If still nothing, return NaN
+            return avg
     return float("nan")
 
 def main():
@@ -197,11 +198,15 @@ def main():
                     with open(os.path.join(LOG_DIR, f"test{test_id}_worker{worker}_seed{seed}_{ts}.log"), "w") as f:
                         f.write(out)
 
-                lat = parse_latency(out, worker)
-                if not (lat == lat):  # NaN check
-                    print(f"  Warning: could not parse latency (test={test_id}, worker={worker}, seed={seed})", file=sys.stderr)
-                append_csv(CSV_FILE, test_id, seed, worker, lat)
-                print(f"  -> latency={lat:.1f} cycles; wrote CSV row")
+                lat_b4  = parse_b4_latency(out)     # Common-start (B4->success)
+                lat_avg = parse_crosscore_avg(out)  # Cross-core summary avg
+                if not (lat_b4 == lat_b4):
+                    print(f"  Note: no B4 latency found (test={test_id}, worker={worker}, seed={seed})", file=sys.stderr)
+                if not (lat_avg == lat_avg):
+                    print(f"  Note: no Cross-core avg found (test={test_id}, worker={worker}, seed={seed})", file=sys.stderr)
+
+                append_csv(CSV_FILE, test_id, seed, worker, lat_b4, lat_avg)
+                print(f"  -> B4={lat_b4 if lat_b4==lat_b4 else 'NaN'} cycles, AVG={lat_avg if lat_avg==lat_avg else 'NaN'} cycles; wrote CSV row")
 
     print(f"\nAll runs complete. CSV: {CSV_FILE}")
 

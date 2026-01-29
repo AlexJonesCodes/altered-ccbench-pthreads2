@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 # Try to import test names mapping
 TEST_NAME_MAP = None
 try:
-    from test_nums_to_names import NUM_TO_TEST, TARGET_CORE  # TARGET_CORE not used here but imported for completeness
+    from test_nums_to_name import NUM_TO_TEST, TARGET_CORE  # TARGET_CORE not used here but imported for completeness
     TEST_NAME_MAP = NUM_TO_TEST
 except Exception:
     TEST_NAME_MAP = None  # fallback to numeric labels if mapping module not found
@@ -50,7 +50,8 @@ except Exception:
 # ==============================
 # Configuration (edit in code)
 # ==============================
-base_dir = "./results/Xeon_Gold_6142/"
+cpu = "Xeon_Gold_6142"
+base_dir = "./" + cpu + "/"
 INPUT_CSV = base_dir + "smt_fairness_simple.csv"
 
 OUTPUT_DIR = base_dir + "smt_fairness_plots_jain"
@@ -265,8 +266,9 @@ def plot_fairness_bars(fair_df: pd.DataFrame, test_num: int, title_suffix: str, 
 
     # Formatting
     ax.axhline(1.0, color="k", linestyle="--", linewidth=1, label="perfect fairness (J=1)")
-    ax.set_title(f"Jain fairness per pair — ALL tests side-by-side: {title_suffix}")
-    ax.set_ylabel("Jain fairness")
+    ax.set_title(f"{cpu}: Jain Fairness Per Thread Pair on Each Core, {title_suffix}")
+    ax.set_ylabel("Jain Fairness Index")
+    ax.set_xlabel("Thread Pair (a-b)")
     ax.set_xticks(x)
     ax.set_xticklabels(pivot.index.tolist(), rotation=45, ha="right")
 
@@ -347,7 +349,7 @@ def generate_wins_a_points_supercombined(df: pd.DataFrame) -> None:
         ax.legend(handles=handles, labels=labels,
                   loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
 
-    ax.set_title(f"Wins for lower-ID thread (a) — ALL tests combined (N={len(df_sorted)})")
+    ax.set_title(f"{cpu}: Wins for lower-ID thread (a) — ALL tests combined (N={len(df_sorted)})")
     ax.set_xlabel("global datapoint index")
     ax.set_ylabel("wins(a)")
     ax.grid(True, alpha=0.25)
@@ -369,7 +371,7 @@ def generate_pair_seed_bars(df: pd.DataFrame) -> pd.DataFrame:
     tests = sorted(df["test_num"].unique())
     for t in tests:
         plot_fairness_bars(fair_pair_seeds, test_num=int(t),
-                           title_suffix="seed within pair (b ∈ {a,b})",
+                           title_suffix="Data Starts in Threads Cache",
                            out_dir=OUTPUT_DIR,
                            fname_suffix="pair_seeds")
     return fair_pair_seeds
@@ -380,7 +382,7 @@ def generate_all_seed_bars(df: pd.DataFrame) -> pd.DataFrame:
     tests = sorted(df["test_num"].unique())
     for t in tests:
         plot_fairness_bars(fair_all_seeds, test_num=int(t),
-                           title_suffix="seed across all threads (b ∈ all)",
+                           title_suffix="Data Moves From Thread 0 to N's Caches",
                            out_dir=OUTPUT_DIR,
                            fname_suffix="all_seeds")
     return fair_all_seeds
