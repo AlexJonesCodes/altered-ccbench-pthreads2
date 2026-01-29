@@ -281,6 +281,7 @@ parse_stats() {
         wins = m[2]
         if (thread != "") {
           wins_by_thread[thread] = wins
+          wins_seen[thread] = 1
         }
       }
     }
@@ -289,14 +290,26 @@ parse_stats() {
       sum_sq = 0
       wins_sum = 0
       count = 0
-      for (t in thread_seen) {
-        if (t == "") continue
-        count++
-        val = wins_by_thread[t]
-        if (val == "") val = 0
-        wins_sum += val
-        sum += val
-        sum_sq += val * val
+      if (length(wins_seen) > 0) {
+        for (t in wins_seen) {
+          if (t == "") continue
+          count++
+          val = wins_by_thread[t]
+          if (val == "") val = 0
+          wins_sum += val
+          sum += val
+          sum_sq += val * val
+        }
+      } else {
+        for (t in thread_seen) {
+          if (t == "") continue
+          count++
+          val = wins_by_thread[t]
+          if (val == "") val = 0
+          wins_sum += val
+          sum += val
+          sum_sq += val * val
+        }
       }
 
       fairness = 0
@@ -313,17 +326,32 @@ parse_stats() {
         run_id, atomic, seed, threads, tests, cores, reps, mean_avg + 0, fairness, success_rate \
         >> runs_csv
 
-      for (t in thread_seen) {
-        if (t == "") continue
-        wins = wins_by_thread[t]
-        if (wins == "") wins = 0
-        sr = 0
-        if (reps > 0) sr = wins / reps
-        printf "%s,%s,%s,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%s,%.6f\n", \
-          run_id, atomic, t, core_by_thread[t], \
-          avg_by_thread[t] + 0, min_by_thread[t] + 0, max_by_thread[t] + 0, \
-          std_by_thread[t] + 0, abs_by_thread[t] + 0, wins, sr \
-          >> threads_csv
+      if (length(wins_seen) > 0) {
+        for (t in wins_seen) {
+          if (t == "") continue
+          wins = wins_by_thread[t]
+          if (wins == "") wins = 0
+          sr = 0
+          if (reps > 0) sr = wins / reps
+          printf "%s,%s,%s,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%s,%.6f\n", \
+            run_id, atomic, t, core_by_thread[t], \
+            avg_by_thread[t] + 0, min_by_thread[t] + 0, max_by_thread[t] + 0, \
+            std_by_thread[t] + 0, abs_by_thread[t] + 0, wins, sr \
+            >> threads_csv
+        }
+      } else {
+        for (t in thread_seen) {
+          if (t == "") continue
+          wins = wins_by_thread[t]
+          if (wins == "") wins = 0
+          sr = 0
+          if (reps > 0) sr = wins / reps
+          printf "%s,%s,%s,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%s,%.6f\n", \
+            run_id, atomic, t, core_by_thread[t], \
+            avg_by_thread[t] + 0, min_by_thread[t] + 0, max_by_thread[t] + 0, \
+            std_by_thread[t] + 0, abs_by_thread[t] + 0, wins, sr \
+            >> threads_csv
+        }
       }
     }
   ' "$log_file"
