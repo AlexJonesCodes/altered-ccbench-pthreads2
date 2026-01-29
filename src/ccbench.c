@@ -80,6 +80,7 @@ size_t   test_mem_size = CACHE_LINE_NUM * sizeof(cache_line_t);
 uint32_t test_cache_line_num = CACHE_LINE_NUM;
 uint32_t test_lfence = DEFAULT_LFENCE;
 uint32_t test_sfence = DEFAULT_SFENCE;
+static int test_fail_stats = 0;
 
 /* NUMA placement: selected node for the cache line and allocation origin */
 static int seed_node = -1;
@@ -91,6 +92,15 @@ static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX me
 /* Round start (common t0 per repetition) and per-thread, per-rep latency from t0 to success */
 static ticks* round_start = NULL;                 /* size: test_reps */
 static uint64_t* common_latency_cycles = NULL;    /* size: test_cores * test_reps */
+static uint64_t* cas_attempts_per_rank = NULL;    /* size: test_cores */
+static uint64_t* cas_failures_per_rank = NULL;    /* size: test_cores */
+static uint64_t* cas_successes_per_rank = NULL;   /* size: test_cores */
+static uint64_t* tas_attempts_per_rank = NULL;    /* size: test_cores */
+static uint64_t* tas_failures_per_rank = NULL;    /* size: test_cores */
+static uint64_t* tas_successes_per_rank = NULL;   /* size: test_cores */
+static uint64_t* casus_attempts_per_rank = NULL;  /* size: test_cores */
+static uint64_t* casus_failures_per_rank = NULL;  /* size: test_cores */
+static uint64_t* casus_successes_per_rank = NULL; /* size: test_cores */
 /* Record B4->success for this thread and repetition (only once). */
 static inline void rec_success(uint64_t rep)
 {
@@ -122,6 +132,48 @@ static inline void race_try_win(uint64_t rep_idx)
           __sync_fetch_and_add(&win_counts_per_rank[ID], 1);
         }
     }
+}
+
+static void print_fail_stats_for_op(const char* label,
+                                    const uint64_t* attempts,
+                                    const uint64_t* successes,
+                                    const uint64_t* failures)
+{
+  if (!attempts || !successes || !failures) return;
+  uint64_t total_attempts = 0;
+  uint64_t total_successes = 0;
+  uint64_t total_failures = 0;
+  for (uint32_t r = 0; r < test_cores; r++) {
+    total_attempts += attempts[r];
+    total_successes += successes[r];
+    total_failures += failures[r];
+  }
+  if (total_attempts == 0 && total_successes == 0 && total_failures == 0) {
+    return;
+  }
+  printf("\nAtomic failure stats (%s):\n", label);
+  for (uint32_t r = 0; r < test_cores; r++) {
+    uint64_t att = attempts[r];
+    uint64_t succ = successes[r];
+    uint64_t fail = failures[r];
+    if (att == 0 && succ == 0 && fail == 0) continue;
+    double fail_rate = att ? ((double)fail / (double)att) : 0.0;
+    printf("  thread ID %u (core %zu): attempts %llu, successes %llu, failures %llu, failure rate %.4f\n",
+           r,
+           core_for_rank ? core_for_rank[r] : (size_t)r,
+           (unsigned long long) att,
+           (unsigned long long) succ,
+           (unsigned long long) fail,
+           fail_rate);
+  }
+  if (total_attempts) {
+    double total_fail_rate = (double)total_failures / (double)total_attempts;
+    printf("  totals: attempts %llu, successes %llu, failures %llu, failure rate %.4f\n",
+           (unsigned long long) total_attempts,
+           (unsigned long long) total_successes,
+           (unsigned long long) total_failures,
+           total_fail_rate);
+  }
 }
 
 /* Convenience macro: pick reps param if available, else use current_rep_idx */
@@ -188,6 +240,7 @@ static struct option long_options[] = {
 	{"backoff-array",            required_argument, NULL, 'A'},
 	{"flush",                    no_argument,       NULL, 'f'},
 	{"success",                  no_argument,       NULL, 'u'},
+	{"fail-stats",               no_argument,       NULL, 'F'},
 	{"verbose",                  no_argument,       NULL, 'v'},
 	{"mlock",                    no_argument,       NULL, 'K'},
 	{"no-numa",                  no_argument,       NULL, 'n'},
@@ -202,7 +255,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:F", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -257,6 +310,8 @@ int main(int argc, char** argv)
 		 "        Per-thread backoff max array, e.g. [1,2,4,8] (length must match threads)\n"
 		 "  -u, --success\n"
 		 "        Make all atomic operations be successfull (e.g, TAS_ON_SHARED)\n"
+		 "  -F, --fail-stats\n"
+		 "        Track per-thread atomic attempt/success/failure stats (CAS/TAS/CAS_UNTIL_SUCCESS)\n"
 		 "  -n, --no-numa\n"
 		 "        Disable NUMA placement/binding (enabled by default if libnuma is present)\n"
 		 "  -v, --verbose\n"
@@ -329,6 +384,9 @@ int main(int argc, char** argv)
 	  break;
 	case 'u':
 	  test_ao_success = 1;
+	  break;
+	case 'F':
+	  test_fail_stats = 1;
 	  break;
 	case 'v':
 	  test_verbose = 1;
@@ -544,6 +602,24 @@ int main(int argc, char** argv)
 	common_latency_cycles = (uint64_t*) calloc((size_t)test_cores * test_reps, sizeof(uint64_t));
 	if (!common_latency_cycles) { perror("calloc"); exit(1); }
 
+	if (test_fail_stats) {
+		cas_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		cas_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		cas_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		tas_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		tas_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		tas_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		casus_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		casus_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		casus_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		if (!cas_attempts_per_rank || !cas_failures_per_rank || !cas_successes_per_rank ||
+			!tas_attempts_per_rank || !tas_failures_per_rank || !tas_successes_per_rank ||
+			!casus_attempts_per_rank || !casus_failures_per_rank || !casus_successes_per_rank) {
+			perror("calloc");
+			exit(1);
+		}
+	}
+
 	for (size_t i_init = 0; i_init < test_reps; i_init++)
 	{
 		first_winner_per_rep[i_init] = UINT32_MAX; /* unclaimed */
@@ -720,6 +796,15 @@ int main(int argc, char** argv)
 		free(backoff_max_per_rank);
 		backoff_max_per_rank = NULL;
 	}
+	if (cas_attempts_per_rank) { free(cas_attempts_per_rank); cas_attempts_per_rank = NULL; }
+	if (cas_failures_per_rank) { free(cas_failures_per_rank); cas_failures_per_rank = NULL; }
+	if (cas_successes_per_rank) { free(cas_successes_per_rank); cas_successes_per_rank = NULL; }
+	if (tas_attempts_per_rank) { free(tas_attempts_per_rank); tas_attempts_per_rank = NULL; }
+	if (tas_failures_per_rank) { free(tas_failures_per_rank); tas_failures_per_rank = NULL; }
+	if (tas_successes_per_rank) { free(tas_successes_per_rank); tas_successes_per_rank = NULL; }
+	if (casus_attempts_per_rank) { free(casus_attempts_per_rank); casus_attempts_per_rank = NULL; }
+	if (casus_failures_per_rank) { free(casus_failures_per_rank); casus_failures_per_rank = NULL; }
+	if (casus_successes_per_rank) { free(casus_successes_per_rank); casus_successes_per_rank = NULL; }
 
 	/* free parsed jagged arrays if they were allocated */
 	if (test_num_array) {
@@ -1774,6 +1859,12 @@ run_benchmark(void* arg)
           printf("\n");
         }
 
+      if (test_fail_stats) {
+        print_fail_stats_for_op("CAS", cas_attempts_per_rank, cas_successes_per_rank, cas_failures_per_rank);
+        print_fail_stats_for_op("TAS", tas_attempts_per_rank, tas_successes_per_rank, tas_failures_per_rank);
+        print_fail_stats_for_op("CAS_UNTIL_SUCCESS", casus_attempts_per_rank, casus_successes_per_rank, casus_failures_per_rank);
+      }
+
 
       switch (test_test)
         {
@@ -2101,6 +2192,15 @@ cas(volatile cache_line_t* cl, volatile uint64_t reps)
   r = CAS_U32(cl->word, o, no);
   PFDO(0, reps);
 
+  if (test_fail_stats && cas_attempts_per_rank) {
+    cas_attempts_per_rank[ID]++;
+    if (r == o) {
+      cas_successes_per_rank[ID]++;
+    } else {
+      cas_failures_per_rank[ID]++;
+    }
+  }
+
   return (r == o);
 }
 
@@ -2112,6 +2212,15 @@ cas_no_pf(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t r;
   RACE_TRY_WITH_REP(reps);
   r = CAS_U32(cl->word, o, no);
+
+  if (test_fail_stats && cas_attempts_per_rank) {
+    cas_attempts_per_rank[ID]++;
+    if (r == o) {
+      cas_successes_per_rank[ID]++;
+    } else {
+      cas_failures_per_rank[ID]++;
+    }
+  }
 
   return (r == o);
 }
@@ -2128,6 +2237,7 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t* w = &cl[0].word[0];
 
   uint32_t attempts = 0;
+  uint32_t failures = 0;
   uint32_t backoff = 1;
   uint32_t max_backoff = test_backoff_max;
   if (backoff_max_per_rank) {
@@ -2146,6 +2256,7 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
       race_try_win((uint64_t) reps);
       break;
     }
+    failures++;
     if (test_backoff) {
       for (uint32_t i = 0; i < backoff; i++) {
         _mm_pause();
@@ -2165,6 +2276,12 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
     ticks t_end = getticks();
     common_latency_cycles[(size_t)ID * test_reps + (size_t)reps] =
       (uint64_t)(t_end - round_start[reps]);
+  }
+
+  if (test_fail_stats && casus_attempts_per_rank) {
+    casus_attempts_per_rank[ID] += attempts;
+    casus_failures_per_rank[ID] += failures;
+    casus_successes_per_rank[ID] += 1;
   }
 
   return 1; /* indicates success */
@@ -2242,15 +2359,24 @@ tas(volatile cache_line_t* cl, volatile uint64_t reps)
 
       /* Time the "attempts until TAS succeeds" region and record B4->success on success */
       PFDI(0);
+      uint32_t attempts = 0;
+      uint32_t failures = 0;
       for (;;)
       {
+        attempts++;
         uint8_t r = TAS_U8(b);
         if (r != 255) {
           PFDO(0, reps);
           rec_success(reps);          /* B4 -> TAS success */
           break;
         }
+        failures++;
         _mm_pause();
+      }
+      if (test_fail_stats && tas_attempts_per_rank) {
+        tas_attempts_per_rank[ID] += attempts;
+        tas_failures_per_rank[ID] += failures;
+        tas_successes_per_rank[ID] += 1;
       }
     }
   }
