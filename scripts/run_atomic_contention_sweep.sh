@@ -13,6 +13,7 @@ Options:
   --reps N             Repetitions per run (default: 10000)
   --seed-core N        Seed core for contended runs (default: first --cores entry)
   --rotate-seed        Rotate the seed core across the --cores list per run
+  --fail-stats         Capture per-thread atomic attempts/successes/failures (CAS/TAS/CAS_UNTIL_SUCCESS)
   --ccbench PATH       Path to ccbench binary (default: ./ccbench)
   --output-dir DIR     Output directory for logs/CSVs (default: results/atomic_contention_sweep)
   --dry-run            Print commands without running them
@@ -31,6 +32,7 @@ ccbench=./ccbench
 output_dir=results/atomic_contention_sweep
 dry_run=0
 rotate_seed=0
+fail_stats=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,6 +46,8 @@ while [[ $# -gt 0 ]]; do
       seed_core="$2"; shift 2 ;;
     --rotate-seed)
       rotate_seed=1; shift ;;
+    --fail-stats)
+      fail_stats=1; shift ;;
     --ccbench)
       ccbench="$2"; shift 2 ;;
     --output-dir)
@@ -152,10 +156,14 @@ mkdir -p "$output_dir/logs"
 runs_csv="$output_dir/runs.csv"
 threads_csv="$output_dir/threads.csv"
 summary_csv="$output_dir/summary.csv"
+fail_csv="$output_dir/failure_stats.csv"
 
 printf "run_id,atomic,seed_core,threads,tests,cores,reps,mean_avg,jain_fairness,success_rate\n" >"$runs_csv"
 printf "run_id,atomic,thread_id,core,avg,min,max,std_dev,abs_dev,wins,success_rate\n" >"$threads_csv"
 printf "atomic,threads,run_count,mean_avg_mean,mean_avg_min,mean_avg_max,fairness_mean,success_rate_mean,seed_cores\n" >"$summary_csv"
+if [[ "$fail_stats" -eq 1 ]]; then
+  printf "run_id,atomic,thread_id,core,attempts,successes,failures,failure_rate\n" >"$fail_csv"
+fi
 
 print_key_stats() {
   cat <<'NOTES'
@@ -163,6 +171,7 @@ Key ccbench stats:
   - "Summary : mean avg ..." (overall mean latency)
   - "Core number ... avg ... std dev ..." (per-thread stats)
   - "wins" lines (contention winners per thread)
+  - "Atomic failure stats (...)" (attempts/successes/failures; requires --fail-stats)
 NOTES
 }
 
@@ -239,6 +248,7 @@ parse_stats() {
   local tests="$6"
   local cores="$7"
   local reps="$8"
+  local fail_stats="$9"
 
   awk -v run_id="$run_label" \
       -v atomic="$atomic" \
@@ -248,7 +258,16 @@ parse_stats() {
       -v cores="$cores" \
       -v reps="$reps" \
       -v runs_csv="$runs_csv" \
-      -v threads_csv="$threads_csv" '
+      -v threads_csv="$threads_csv" \
+      -v fail_csv="$fail_csv" \
+      -v want_fail_stats="$fail_stats" '
+    BEGIN {
+      fail_label = ""
+      target_label = atomic
+      if (atomic == "CAS_UNTIL_SUCCESS") {
+        target_label = "CAS_UNTIL_SUCCESS"
+      }
+    }
     /Summary : mean avg/ {
       if (match($0, /mean avg[[:space:]]*([0-9.]+)/, m)) {
         mean_avg = m[1]
@@ -283,6 +302,34 @@ parse_stats() {
           wins_by_thread[thread] = wins
           wins_seen[thread] = 1
         }
+      }
+    }
+    /Atomic failure stats/ {
+      if (match($0, /Atomic failure stats \\(([A-Z_]+)\\):/, m)) {
+        fail_label = m[1]
+      }
+    }
+    /thread ID/ && /attempts/ && want_fail_stats == 1 {
+      if (fail_label == target_label &&
+          match($0, /thread ID[[:space:]]+([0-9]+)[^)]*\\(core[[:space:]]+([0-9]+)\\):[[:space:]]+attempts[[:space:]]+([0-9]+),[[:space:]]+successes[[:space:]]+([0-9]+),[[:space:]]+failures[[:space:]]+([0-9]+),[[:space:]]+failure rate[[:space:]]+([0-9.]+)/, m)) {
+        f_thread = m[1]
+        f_core = m[2]
+        f_attempts = m[3]
+        f_successes = m[4]
+        f_failures = m[5]
+        f_rate = m[6]
+        printf "%s,%s,%s,%s,%s,%s,%s,%s\n", \
+          run_id, atomic, f_thread, f_core, \
+          f_attempts, f_successes, f_failures, f_rate \
+          >> fail_csv
+      }
+    }
+    /totals: attempts/ && want_fail_stats == 1 {
+      if (fail_label == target_label &&
+          match($0, /totals: attempts[[:space:]]+([0-9]+),[[:space:]]+successes[[:space:]]+([0-9]+),[[:space:]]+failures[[:space:]]+([0-9]+),[[:space:]]+failure rate[[:space:]]+([0-9.]+)/, m)) {
+        printf "%s,%s,total,,%s,%s,%s,%s\n", \
+          run_id, atomic, m[1], m[2], m[3], m[4] \
+          >> fail_csv
       }
     }
     END {
@@ -390,7 +437,7 @@ for threads in "${thread_list[@]}"; do
       continue
     fi
     run_cmd "${cmd[@]}" | tee "$log_file"
-    parse_stats "$log_file" "$run_id" "$atomic" "$seed_core" "$threads" "$tests_list" "$cores" "$reps"
+    parse_stats "$log_file" "$run_id" "$atomic" "$seed_core" "$threads" "$tests_list" "$cores" "$reps" "$fail_stats"
   done
  done
 
@@ -399,6 +446,9 @@ if [[ "$dry_run" -eq 0 ]]; then
   printf '  Runs   : %s\n' "$runs_csv"
   printf '  Threads: %s\n' "$threads_csv"
   printf '  Summary: %s\n' "$summary_csv"
+  if [[ "$fail_stats" -eq 1 ]]; then
+    printf '  Failures: %s\n' "$fail_csv"
+  fi
 
   awk -F',' '
     NR == 1 { next }
