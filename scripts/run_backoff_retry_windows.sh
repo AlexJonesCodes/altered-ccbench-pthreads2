@@ -16,6 +16,9 @@ Options:
   --window N             Window size in repetitions (default: 0 = single run)
   --backoff-max LIST     Comma-separated backoff max values (default: "0,64,256")
                          Use 0 for baseline (no backoff).
+  --bully-thread ID      Set one thread to a different backoff (uses -A array)
+  --bully-backoff N      Backoff max for bully thread (default: 0)
+  --others-backoff N     Backoff max for all other threads (default: 256)
   --seed-core N          Fixed seed core for contended runs (disables rotation)
   --seed-cores LIST      Comma-separated seed cores to sweep (overrides --seed-core)
   --test-id N            Test id (default: 34 = CAS_UNTIL_SUCCESS)
@@ -38,6 +41,17 @@ Examples:
     --seed-cores "2,3,4,5" \
     --backoff-max "0,64,256" \
     --results-dir results/backoff_retry_windows
+
+  # Bully run: thread 0 has no backoff, others use 256
+  scripts/run_backoff_retry_windows.sh \
+    --cores "2,3,4,5" \
+    --seed-cores "2,3,4,5" \
+    --bully-thread 0 \
+    --bully-backoff 0 \
+    --others-backoff 256 \
+    --reps 20000 \
+    --window 1000 \
+    --results-dir results/backoff_retry_windows_bully
 USAGE
 }
 
@@ -53,6 +67,10 @@ flush=0
 ccbench="./ccbench"
 results_dir="results/backoff_retry_windows"
 dry_run=0
+bully_thread=""
+bully_backoff=0
+others_backoff=256
+bully_mode=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +86,12 @@ while [[ $# -gt 0 ]]; do
       seed_core="$2"; shift 2 ;;
     --seed-cores)
       seed_cores_input="$2"; shift 2 ;;
+    --bully-thread)
+      bully_thread="$2"; shift 2 ;;
+    --bully-backoff)
+      bully_backoff="$2"; shift 2 ;;
+    --others-backoff)
+      others_backoff="$2"; shift 2 ;;
     --test-id)
       test_id="$2"; shift 2 ;;
     --stride)
@@ -148,11 +172,24 @@ mkdir -p "$results_dir/logs"
 core_array="[$(IFS=','; echo "${cores[*]}")]"
 num_threads=${#cores[@]}
 
+if [[ -n "$bully_thread" ]]; then
+  bully_mode=1
+  if [[ "$bully_thread" -lt 0 || "$bully_thread" -ge "$num_threads" ]]; then
+    echo "--bully-thread must be in range [0, ${num_threads}-1]." >&2
+    exit 1
+  fi
+  if [[ "$bully_backoff" -lt 0 || "$others_backoff" -lt 0 ]]; then
+    echo "Bully backoff values must be >= 0." >&2
+    exit 1
+  fi
+  backoff_levels=("$others_backoff")
+fi
+
 retries_csv="${results_dir}/retries.csv"
 wins_csv="${results_dir}/wins_windows.csv"
 
-printf "run_id,window_id,backoff_max,seed_core,threads,window_reps,thread_id,core,attempts,successes,failures,failure_rate,wins\n" > "$retries_csv"
-printf "run_id,window_id,backoff_max,seed_core,threads,window_reps,thread_id,core,wins\n" > "$wins_csv"
+printf "run_id,window_id,backoff_max,seed_core,threads,window_reps,bully_thread,bully_backoff,others_backoff,thread_id,core,attempts,successes,failures,failure_rate,wins\n" > "$retries_csv"
+printf "run_id,window_id,backoff_max,seed_core,threads,window_reps,bully_thread,bully_backoff,others_backoff,thread_id,core,wins\n" > "$wins_csv"
 
 run_cmd() {
   local -a cmd=("$@")
@@ -193,7 +230,21 @@ for seed in "${seed_cores[@]}"; do
     log_file="${results_dir}/logs/run_${run_id}_b${backoff_max}_w${window_id}.log"
 
     cmd=("$ccbench" -x "$core_array" -t "[$test_id]" -r "$window_reps" -b "$seed" -s "$stride" -F)
-    if [[ "$backoff_max" -gt 0 ]]; then
+    if [[ -n "$bully_thread" ]]; then
+      backoff_array=""
+      for ((i=0; i<num_threads; i++)); do
+        value="$others_backoff"
+        if [[ "$i" -eq "$bully_thread" ]]; then
+          value="$bully_backoff"
+        fi
+        if [[ -n "$backoff_array" ]]; then
+          backoff_array+=",${value}"
+        else
+          backoff_array="${value}"
+        fi
+      done
+      cmd+=(-A "[${backoff_array}]")
+    elif [[ "$backoff_max" -gt 0 ]]; then
       cmd+=(-B -M "$backoff_max")
     fi
     if [[ "$flush" -eq 1 ]]; then
@@ -248,12 +299,14 @@ for seed in "${seed_cores[@]}"; do
       succ="${successes_by_thread[$tid]:-0}"
       fail="${failures_by_thread[$tid]:-0}"
       rate="${failrate_by_thread[$tid]:-0.0}"
-      printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" \
+      printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" \
         "$run_id" "$window_id" "$backoff_max" "$seed" "$num_threads" "$window_reps" \
+        "${bully_thread:-}" "$bully_backoff" "$others_backoff" \
         "$tid" "$core" "$att" "$succ" "$fail" "$rate" "$wins" \
         >> "$retries_csv"
-      printf "%s,%s,%s,%s,%s,%s,%s,%s,%s\n" \
+      printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" \
         "$run_id" "$window_id" "$backoff_max" "$seed" "$num_threads" "$window_reps" \
+        "${bully_thread:-}" "$bully_backoff" "$others_backoff" \
         "$tid" "$core" "$wins" \
         >> "$wins_csv"
     done
