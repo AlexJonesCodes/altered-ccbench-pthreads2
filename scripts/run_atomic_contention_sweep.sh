@@ -274,8 +274,9 @@ parse_stats() {
         }
       }
     }
-    /wins$/ {
-      if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+    /wins/ {
+      if (match($0, /thread ID[[:space:]]+([0-9]+)\):[[:space:]]+([0-9]+)[[:space:]]+wins/, m) ||
+          match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins/, m)) {
         thread = m[1]
         wins = m[2]
         if (thread != "") {
