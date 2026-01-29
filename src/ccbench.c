@@ -2354,13 +2354,14 @@ tas(volatile cache_line_t* cl, volatile uint64_t reps)
 #endif
     if (cln == 0)
     {
+      uint32_t attempts = 0;
+      uint32_t failures = 0;
+
       /* We reached the target line: first arrival marker (keeps existing fairness winner semantics) */
       RACE_TRY_WITH_REP(reps);
 
       /* Time the "attempts until TAS succeeds" region and record B4->success on success */
       PFDI(0);
-      uint32_t attempts = 0;
-      uint32_t failures = 0;
       for (;;)
       {
         attempts++;
