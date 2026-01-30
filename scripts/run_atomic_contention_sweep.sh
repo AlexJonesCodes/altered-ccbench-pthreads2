@@ -432,6 +432,9 @@ for threads in "${thread_list[@]}"; do
 
     log_file="$output_dir/logs/run_${run_id}_${atomic}_t${threads}.log"
     cmd=("$ccbench" -r "$reps" -t "$tests_list" -x "$cores" -b "$seed_core")
+    if [[ "$fail_stats" -eq 1 ]]; then
+      cmd+=(-F)
+    fi
     if [[ "$dry_run" -eq 1 ]]; then
       run_cmd "${cmd[@]}"
       continue
