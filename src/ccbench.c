@@ -101,6 +101,7 @@ static uint64_t* tas_successes_per_rank = NULL;   /* size: test_cores */
 static uint64_t* casus_attempts_per_rank = NULL;  /* size: test_cores */
 static uint64_t* casus_failures_per_rank = NULL;  /* size: test_cores */
 static uint64_t* casus_successes_per_rank = NULL; /* size: test_cores */
+static const char* winner_seq_path = NULL;
 /* Record B4->success for this thread and repetition (only once). */
 static inline void rec_success(uint64_t rep)
 {
@@ -238,6 +239,7 @@ static struct option long_options[] = {
 	{"backoff",                  no_argument,       NULL, 'B'},
 	{"backoff-max",              required_argument, NULL, 'M'},
 	{"backoff-array",            required_argument, NULL, 'A'},
+	{"winner-seq",               required_argument, NULL, 'W'},
 	{"flush",                    no_argument,       NULL, 'f'},
 	{"success",                  no_argument,       NULL, 'u'},
 	{"fail-stats",               no_argument,       NULL, 'F'},
@@ -255,7 +257,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:F", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:FW:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -308,6 +310,8 @@ int main(int argc, char** argv)
 		 "        Max pause iterations for backoff (default=1024)\n"
 		 "  -A, --backoff-array <array>\n"
 		 "        Per-thread backoff max array, e.g. [1,2,4,8] (length must match threads)\n"
+		 "  -W, --winner-seq <path>\n"
+		 "        Write per-repetition first-success winner sequence to CSV\n"
 		 "  -u, --success\n"
 		 "        Make all atomic operations be successfull (e.g, TAS_ON_SHARED)\n"
 		 "  -F, --fail-stats\n"
@@ -353,6 +357,9 @@ int main(int argc, char** argv)
 			exit(EXIT_FAILURE);
 		}
 		test_backoff = 1;
+		break;
+	case 'W': /* --winner-seq: write winner sequence CSV */
+		winner_seq_path = optarg;
 		break;
 	case 't':
 		if ((parse_jagged_array(optarg, &test_num_array, &test_rows, &test_cols) != 0) || test_rows != 1){
@@ -1858,6 +1865,24 @@ run_benchmark(void* arg)
             }
           printf("\n");
         }
+
+	  if (winner_seq_path && first_winner_per_rep) {
+		FILE* win_out = fopen(winner_seq_path, "w");
+		if (!win_out) {
+		  perror("fopen winner-seq");
+		  exit(1);
+		}
+		fprintf(win_out, "rep,winner_rank,winner_core\n");
+		for (size_t rep = 0; rep < test_reps; rep++) {
+		  uint32_t win = first_winner_per_rep[rep];
+		  if (win == UINT32_MAX || win >= test_cores) {
+			continue;
+		  }
+		  uint32_t core_id = core_for_rank ? core_for_rank[win] : win;
+		  fprintf(win_out, "%zu,%u,%u\n", rep, win, core_id);
+		}
+		fclose(win_out);
+	  }
 
       if (test_fail_stats) {
         print_fail_stats_for_op("CAS", cas_attempts_per_rank, cas_successes_per_rank, cas_failures_per_rank);
