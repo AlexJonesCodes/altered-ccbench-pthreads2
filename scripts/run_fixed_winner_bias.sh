@@ -123,49 +123,6 @@ if [[ ${#core_array[@]} -eq 0 ]]; then
   exit 1
 fi
 
-validate_cores() {
-  local raw_list
-  raw_list=$(cat /sys/devices/system/cpu/online 2>/dev/null || true)
-  if [[ -z "$raw_list" ]]; then
-    return 0
-  fi
-
-  declare -A online_map=()
-  local range start end i
-  IFS=',' read -r -a ranges <<<"$raw_list"
-  for range in "${ranges[@]}"; do
-    if [[ "$range" == *-* ]]; then
-      start=${range%-*}
-      end=${range#*-}
-      for ((i=start; i<=end; i++)); do
-        online_map["$i"]=1
-      done
-    else
-      online_map["$range"]=1
-    fi
-  done
-
-  local invalid=()
-  local core
-  for core in "${core_array[@]}"; do
-    if [[ ! "$core" =~ ^[0-9]+$ ]]; then
-      invalid+=("$core")
-      continue
-    fi
-    if [[ -z "${online_map[$core]:-}" ]]; then
-      invalid+=("$core")
-    fi
-  done
-
-  if [[ ${#invalid[@]} -gt 0 ]]; then
-    printf 'Requested cores not online: %s\n' "${invalid[*]}" >&2
-    printf 'Online cores: %s\n' "$raw_list" >&2
-    exit 1
-  fi
-}
-
-validate_cores
-
 thread_count=${#core_array[@]}
 core_list="$(IFS=,; echo "${core_array[*]}")"
 if [[ -z "$seed" ]]; then
@@ -209,10 +166,6 @@ run_one_seed() {
   printf '\n' | tee -a "$seed_log"
   if ! "${cmd[@]}" 2>&1 | tee -a "$seed_log"; then
     echo "ccbench failed; see $seed_log for details." >&2
-    if [[ -s "$seed_log" ]]; then
-      echo "Last 50 lines of $seed_log:" >&2
-      tail -n 50 "$seed_log" >&2 || true
-    fi
     exit 1
   fi
 
