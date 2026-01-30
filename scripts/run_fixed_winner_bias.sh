@@ -209,6 +209,10 @@ run_one_seed() {
   printf '\n' | tee -a "$seed_log"
   if ! "${cmd[@]}" 2>&1 | tee -a "$seed_log"; then
     echo "ccbench failed; see $seed_log for details." >&2
+    if [[ -s "$seed_log" ]]; then
+      echo "Last 50 lines of $seed_log:" >&2
+      tail -n 50 "$seed_log" >&2 || true
+    fi
     exit 1
   fi
 
