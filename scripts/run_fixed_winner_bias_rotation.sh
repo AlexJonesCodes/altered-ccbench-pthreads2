@@ -177,30 +177,45 @@ run_one_seed() {
 
   mkdir -p "$seed_dir"
 
-  cmd=(
+  cmd_base=(
     "$ccbench"
     -t "[$op_id]"
     -r "$reps"
     -c "$thread_count"
     -x "[$core_list]"
     -b "$seed_core"
+  )
+  cmd_with_seq=(
+    "${cmd_base[@]}"
     --winner-seq "$seed_winner_csv"
   )
 
   if [[ $dry_run -eq 1 ]]; then
-    printf 'DRY RUN: %q ' "${cmd[@]}"
+    printf 'DRY RUN: %q ' "${cmd_with_seq[@]}"
     printf '\n'
     return 0
   fi
 
   printf 'Running:' | tee "$seed_log"
-  printf ' %q' "${cmd[@]}" | tee -a "$seed_log"
+  printf ' %q' "${cmd_with_seq[@]}" | tee -a "$seed_log"
   printf '\n' | tee -a "$seed_log"
-  if ! "${cmd[@]}" 2>&1 | tee -a "$seed_log"; then
+  if ! "${cmd_with_seq[@]}" 2>&1 | tee -a "$seed_log"; then
     echo "ccbench failed; see $seed_log for details." >&2
     if [[ -s "$seed_log" ]]; then
       echo "Last 50 lines of $seed_log:" >&2
       tail -n 50 "$seed_log" >&2 || true
+    fi
+    fallback_log="$seed_dir/ccbench_${op_name}_reps${reps}_no_winner_seq.log"
+    echo "Retrying without --winner-seq to isolate failure..." | tee -a "$seed_log" >&2
+    if "${cmd_base[@]}" 2>&1 | tee -a "$fallback_log"; then
+      echo "ccbench succeeded without --winner-seq. Winner-seq output may be the failure point." >&2
+      echo "Fallback log written to $fallback_log" >&2
+    else
+      echo "ccbench also failed without --winner-seq; failure likely unrelated to winner sequence output." >&2
+      if [[ -s "$fallback_log" ]]; then
+        echo "Last 50 lines of $fallback_log:" >&2
+        tail -n 50 "$fallback_log" >&2 || true
+      fi
     fi
     exit 1
   fi
