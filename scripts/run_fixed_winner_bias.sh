@@ -80,6 +80,11 @@ if [[ ! -x "$ccbench" ]]; then
   exit 1
 fi
 
+if ! "$ccbench" --help 2>/dev/null | grep -q "winner-seq"; then
+  echo "ccbench does not support --winner-seq; rebuild ccbench with winner-seq support." >&2
+  exit 1
+fi
+
 normalize_op() {
   local raw="${1^^}"
   case "$raw" in
@@ -156,9 +161,13 @@ run_one_seed() {
     return 0
   fi
 
-  printf 'Running: %q ' "${cmd[@]}" | tee "$seed_log"
+  printf 'Running:' | tee "$seed_log"
+  printf ' %q' "${cmd[@]}" | tee -a "$seed_log"
   printf '\n' | tee -a "$seed_log"
-  "${cmd[@]}" 2>&1 | tee -a "$seed_log"
+  if ! "${cmd[@]}" 2>&1 | tee -a "$seed_log"; then
+    echo "ccbench failed; see $seed_log for details." >&2
+    exit 1
+  fi
 
   if [[ ! -s "$seed_winner_csv" ]]; then
     echo "Winner sequence CSV missing or empty: $seed_winner_csv" >&2
@@ -168,6 +177,7 @@ run_one_seed() {
   awk -F',' \
     -v summary_file="$seed_summary_txt" \
     -v per_thread_csv="$seed_per_thread_csv" \
+    -v seed_core="$seed_core" \
     '
     NR==1 {next}
     {
