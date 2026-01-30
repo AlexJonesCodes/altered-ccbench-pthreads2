@@ -13,6 +13,7 @@ Options:
                          ALL runs FAI, TAS, and CAS_UNTIL_SUCCESS in sequence.
   --cores LIST           Core list (e.g., "[0,1,2,3,4]") (required)
   --threads N            Use only the first N cores from --cores (optional)
+  --threads-list LIST    Comma/space list of thread counts (e.g., "2,4,6,8")
   --reps N               Repetitions per run (default: 10000)
   --ccbench PATH         Path to ccbench binary (default: ./ccbench)
   --output-dir DIR       Output directory for logs/report (default: results)
@@ -24,7 +25,7 @@ Example:
   scripts/run_seed_rotation_wins.sh \
     --op ALL \
     --cores "[0,1,2,3,16,17]" \
-    --threads 4 \
+    --threads-list "2,4,6,8" \
     --reps 20000 \
     --output-dir results_seed_rotation
 HELP
@@ -33,6 +34,7 @@ HELP
 op="ALL"
 cores=""
 threads=""
+threads_list=""
 reps=10000
 ccbench=./ccbench
 output_dir=results
@@ -46,6 +48,8 @@ while [[ $# -gt 0 ]]; do
       cores="$2"; shift 2 ;;
     --threads)
       threads="$2"; shift 2 ;;
+    --threads-list)
+      threads_list="$2"; shift 2 ;;
     --reps)
       reps="$2"; shift 2 ;;
     --ccbench)
@@ -102,13 +106,6 @@ parse_cores() {
   local parsed
   parsed=$(echo "$raw" | tr -d '[]' | tr ',' ' ')
   read -r -a core_array <<<"$parsed"
-  if [[ -n "$threads" ]]; then
-    if [[ "$threads" -lt 1 || "$threads" -gt "${#core_array[@]}" ]]; then
-      echo "--threads must be between 1 and ${#core_array[@]}" >&2
-      exit 1
-    fi
-    core_array=("${core_array[@]:0:$threads}")
-  fi
   printf '%s\n' "${core_array[@]}"
 }
 
@@ -277,14 +274,79 @@ append_thread_csv() {
   ' "$log_file"
 }
 
+append_summary_csv() {
+  local log_file="$1"
+  local op_label="$2"
+  local seed_core="$3"
+  local thread_count="$4"
+  local csv_file="$5"
+
+  awk -v op="$op_label" -v seed="$seed_core" -v threads="$thread_count" -v csv_file="$csv_file" '
+    /Core number/ {
+      if (match($0, /Core number[[:space:]]+([0-9]+)[^0-9]+thread:[[:space:]]+([0-9]+).*avg[[:space:]]+([0-9.]+)/, m)) {
+        core = m[2]
+        avg = m[3]
+        avg_by_core[core] = avg
+      }
+    }
+    /wins$/ {
+      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
+        core = m[1]
+        thread = m[2]
+        wins[thread] = m[3]
+        core_by_thread[thread] = core
+        thread_seen[thread] = 1
+        if (thread > max_thread) max_thread = thread
+      } else if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+        thread = m[1]
+        wins[thread] = m[2]
+        thread_seen[thread] = 1
+        if (thread > max_thread) max_thread = thread
+      }
+    }
+    END {
+      for (i = 0; i <= max_thread; i++) {
+        if (!thread_seen[i]) continue
+        core = core_by_thread[i]
+        avg = avg_by_core[core]
+        win = wins[i]
+        if (core == "") core = 0
+        if (avg == "") avg = 0
+        if (win == "") win = 0
+        printf "%s,%s,%s,%s,%s,%.3f,%s\n", op, threads, seed, i, core, avg + 0, win \
+          >> csv_file
+      }
+    }
+  ' "$log_file"
+}
+
 mapfile -t core_array < <(parse_cores "$cores")
-thread_count=${#core_array[@]}
-if [[ "$thread_count" -lt 1 ]]; then
+total_cores=${#core_array[@]}
+if [[ "$total_cores" -lt 1 ]]; then
   echo "No cores provided." >&2
   exit 1
 fi
 
-cores_list=$(build_cores_list "${core_array[@]}")
+if [[ -n "$threads_list" ]]; then
+  parsed_threads=$(echo "$threads_list" | tr -d '[]' | tr ',' ' ')
+  read -r -a thread_counts <<<"$parsed_threads"
+elif [[ -n "$threads" ]]; then
+  thread_counts=("$threads")
+else
+  thread_counts=("$total_cores")
+fi
+
+for count in "${thread_counts[@]}"; do
+  if [[ "$count" -lt 1 || "$count" -gt "$total_cores" ]]; then
+    echo "Thread count ${count} must be between 1 and ${total_cores}." >&2
+    exit 1
+  fi
+done
+
+summary_csv="$output_dir/seed_rotation_wins_summary.csv"
+if [[ "$dry_run" -eq 0 ]]; then
+  printf "op,threads,seed_core,thread_id,core,avg_latency,wins\n" >"$summary_csv"
+fi
 
 for op_name in "${ops[@]}"; do
   op_entry=$(normalize_op "$op_name") || {
@@ -293,35 +355,45 @@ for op_name in "${ops[@]}"; do
   }
   op_label="${op_entry%%:*}"
   test_id="${op_entry##*:}"
-  tests_list=$(build_tests_list "$thread_count")
+  for thread_count in "${thread_counts[@]}"; do
+    tests_list=$(build_tests_list "$thread_count")
+    core_subset=("${core_array[@]:0:$thread_count}")
+    cores_list=$(build_cores_list "${core_subset[@]}")
 
-  report_file="$output_dir/seed_rotation_wins_${op_label}.txt"
-  csv_file="$output_dir/seed_rotation_wins_${op_label}.csv"
-  if [[ "$dry_run" -eq 0 ]]; then
-    : >"$report_file"
-    printf "op,seed_core,thread_id,core,avg_latency,wins\n" >"$csv_file"
-  fi
-
-  for ((i=0; i<thread_count; i++)); do
-    seed_core="${core_array[$i]}"
-    log_file="$output_dir/logs/seed_t$((i + 1))_core_${seed_core}_op_${test_id}.log"
-    cmd=("$ccbench" -r "$reps" -t "$tests_list" -x "$cores_list" -b "$seed_core")
-    if [[ "$dry_run" -eq 1 ]]; then
-      run_cmd "${cmd[@]}"
-      continue
+    report_suffix=""
+    if [[ "${#thread_counts[@]}" -gt 1 ]]; then
+      report_suffix="_t${thread_count}"
     fi
-    run_cmd "${cmd[@]}" | tee "$log_file" >/dev/null
+    report_file="$output_dir/seed_rotation_wins_${op_label}${report_suffix}.txt"
+    csv_file="$output_dir/seed_rotation_wins_${op_label}${report_suffix}.csv"
+    if [[ "$dry_run" -eq 0 ]]; then
+      : >"$report_file"
+      printf "op,seed_core,thread_id,core,avg_latency,wins\n" >"$csv_file"
+    fi
 
-    {
-      printf 'operation: %s (test %s)\n' "$op_label" "$test_id"
-      printf 'pinned thread: t%d (core %s)\n' "$((i + 1))" "$seed_core"
-      printf 'wins per thread:\n'
-      format_wins_line "$log_file" "$i" "$thread_count"
-      format_fairness_line "$log_file" "$i" "$thread_count"
-      printf '\n'
-    } >>"$report_file"
-    append_thread_csv "$log_file" "$op_label" "$seed_core" "$csv_file"
+    for ((i=0; i<thread_count; i++)); do
+      seed_core="${core_subset[$i]}"
+      log_file="$output_dir/logs/threads_${thread_count}_seed_t$((i + 1))_core_${seed_core}_op_${test_id}.log"
+      cmd=("$ccbench" -r "$reps" -t "$tests_list" -x "$cores_list" -b "$seed_core")
+      if [[ "$dry_run" -eq 1 ]]; then
+        run_cmd "${cmd[@]}"
+        continue
+      fi
+      run_cmd "${cmd[@]}" | tee "$log_file" >/dev/null
 
+      {
+        printf 'operation: %s (test %s)\n' "$op_label" "$test_id"
+        printf 'thread count: %s\n' "$thread_count"
+        printf 'pinned thread: t%d (core %s)\n' "$((i + 1))" "$seed_core"
+        printf 'wins per thread:\n'
+        format_wins_line "$log_file" "$i" "$thread_count"
+        format_fairness_line "$log_file" "$i" "$thread_count"
+        printf '\n'
+      } >>"$report_file"
+      append_thread_csv "$log_file" "$op_label" "$seed_core" "$csv_file"
+      append_summary_csv "$log_file" "$op_label" "$seed_core" "$thread_count" "$summary_csv"
+
+    done
   done
 done
 
@@ -330,7 +402,15 @@ if [[ "$dry_run" -eq 0 ]]; then
   for op_name in "${ops[@]}"; do
     op_entry=$(normalize_op "$op_name") || continue
     op_label="${op_entry%%:*}"
-    printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.txt"
-    printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.csv"
+    if [[ "${#thread_counts[@]}" -gt 1 ]]; then
+      for thread_count in "${thread_counts[@]}"; do
+        printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}_t${thread_count}.txt"
+        printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}_t${thread_count}.csv"
+      done
+    else
+      printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.txt"
+      printf '  %s\n' "$output_dir/seed_rotation_wins_${op_label}.csv"
+    fi
   done
+  printf '  %s\n' "$summary_csv"
 fi
