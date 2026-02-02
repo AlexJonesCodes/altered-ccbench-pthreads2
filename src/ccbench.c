@@ -107,8 +107,8 @@ static inline void rec_success(uint64_t rep)
   if (!common_latency_cycles || !round_start) return;
   size_t idx = (size_t) ID * test_reps + (size_t) rep;
   if (common_latency_cycles[idx] == 0) {
-    ticks t_end = getticks();
-    common_latency_cycles[idx] = (uint64_t)(t_end - round_start[rep]);
+    uint64_t v = (uint64_t)(getticks() - round_start[rep]);
+    (void) __sync_bool_compare_and_swap(&common_latency_cycles[idx], 0ULL, v);
   }
 }
 
@@ -1806,17 +1806,25 @@ run_benchmark(void* arg)
 	  /* Mean common-start latency per thread (from B4 to this thread’s success) */
 		if (common_latency_cycles) {
 		printf("\nCommon-start latency (B4 -> success), per thread:\n");
-		for (uint32_t r = 0; r < test_cores; r++) {
-			double sum = 0.0, minv = DBL_MAX, maxv = 0.0;
+		    for (uint32_t r = 0; r < test_cores; r++) {
+			double sumv = 0.0, minv = DBL_MAX, maxv = 0.0;
+			size_t cnt = 0;
 			for (size_t k = 0; k < test_reps; k++) {
-			double v = (double) common_latency_cycles[(size_t)r * test_reps + k];
-			sum += v;
-			if (v < minv) minv = v;
-			if (v > maxv) maxv = v;
+				uint64_t v = common_latency_cycles[(size_t)r * test_reps + k];
+				if (v == 0) continue; /* skip missing */
+				sumv += (double)v;
+				if ((double)v < minv) minv = (double)v;
+				if ((double)v > maxv) maxv = (double)v;
+				cnt++;
 			}
-			double mean = sum / (double)test_reps;
-			printf("  thread ID %u (core %zu): mean %6.1f cycles, min %6.1f, max %6.1f\n",
-				r, core_for_rank ? core_for_rank[r] : (size_t)r, mean, minv, maxv);
+			if (cnt) {
+				double mean = sumv / (double)cnt;
+				printf("  thread ID %u (core %zu): mean %6.1f cycles, min %6.1f, max %6.1f (n=%zu)\n",
+					r, core_for_rank ? core_for_rank[r] : (size_t)r, mean, minv, maxv, cnt);
+			} else {
+				printf("  thread ID %u (core %zu): no rec_success samples\n",
+					r, core_for_rank ? core_for_rank[r] : (size_t)r);
+			}
 		}
 		printf("\n");
 
@@ -1824,16 +1832,17 @@ run_benchmark(void* arg)
 		if (first_winner_per_rep) {
 			size_t matches = 0, valid = 0;
 			for (size_t rep = 0; rep < test_reps; rep++) {
-			uint32_t win = first_winner_per_rep[rep];
-			if (win == UINT32_MAX) continue;
-			valid++;
-			uint32_t best = 0;
-			uint64_t bestv = UINT64_MAX;
-			for (uint32_t r = 0; r < test_cores; r++) {
-				uint64_t v = common_latency_cycles[(size_t)r * test_reps + rep];
-				if (v < bestv) { bestv = v; best = r; }
-			}
-			if (best == win) matches++;
+				uint32_t win = first_winner_per_rep[rep];
+				if (win == UINT32_MAX) continue;
+				valid++;
+				uint32_t best = UINT32_MAX;
+				uint64_t bestv = UINT64_MAX;
+				for (uint32_t r = 0; r < test_cores; r++) {
+					uint64_t v = common_latency_cycles[(size_t)r * test_reps + rep];
+					if (v == 0) continue; /* skip missing */
+					if (v < bestv) { bestv = v; best = r; }
+				}
+				if (best != UINT32_MAX && best == win) matches++;
 			}
 			if (valid) {
 			printf("Winner==argmin(B4->success) in %zu/%zu reps (%.1f%%)\n",
@@ -2191,6 +2200,7 @@ cas(volatile cache_line_t* cl, volatile uint64_t reps)
   PFDI(0);
   r = CAS_U32(cl->word, o, no);
   PFDO(0, reps);
+  if (r == o) { rec_success(reps); }
 
   if (test_fail_stats && cas_attempts_per_rank) {
     cas_attempts_per_rank[ID]++;
@@ -2212,6 +2222,7 @@ cas_no_pf(volatile cache_line_t* cl, volatile uint64_t reps)
   volatile uint32_t r;
   RACE_TRY_WITH_REP(reps);
   r = CAS_U32(cl->word, o, no);
+  if (r == o) { rec_success(reps); }
 
   if (test_fail_stats && cas_attempts_per_rank) {
     cas_attempts_per_rank[ID]++;
@@ -2270,13 +2281,7 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
     }
   }
   PFDO(0, reps);
-
-  /* Also store the common-start latency (B4->this success) */
-  if (common_latency_cycles && round_start) {
-    ticks t_end = getticks();
-    common_latency_cycles[(size_t)ID * test_reps + (size_t)reps] =
-      (uint64_t)(t_end - round_start[reps]);
-  }
+  rec_success(reps);
 
   if (test_fail_stats && casus_attempts_per_rank) {
     casus_attempts_per_rank[ID] += attempts;
@@ -2309,6 +2314,7 @@ cas_0_eventually(volatile cache_line_t* cl, volatile uint64_t reps)
       PFDI(0);
       r = CAS_U32(cl1->word, o, no);
       PFDO(0, reps);
+	  if (cln == 0 && r == o) { rec_success(reps); }
     }
   while (cln > 0);
 
@@ -2421,6 +2427,7 @@ store_0(volatile cache_line_t* cl, volatile uint64_t reps)
       PFDI(0);
       cl->word[0] = reps;
       PFDO(0, reps);
+	  rec_success(reps);
     }
   else if (test_sfence == 1)
     {
@@ -2428,6 +2435,7 @@ store_0(volatile cache_line_t* cl, volatile uint64_t reps)
       cl->word[0] = reps;
       _mm_sfence();
       PFDO(0, reps);
+	  rec_success(reps);
     }
   else if (test_sfence == 2)
     {
@@ -2435,6 +2443,7 @@ store_0(volatile cache_line_t* cl, volatile uint64_t reps)
       cl->word[0] = reps;
       _mm_mfence();
       PFDO(0, reps);
+	  rec_success(reps);
     }
 }
 
@@ -2466,6 +2475,7 @@ store_0_eventually_sf(volatile cache_line_t* cl, volatile uint64_t reps)
       w[0] = cln;
       _mm_sfence();
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2483,6 +2493,7 @@ store_0_eventually_mf(volatile cache_line_t* cl, volatile uint64_t reps)
       w[0] = cln;
       _mm_mfence();
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2499,6 +2510,7 @@ store_0_eventually_nf(volatile cache_line_t* cl, volatile uint64_t reps)
       PFDI(0);
       w[0] = cln;
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2516,6 +2528,7 @@ store_0_eventually_dw(volatile cache_line_t* cl, volatile uint64_t reps)
       w[0]  = cln;
 	  w[15] = cln;  /* last uint32_t in a 64B cache line */
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2556,6 +2569,7 @@ store_0_eventually_pfd1_sf(volatile cache_line_t* cl, volatile uint64_t reps)
       w[0] = cln;
       _mm_sfence();
       PFDO(1, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2573,6 +2587,7 @@ store_0_eventually_pfd1_mf(volatile cache_line_t* cl, volatile uint64_t reps)
       w[0] = cln;
       _mm_mfence();
       PFDO(1, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2589,6 +2604,7 @@ store_0_eventually_pfd1_nf(volatile cache_line_t* cl, volatile uint64_t reps)
       PFDI(1);
       w[0] = cln;
       PFDO(1, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
 }
@@ -2626,6 +2642,7 @@ load_0_eventually_lf(volatile cache_line_t* cl, volatile uint64_t reps)
       val = w[0];
       _mm_lfence();
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
   return val;
@@ -2646,6 +2663,7 @@ load_0_eventually_mf(volatile cache_line_t* cl, volatile uint64_t reps)
       val = w[0];
       _mm_mfence();
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
   return val;
@@ -2665,6 +2683,7 @@ load_0_eventually_nf(volatile cache_line_t* cl, volatile uint64_t reps)
       PFDI(0);
       val = w[0];
       PFDO(0, reps);
+	  if (cln == 0) rec_success(reps);
     }
   while (cln > 0);
   return val;
@@ -2703,6 +2722,7 @@ load_0_eventually_no_pf(volatile cache_line_t* cl)
       cln = clrand();
       volatile uint32_t *w = &cl[cln].word[0];
       sum = w[0];
+	  if (cln == 0) rec_success(current_rep_idx);
     }
   while (cln > 0);
 
@@ -2720,6 +2740,7 @@ load_0_lf(volatile cache_line_t* cl, volatile uint64_t reps)
   val = p[0];
   _mm_lfence();
   PFDO(0, reps);
+  rec_success(reps);
   return val;
 }
 
@@ -2733,6 +2754,7 @@ load_0_mf(volatile cache_line_t* cl, volatile uint64_t reps)
   val = p[0];
   _mm_mfence();
   PFDO(0, reps);
+  rec_success(reps);
   return val;
 }
 
@@ -2745,6 +2767,7 @@ load_0_nf(volatile cache_line_t* cl, volatile uint64_t reps)
   PFDI(0);
   val = p[0];
   PFDO(0, reps);
+  rec_success(reps);
   return val;
 }
 

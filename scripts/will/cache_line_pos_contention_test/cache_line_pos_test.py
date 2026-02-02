@@ -42,7 +42,7 @@ USE_MLOCK = False     # if True, add -K
 USE_ALL_ONLINE_CPUS = True
 
 # Output
-OUT_DIR = "./results/r53600"
+OUT_DIR = "./results/r53600/"
 CSV_FILE = os.path.join(OUT_DIR, "placement_latency.csv")
 
 # Save raw stdout of each run (optional)

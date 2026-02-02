@@ -33,7 +33,7 @@ except Exception:
 # ==============================
 processor_name = "r53600"
 
-base_dir = "./results/" + processor_name + "/"
+base_dir = "./results/" + processor_name + "/tesmp/"
 INPUT_CSV = os.path.join(base_dir, "placement_latency.csv")
 
 OUT_DIR = os.path.join(base_dir, "placement_plots")

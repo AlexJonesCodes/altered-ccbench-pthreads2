@@ -3,12 +3,22 @@
 Placement visualisation with selectable axis ordering (with test name mapping).
 
 Input CSV (from non-contention runner):
-  test_id,seed_thread,worker_thread,latency_b4
+  Required columns: test_id, seed_thread, worker_thread
+  Metric columns supported:
+    - latency_b4  (Common-start latency, B4 -> success)
+    - pfd_avg     (Cross-core summary average)
 
-This script produces:
+This script produces TWO sets of plots (without changing the core visualisations):
+- Using B4 data      -> saved under: <OUT_BASE>/b4/
+- Using PFD (avg)    -> saved under: <OUT_BASE>/cross_core_summary/
+
+Each set contains:
 - Heatmap per test_id
 - Line plot: Jain fairness across seeds for each worker
 - Line plot: Jain fairness across workers for each seed
+
+Note: Jain fairness is computed on inverse-latency utilities (xi = 1 / latency_i),
+so that smaller latency corresponds to larger utility as per Jain’s definition.
 """
 
 import os
@@ -35,12 +45,15 @@ except Exception:
 # ==============================
 # Configuration
 # ==============================
-processor_name = "XeonE5530"
+processor_name = "r53600"
 
 base_dir = "./" + processor_name + "/"
 INPUT_CSV = os.path.join(base_dir, "noncontention_latency.csv")
 
-OUT_DIR = os.path.join(base_dir, "noncontention_latency_plots")
+OUT_BASE = os.path.join(base_dir, "noncontention_latency_plots")
+OUT_DIR_B4 = os.path.join(OUT_BASE, "b4")
+OUT_DIR_CCS = os.path.join(OUT_BASE, "cross_core_summary")
+
 HEATMAP_PREFIX = "heatmap_latency_test"
 GROUPED_BARS_SEEDS_PNG = "fairness_across_seeds.png"
 GROUPED_BARS_WORKERS_PNG = "fairness_across_workers.png"
@@ -94,24 +107,58 @@ def enforce_white_theme(ax):
     ax.tick_params(colors="black")
 
 def jain(values: np.ndarray) -> float:
-    vals = np.asarray(values, dtype=float)
-    vals = vals[np.isfinite(vals)]
-    if vals.size == 0:
+    """
+    Jain's fairness index computed on inverse-latency utilities:
+      xi = 1 / latency_i, for latency_i > 0 and finite.
+    """
+    lat = np.asarray(values, dtype=float)
+    lat = lat[np.isfinite(lat) & (lat > 0)]
+    if lat.size == 0:
         return np.nan
-    s = np.sum(vals)
-    s2 = np.sum(vals * vals)
+    x = 1.0 / lat
+    s = np.sum(x)
+    s2 = np.sum(x * x)
     if s2 <= 0:
         return np.nan
-    return (s * s) / (vals.size * s2)
+    return (s * s) / (x.size * s2)
 
 def load_and_prepare(path: str) -> pd.DataFrame:
+    """
+    Load CSV and ensure numeric types. Accepts either/both metric columns:
+      - latency_b4
+      - pfd_avg
+    Returns a DataFrame with at least:
+      test_id (int), seed_thread (int), worker_thread (int),
+      and any available of latency_b4, pfd_avg (float).
+    """
     df = pd.read_csv(path)
-    for c in ["test_id", "seed_thread", "worker_thread", "latency_b4"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna()
+
+    required = ["test_id", "seed_thread", "worker_thread"]
+    for c in required:
+        if c not in df.columns:
+            raise ValueError(f"Missing required column '{c}' in {path}")
+
+    # Ensure numeric
+    df["test_id"] = pd.to_numeric(df["test_id"], errors="coerce")
+    df["seed_thread"] = pd.to_numeric(df["seed_thread"], errors="coerce")
+    df["worker_thread"] = pd.to_numeric(df["worker_thread"], errors="coerce")
+
+    # Ensure metric columns exist (create NaN if missing)
+    if "latency_b4" not in df.columns:
+        df["latency_b4"] = np.nan
+    else:
+        df["latency_b4"] = pd.to_numeric(df["latency_b4"], errors="coerce")
+
+    if "pfd_avg" in df.columns:
+        df["pfd_avg"] = pd.to_numeric(df["pfd_avg"], errors="coerce")
+
+    # Drop rows missing required identifiers
+    df = df.dropna(subset=["test_id", "seed_thread", "worker_thread"])
+    # Cast IDs to int
     df["test_id"] = df["test_id"].astype(int)
     df["seed_thread"] = df["seed_thread"].astype(int)
     df["worker_thread"] = df["worker_thread"].astype(int)
+
     return df
 
 # ----- Ordering -----
@@ -177,10 +224,8 @@ def plot_heatmaps(df: pd.DataFrame, out_dir: str) -> None:
         ax.tick_params(top=True, labeltop=True, bottom=True, labelbottom=True)
         ax.tick_params(left=True, labelleft=True, right=True, labelright=True)
 
-
         enforce_white_theme(ax)
         plt.colorbar(im, ax=ax, shrink=0.85)
-        
 
         fig.tight_layout()
         fig.savefig(
@@ -220,7 +265,7 @@ def plot_fairness_across_seeds(df: pd.DataFrame, out_dir: str) -> None:
     ax.set_ylim(0.0, 1.1)
     ax.yaxis.set_major_locator(MultipleLocator(0.1))
 
-    ax.set_title(f"{processor_name}: Jain Fairness Index Across Seeds")
+    ax.set_title(f"{processor_name}: Jain Fairness Index (1/latency) Across Seeds")
     ax.set_xlabel("Worker Thread")
     ax.set_ylabel("Jain Fairness Index")
     ax.set_xticks(x)
@@ -263,7 +308,7 @@ def plot_fairness_across_workers(df: pd.DataFrame, out_dir: str) -> None:
     ax.set_ylim(0.0, 1.1)
     ax.yaxis.set_major_locator(MultipleLocator(0.1))
 
-    ax.set_title(f"{processor_name}: Jain Fairness Index Across Workers per Seed")
+    ax.set_title(f"{processor_name}: Jain Fairness Index (1/latency) Across Workers per Seed")
     ax.set_xlabel("Seed Thread (-b)")
     ax.set_ylabel("Jain Fairness Index")
     ax.set_xticks(x)
@@ -284,14 +329,39 @@ def plot_fairness_across_workers(df: pd.DataFrame, out_dir: str) -> None:
 # ==============================
 
 def main():
-    ensure_dir(OUT_DIR)
-    df = load_and_prepare(INPUT_CSV)
+    ensure_dir(OUT_BASE)
+    ensure_dir(OUT_DIR_B4)
+    ensure_dir(OUT_DIR_CCS)
 
-    plot_heatmaps(df, OUT_DIR)
-    plot_fairness_across_seeds(df, OUT_DIR)
-    plot_fairness_across_workers(df, OUT_DIR)
+    df_all = load_and_prepare(INPUT_CSV)
 
-    print(f"Saved plots to: {OUT_DIR}")
+    # -------- B4 dataset (as-is) --------
+    df_b4 = df_all.copy()
+    # We will drop rows where latency_b4 is NaN for plotting, but allow partial coverage
+    df_b4_plot = df_b4.dropna(subset=["latency_b4"])
+    if not df_b4_plot.empty:
+        plot_heatmaps(df_b4_plot, OUT_DIR_B4)
+        plot_fairness_across_seeds(df_b4_plot, OUT_DIR_B4)
+        plot_fairness_across_workers(df_b4_plot, OUT_DIR_B4)
+        print(f"Saved B4 plots to: {OUT_DIR_B4}")
+    else:
+        print("No B4 data (latency_b4) found; skipping B4 plots.")
+
+    # -------- Cross-core summary dataset (pfd_avg -> reuse visuals) --------
+    if "pfd_avg" in df_all.columns:
+        df_ccs = df_all.copy()
+        # Reuse the plotting functions by mapping pfd_avg into 'latency_b4'
+        df_ccs["latency_b4"] = df_ccs["pfd_avg"]
+        df_ccs_plot = df_ccs.dropna(subset=["latency_b4"])
+        if not df_ccs_plot.empty:
+            plot_heatmaps(df_ccs_plot, OUT_DIR_CCS)
+            plot_fairness_across_seeds(df_ccs_plot, OUT_DIR_CCS)
+            plot_fairness_across_workers(df_ccs_plot, OUT_DIR_CCS)
+            print(f"Saved Cross-core Summary plots to: {OUT_DIR_CCS}")
+        else:
+            print("pfd_avg column present but empty after cleaning; skipping Cross-core Summary plots.")
+    else:
+        print("No Cross-core Summary data (pfd_avg) found; skipping Cross-core Summary plots.")
 
 if __name__ == "__main__":
     main()
