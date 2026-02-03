@@ -7,7 +7,8 @@ Usage: scripts/run_atomic_full_sweep.sh --cores LIST [options]
 
 Run CAS_UNTIL_SUCCESS, FAI, and TAS across thread counts. For each thread
 count, the first N cores from --cores define the worker/seed pool for that run.
-Collect per-run latency, fairness, and optional failure stats in concise CSVs.
+Collect per-run latency, fairness, per-thread win summary, and optional failure
+stats in concise CSVs.
 
 Required:
   --cores LIST           Comma-separated core list (e.g., "0,1,2,3")
@@ -139,7 +140,7 @@ runs_csv="$output_dir/runs.csv"
 threads_csv="$output_dir/threads.csv"
 fail_csv="$output_dir/failure_stats.csv"
 
-printf "run_id,atomic,seed_core,threads,tests,cores,reps,mean_avg,jain_fairness,attempts_total,successes_total,failures_total,failure_rate_total\n" >"$runs_csv"
+printf "run_id,atomic,seed_core,threads,tests,cores,reps,mean_avg,jain_fairness,wins_min,wins_max,wins_mean,attempts_total,successes_total,failures_total,failure_rate_total\n" >"$runs_csv"
 printf "run_id,atomic,seed_core,thread_id,core,avg,min,max,std_dev,abs_dev,wins\n" >"$threads_csv"
 if [[ "$fail_stats" -eq 1 ]]; then
   printf "run_id,atomic,thread_id,core,attempts,successes,failures,failure_rate\n" >"$fail_csv"
@@ -302,6 +303,8 @@ parse_stats() {
       sum = 0
       sum_sq = 0
       wins_sum = 0
+      wins_min = ""
+      wins_max = ""
       count = 0
       if (length(wins_seen) > 0) {
         for (t in wins_seen) {
@@ -310,6 +313,8 @@ parse_stats() {
           val = wins_by_thread[t]
           if (val == "") val = 0
           wins_sum += val
+          if (wins_min == "" || val < wins_min) wins_min = val
+          if (wins_max == "" || val > wins_max) wins_max = val
           sum += val
           sum_sq += val * val
         }
@@ -320,6 +325,8 @@ parse_stats() {
           val = wins_by_thread[t]
           if (val == "") val = 0
           wins_sum += val
+          if (wins_min == "" || val < wins_min) wins_min = val
+          if (wins_max == "" || val > wins_max) wins_max = val
           sum += val
           sum_sq += val * val
         }
@@ -341,9 +348,14 @@ parse_stats() {
         failure_rate_total = ""
       }
 
-      printf "%s,%s,%s,%s,\"%s\",\"%s\",%s,%.3f,%.6f,%s,%s,%s,%s\n", \
+      wins_mean = ""
+      if (count > 0) {
+        wins_mean = wins_sum / count
+      }
+
+      printf "%s,%s,%s,%s,\"%s\",\"%s\",%s,%.3f,%.6f,%s,%s,%.2f,%s,%s,%s,%s\n", \
         run_id, atomic, seed, threads, tests, cores, reps, mean_avg + 0, fairness, \
-        attempts_total, successes_total, failures_total, failure_rate_total \
+        wins_min, wins_max, wins_mean, attempts_total, successes_total, failures_total, failure_rate_total \
         >> runs_csv
 
       for (t in thread_seen) {
