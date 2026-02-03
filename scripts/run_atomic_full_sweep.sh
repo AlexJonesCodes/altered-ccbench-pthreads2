@@ -5,10 +5,10 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/run_atomic_full_sweep.sh --cores LIST [options]
 
-Run CAS_UNTIL_SUCCESS, FAI, and TAS across thread counts while rotating the
-seed core. For each thread count, use the first N cores from the provided list
-as both worker and seed candidates. Collect per-run latency, fairness, success
-rate, and optional failure stats in concise CSVs.
+Run CAS_UNTIL_SUCCESS, FAI, and TAS across thread counts. For each thread
+count, the first N cores from --cores define the worker/seed pool for that run.
+Collect per-run latency, fairness, success rate, and optional failure stats in
+concise CSVs.
 
 Required:
   --cores LIST           Comma-separated core list (e.g., "0,1,2,3")
@@ -17,8 +17,8 @@ Options:
   --thread-counts LIST   Comma-separated thread counts (default: "2,4,6,8")
   --max-threads N        Maximum threads when --thread-counts omitted
   --reps N               Repetitions per run (default: 10000)
-  --rotate-seed          Rotate seed core across the selected cores for each run
-  --seed-core N          Fixed seed core (must be in selected cores)
+  --rotate-seed          Rotate the seed core across the selected core prefix
+  --seed-core N          Fixed seed core (must be inside the selected prefix)
   --fail-stats           Capture per-thread attempts/successes/failures
   --ccbench PATH         Path to ccbench binary (default: ./ccbench)
   --output-dir DIR       Output directory (default: results/atomic_full_sweep)
