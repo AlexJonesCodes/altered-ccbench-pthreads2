@@ -449,7 +449,7 @@ done
 
 if [[ "$dry_run" -eq 0 ]]; then
   summary_tmp="$(mktemp)"
-  awk -F, '
+  awk -v FPAT='([^,]+)|(\"[^\"]+\")' '
     NR == 1 { next }
     {
       key = $2 FS $4
