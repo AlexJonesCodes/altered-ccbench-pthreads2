@@ -448,6 +448,7 @@ for threads in "${thread_list[@]}"; do
 done
 
 if [[ "$dry_run" -eq 0 ]]; then
+  summary_tmp="$(mktemp)"
   awk -F, '
     NR == 1 { next }
     {
@@ -467,7 +468,10 @@ if [[ "$dry_run" -eq 0 ]]; then
           wins_sum[k] / count[k]
       }
     }
-  ' "$runs_csv" | sort -t, -k1,1 -k2,2n >"$summary_csv"
+  ' "$runs_csv" | sort -t, -k1,1 -k2,2n >"$summary_tmp"
+  printf "atomic,threads,runs,mean_avg,latency_fairness,wins_fairness\n" >"$summary_csv"
+  cat "$summary_tmp" >>"$summary_csv"
+  rm -f "$summary_tmp"
 
   printf '\nCompleted. CSV outputs:\n'
   printf '  %s\n' "$runs_csv"
