@@ -27,6 +27,7 @@ Options:
 
 Outputs:
   <output-dir>/runs.csv          Top-level per-run summary
+  <output-dir>/summary.csv       Aggregated summary by atomic + thread count
   <output-dir>/threads.csv       Per-thread latency/wins
   <output-dir>/failure_stats.csv Optional per-thread failure stats
 
@@ -137,10 +138,12 @@ IFS=',' read -r -a thread_list <<<"$thread_counts"
 mkdir -p "$output_dir/logs"
 
 runs_csv="$output_dir/runs.csv"
+summary_csv="$output_dir/summary.csv"
 threads_csv="$output_dir/threads.csv"
 fail_csv="$output_dir/failure_stats.csv"
 
-printf "run_id,atomic,seed_core,threads,tests,cores,reps,mean_avg,jain_fairness,wins_min,wins_max,wins_mean,attempts_total,successes_total,failures_total,failure_rate_total\n" >"$runs_csv"
+printf "run_id,atomic,seed_core,threads,tests,cores,reps,mean_avg,latency_fairness,wins_fairness,wins_min,wins_max,wins_mean,attempts_total,successes_total,failures_total,failure_rate_total\n" >"$runs_csv"
+printf "atomic,threads,runs,mean_avg,latency_fairness,wins_fairness\n" >"$summary_csv"
 printf "run_id,atomic,seed_core,thread_id,core,avg,min,max,std_dev,abs_dev,wins\n" >"$threads_csv"
 if [[ "$fail_stats" -eq 1 ]]; then
   printf "run_id,atomic,thread_id,core,attempts,successes,failures,failure_rate\n" >"$fail_csv"
@@ -302,6 +305,9 @@ parse_stats() {
     END {
       sum = 0
       sum_sq = 0
+      lat_sum = 0
+      lat_sum_sq = 0
+      lat_count = 0
       wins_sum = 0
       wins_min = ""
       wins_max = ""
@@ -332,9 +338,23 @@ parse_stats() {
         }
       }
 
-      fairness = 0
+      for (t in thread_seen) {
+        if (t == "") continue
+        lat_val = avg_by_thread[t]
+        if (lat_val == "") lat_val = 0
+        lat_sum += lat_val
+        lat_sum_sq += lat_val * lat_val
+        lat_count++
+      }
+
+      wins_fairness = 0
       if (count > 0 && sum_sq > 0) {
-        fairness = (sum * sum) / (count * sum_sq)
+        wins_fairness = (sum * sum) / (count * sum_sq)
+      }
+
+      latency_fairness = 0
+      if (lat_count > 0 && lat_sum_sq > 0) {
+        latency_fairness = (lat_sum * lat_sum) / (lat_count * lat_sum_sq)
       }
 
       if (want_fail_stats == 1 && failure_rate_total == "" && attempts_total > 0) {
@@ -353,8 +373,8 @@ parse_stats() {
         wins_mean = wins_sum / count
       }
 
-      printf "%s,%s,%s,%s,\"%s\",\"%s\",%s,%.3f,%.6f,%s,%s,%.2f,%s,%s,%s,%s\n", \
-        run_id, atomic, seed, threads, tests, cores, reps, mean_avg + 0, fairness, \
+      printf "%s,%s,%s,%s,\"%s\",\"%s\",%s,%.3f,%.6f,%.6f,%s,%s,%.2f,%s,%s,%s,%s\n", \
+        run_id, atomic, seed, threads, tests, cores, reps, mean_avg + 0, latency_fairness, wins_fairness, \
         wins_min, wins_max, wins_mean, attempts_total, successes_total, failures_total, failure_rate_total \
         >> runs_csv
 
@@ -428,8 +448,34 @@ for threads in "${thread_list[@]}"; do
 done
 
 if [[ "$dry_run" -eq 0 ]]; then
+  summary_tmp="$(mktemp)"
+  awk -v FPAT='([^,]+)|(\"[^\"]+\")' '
+    NR == 1 { next }
+    {
+      key = $2 FS $4
+      count[key]++
+      mean_sum[key] += $8
+      lat_sum[key] += $9
+      wins_sum[key] += $10
+    }
+    END {
+      for (k in count) {
+        split(k, parts, FS)
+        printf "%s,%s,%d,%.3f,%.6f,%.6f\n", \
+          parts[1], parts[2], count[k], \
+          mean_sum[k] / count[k], \
+          lat_sum[k] / count[k], \
+          wins_sum[k] / count[k]
+      }
+    }
+  ' "$runs_csv" | sort -t, -k1,1 -k2,2n >"$summary_tmp"
+  printf "atomic,threads,runs,mean_avg,latency_fairness,wins_fairness\n" >"$summary_csv"
+  cat "$summary_tmp" >>"$summary_csv"
+  rm -f "$summary_tmp"
+
   printf '\nCompleted. CSV outputs:\n'
   printf '  %s\n' "$runs_csv"
+  printf '  %s\n' "$summary_csv"
   printf '  %s\n' "$threads_csv"
   if [[ "$fail_stats" -eq 1 ]]; then
     printf '  %s\n' "$fail_csv"
