@@ -101,6 +101,40 @@ static uint64_t* tas_successes_per_rank = NULL;   /* size: test_cores */
 static uint64_t* casus_attempts_per_rank = NULL;  /* size: test_cores */
 static uint64_t* casus_failures_per_rank = NULL;  /* size: test_cores */
 static uint64_t* casus_successes_per_rank = NULL; /* size: test_cores */
+static uint64_t* fai_attempts_per_rank = NULL;
+static uint64_t* fai_successes_per_rank = NULL;
+static uint64_t* swap_attempts_per_rank = NULL;
+static uint64_t* swap_successes_per_rank = NULL;
+static uint64_t* load_attempts_per_rank = NULL;
+static uint64_t* load_successes_per_rank = NULL;
+static uint64_t* store_attempts_per_rank = NULL;
+static uint64_t* store_successes_per_rank = NULL;
+
+
+/* Continuous run mode */
+static int opt_run_mode = 0;
+
+/* Run-mode global counters */
+static volatile uint64_t global_remaining_successes = 0; /* starts at test_reps */
+static volatile uint32_t global_stop_flag = 0;
+
+/* Consume one unit of the global success quota; 1 if counted, 0 if exhausted */
+static inline int try_claim_success_unit(void)
+{
+  for (;;) {
+    uint64_t rem = global_remaining_successes;
+    if (rem == 0) return 0;
+    if (__sync_bool_compare_and_swap(&global_remaining_successes, rem, rem - 1)) {
+      if (rem == 1) {
+        _mm_mfence();
+        global_stop_flag = 1;
+        _mm_mfence();
+      }
+      return 1;
+    }
+  }
+}
+
 /* Record B4->success for this thread and repetition (only once). */
 static inline void rec_success(uint64_t rep)
 {
@@ -245,6 +279,7 @@ static struct option long_options[] = {
 	{"mlock",                    no_argument,       NULL, 'K'},
 	{"no-numa",                  no_argument,       NULL, 'n'},
 	{"print",                    required_argument, NULL, 'p'},
+	{"run",                      no_argument,       NULL, 'R'},
 	{NULL, 0, NULL, 0}
 };
 
@@ -255,7 +290,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:F", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:FR", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -318,7 +353,10 @@ int main(int argc, char** argv)
 		 "        Verbose printing of results (default=" XSTR(DEFAULT_VERBOSE) ")\n"
 		 "  -p, --print <int>\n"
 		 "        If verbose, how many results to print (default=" XSTR(DEFAULT_PRINT) ")\n"
-		 );
+		"  -R, --run\n"
+		"        Continuous run mode: -r is total successful executions across all threads.\n"
+		"        No per-repetition reset; single seed/init only; prints total and per-CPU wins/failures.\n" 
+		);
 	  printf("Supported events: \n");
 	  int ar;
 	  for (ar = 0; ar < NUM_EVENTS; ar++)
@@ -369,6 +407,11 @@ int main(int argc, char** argv)
 	case 'o':
 	  test_core_others = atoi(optarg);
 	  break;
+	case 'R': /* --run: continuous mode, reps == global success quota */
+		opt_run_mode = 1;
+		/* ensure failure stats for per-thread reporting */
+		test_fail_stats = 1;
+		break;
 	case 'f':
 	  test_flush = 1;
 	  break;
@@ -594,15 +637,16 @@ int main(int argc, char** argv)
 	win_counts_per_rank = (uint32_t*) calloc(test_cores, sizeof(uint32_t));
 	if (!win_counts_per_rank) { perror("calloc"); exit(1); }
 
+	if (!opt_run_mode) {
 	first_winner_per_rep = (uint32_t*) malloc(sizeof(uint32_t) * test_reps);
 	if (!first_winner_per_rep) { perror("malloc"); exit(1); }
 	round_start = (ticks*) calloc(test_reps, sizeof(ticks));
 	if (!round_start) { perror("calloc"); exit(1); }
-
 	common_latency_cycles = (uint64_t*) calloc((size_t)test_cores * test_reps, sizeof(uint64_t));
 	if (!common_latency_cycles) { perror("calloc"); exit(1); }
+	}
 
-	if (test_fail_stats) {
+	if (test_fail_stats || opt_run_mode) {
 		cas_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		cas_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		cas_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
@@ -612,18 +656,35 @@ int main(int argc, char** argv)
 		casus_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		casus_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		casus_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+
+		/* New: non-failing op families */
+		fai_attempts_per_rank   = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		fai_successes_per_rank  = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		swap_attempts_per_rank  = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		swap_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		load_attempts_per_rank  = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		load_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		store_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+		store_successes_per_rank= (uint64_t*) calloc(test_cores, sizeof(uint64_t));
+
 		if (!cas_attempts_per_rank || !cas_failures_per_rank || !cas_successes_per_rank ||
 			!tas_attempts_per_rank || !tas_failures_per_rank || !tas_successes_per_rank ||
-			!casus_attempts_per_rank || !casus_failures_per_rank || !casus_successes_per_rank) {
+			!casus_attempts_per_rank || !casus_failures_per_rank || !casus_successes_per_rank ||
+			!fai_attempts_per_rank || !fai_successes_per_rank ||
+			!swap_attempts_per_rank || !swap_successes_per_rank ||
+			!load_attempts_per_rank || !load_successes_per_rank ||
+			!store_attempts_per_rank || !store_successes_per_rank) {
 			perror("calloc");
 			exit(1);
 		}
 	}
 
-	for (size_t i_init = 0; i_init < test_reps; i_init++)
-	{
-		first_winner_per_rep[i_init] = UINT32_MAX; /* unclaimed */
+	if (!opt_run_mode) {
+		for (size_t i_init = 0; i_init < test_reps; i_init++) {
+			first_winner_per_rep[i_init] = UINT32_MAX; /* unclaimed */
+		}
 	}
+
 
 	if (seed_core >= 0) {
 		seed_rank = -1;
@@ -673,6 +734,20 @@ int main(int argc, char** argv)
 
 		/* Now allocate the test buffer */
 		volatile cache_line_t* cache_line = cache_line_open();
+		if (opt_run_mode) {
+			global_remaining_successes = (uint64_t) test_reps; /* -r is success quota */
+			global_stop_flag = 0;
+
+			/* One-time seed on current core (main pinned to -b earlier) */
+			cache_line->word[0] = 0; 
+			_mm_mfence();
+
+			if (test_flush) { /* optional single flush */
+				_mm_clflush((void*) cache_line);
+				_mm_mfence();
+			}
+		}
+
 
 		#ifdef PLATFORM_NUMA
 		/* Diagnostic: print the current NUMA node of the first page of cache_line */
@@ -714,12 +789,12 @@ int main(int argc, char** argv)
     }
 
 	seeder_args_t* sargs = NULL;
-	if (have_seeder_thread) {
-	sargs = (seeder_args_t*) malloc(sizeof(seeder_args_t));
-	if (!sargs) { perror("malloc"); exit(1); }
-	sargs->cache_line = cache_line;
-	int rc = pthread_create(&seeder_pth, NULL, seeder_main, sargs);
-	if (rc != 0) { errno = rc; perror("pthread_create seeder"); exit(1); }
+	if (!opt_run_mode && have_seeder_thread) {
+		sargs = (seeder_args_t*) malloc(sizeof(seeder_args_t));
+		if (!sargs) { perror("malloc"); exit(1); }
+		sargs->cache_line = cache_line;
+		int rc = pthread_create(&seeder_pth, NULL, seeder_main, sargs);
+		if (rc != 0) { errno = rc; perror("pthread_create seeder"); exit(1); }
 	}
 
   int rank;
@@ -750,7 +825,7 @@ int main(int argc, char** argv)
           exit(1);
         }
     }
-	if (have_seeder_thread) {
+	if (!opt_run_mode && have_seeder_thread) {
 		int rc = pthread_join(seeder_pth, NULL);
 		if (rc != 0) {
 			errno = rc; perror("pthread_join seeder"); 
@@ -805,6 +880,14 @@ int main(int argc, char** argv)
 	if (casus_attempts_per_rank) { free(casus_attempts_per_rank); casus_attempts_per_rank = NULL; }
 	if (casus_failures_per_rank) { free(casus_failures_per_rank); casus_failures_per_rank = NULL; }
 	if (casus_successes_per_rank) { free(casus_successes_per_rank); casus_successes_per_rank = NULL; }
+	if (fai_attempts_per_rank)  { free(fai_attempts_per_rank);  fai_attempts_per_rank = NULL; }
+	if (fai_successes_per_rank) { free(fai_successes_per_rank); fai_successes_per_rank = NULL; }
+	if (swap_attempts_per_rank)  { free(swap_attempts_per_rank);  swap_attempts_per_rank = NULL; }
+	if (swap_successes_per_rank) { free(swap_successes_per_rank); swap_successes_per_rank = NULL; }
+	if (load_attempts_per_rank)  { free(load_attempts_per_rank);  load_attempts_per_rank = NULL; }
+	if (load_successes_per_rank) { free(load_successes_per_rank); load_successes_per_rank = NULL; }
+	if (store_attempts_per_rank)  { free(store_attempts_per_rank);  store_attempts_per_rank = NULL; }
+	if (store_successes_per_rank) { free(store_successes_per_rank); store_successes_per_rank = NULL; }
 
 	/* free parsed jagged arrays if they were allocated */
 	if (test_num_array) {
@@ -917,6 +1000,135 @@ run_benchmark(void* arg)
   }
   _mm_mfence();
 
+  /* Continuous run mode: no per-repetition barriers or resets */
+  if (opt_run_mode) {
+	/* Single start sync so all contenders start together */
+	B0;
+
+	while (__builtin_expect(!global_stop_flag, 1)) {
+		int success = 0;
+
+		switch (my_test) {
+			/* Atomics and RMWs on cl[0] */
+			case CAS:
+			case CAS_CONCURRENT: {
+				volatile uint32_t* w = &cache_line[0].word[0];
+				uint32_t expect = *w;
+				uint32_t desired = expect ^ 1;
+				uint32_t old = CAS_U32(w, expect, desired);
+				if (test_fail_stats && cas_attempts_per_rank) {
+				cas_attempts_per_rank[ID]++;
+				if (old == expect) cas_successes_per_rank[ID]++; else cas_failures_per_rank[ID]++;
+				}
+				success = (old == expect);
+				break;
+			}
+
+			case CAS_UNTIL_SUCCESS:
+				success = (int) cas_until_success(cache_line, 0); /* loops until success */
+				break;
+
+			case TAS:
+			case TAS_ON_MODIFIED:
+			case TAS_ON_SHARED: {
+		#if defined(TILERA)
+				volatile uint32_t* b = (volatile uint32_t*) cache_line->word;
+		#else
+				volatile uint8_t*  b = (volatile uint8_t*)  cache_line->word;
+		#endif
+				for (;;) {
+				if (test_fail_stats && tas_attempts_per_rank) tas_attempts_per_rank[ID]++;
+				uint8_t r = TAS_U8(b);
+				if (r != 255) {
+					if (test_fail_stats && tas_successes_per_rank) tas_successes_per_rank[ID]++;
+					success = 1;
+					_mm_mfence();
+					cache_line->word[0] = 0; /* release */
+					_mm_mfence();
+					break;
+				} else {
+					if (test_fail_stats && tas_failures_per_rank) tas_failures_per_rank[ID]++;
+					_mm_pause();
+					if (__builtin_expect(global_stop_flag, 0)) break;
+				}
+				}
+				break;
+			}
+
+			case FAI:
+				case FAI_ON_MODIFIED:
+				case FAI_ON_SHARED:
+				case FAI_ON_INVALID:
+					(void) FAI_U32(cache_line->word);
+					if (fai_attempts_per_rank)  fai_attempts_per_rank[ID]++;
+					if (fai_successes_per_rank) fai_successes_per_rank[ID]++;
+					success = 1;
+					break;
+
+
+			case SWAP:
+				case SWAP_ON_MODIFIED:
+				case SWAP_ON_SHARED:
+					(void) SWAP_U32(cache_line->word, ID);
+					if (swap_attempts_per_rank)  swap_attempts_per_rank[ID]++;
+					if (swap_successes_per_rank) swap_successes_per_rank[ID]++;
+					_mm_mfence();
+					success = 1;
+					break;
+
+
+			/* Stores: count each store to cl[0] as a success; honor load fences */
+			case STORE_ON_MODIFIED:
+			case STORE_ON_MODIFIED_NO_SYNC:
+			case STORE_ON_EXCLUSIVE:
+			case STORE_ON_SHARED:
+			case STORE_ON_OWNED_MINE:
+			case STORE_ON_OWNED:
+			case STORE_ON_INVALID: {
+			cache_line->word[0] = (uint32_t) ID;
+				if (store_attempts_per_rank)  store_attempts_per_rank[ID]++;
+				if (store_successes_per_rank) store_successes_per_rank[ID]++;
+				if (test_sfence == 1)      _mm_sfence();
+				else if (test_sfence == 2) _mm_mfence();
+				success = 1;
+				break;
+			}
+
+
+		/* Loads: count each load from cl[0] as a success; honor load fences */
+		case LOAD_FROM_MODIFIED:
+		case LOAD_FROM_EXCLUSIVE:
+		case LOAD_FROM_SHARED:
+		case LOAD_FROM_OWNED:
+		case LOAD_FROM_INVALID:
+		case LOAD_FROM_L1: {
+			volatile uint32_t v = cache_line->word[0];
+			(void) v;
+			if (load_attempts_per_rank)  load_attempts_per_rank[ID]++;
+			if (load_successes_per_rank) load_successes_per_rank[ID]++;
+			if (test_lfence == 1)      _mm_lfence();
+			else if (test_lfence == 2) _mm_mfence();
+			success = 1;
+			break;
+		}
+
+
+		default:
+			/* PROFILER, fences, NOP, etc.: do not count */
+			break;
+    }
+
+    if (success) {
+      if (try_claim_success_unit()) {
+        __sync_fetch_and_add(&win_counts_per_rank[ID], 1);
+      }
+    }
+    /* Optional: _mm_pause(); */
+	}
+
+	/* Skip legacy per-rep path */
+	goto RUN_MODE_POST;
+  }
 
   /* /\********************************************************************************* */
   /*  *  main functionality */
@@ -1698,10 +1910,79 @@ run_benchmark(void* arg)
   B10;
 
 
-	if (rank == 0)    {
-	  printf("\n\n");
-      printf("---- Cross-core summary ------------------------------------------------------------\n");
-      double min_avg = DBL_MAX;
+RUN_MODE_POST:
+
+if (rank == 0) {
+  if (opt_run_mode) {
+    uint64_t total_wins = 0;
+    for (uint32_t r = 0; r < test_cores; r++) {
+      total_wins += (win_counts_per_rank ? win_counts_per_rank[r] : 0);
+    }
+
+    printf("\n=== Run mode summary (continuous) ===\n");
+    printf("Requested successes: %zu\n", test_reps);
+    printf("Achieved successes:  %llu\n", (unsigned long long) total_wins);
+
+    for (uint32_t r = 0; r < test_cores; r++) {
+      moesi_type_t tt = (moesi_type_t) (test_for_rank ? test_for_rank[r] : test_test);
+      const char* tname = (tt >= 0 && tt < NUM_EVENTS) ? moesi_type_des[tt] : "UNKNOWN";
+
+      uint64_t atts = 0, succs = 0, fails = 0;
+
+		if (tt == CAS_UNTIL_SUCCESS) {
+		if (casus_attempts_per_rank) atts = casus_attempts_per_rank[r];
+		if (casus_successes_per_rank) succs = casus_successes_per_rank[r];
+		if (casus_failures_per_rank)  fails = casus_failures_per_rank[r];
+		}
+		else if (tt == CAS || tt == CAS_ON_MODIFIED || tt == CAS_ON_SHARED || tt == CAS_CONCURRENT) {
+		if (cas_attempts_per_rank) atts = cas_attempts_per_rank[r];
+		if (cas_successes_per_rank) succs = cas_successes_per_rank[r];
+		if (cas_failures_per_rank)  fails = cas_failures_per_rank[r];
+		}
+		else if (tt == TAS || tt == TAS_ON_MODIFIED || tt == TAS_ON_SHARED) {
+		if (tas_attempts_per_rank) atts = tas_attempts_per_rank[r];
+		if (tas_successes_per_rank) succs = tas_successes_per_rank[r];
+		if (tas_failures_per_rank)  fails = tas_failures_per_rank[r];
+		}
+		else if (tt == FAI || tt == FAI_ON_MODIFIED || tt == FAI_ON_SHARED || tt == FAI_ON_INVALID) {
+		if (fai_attempts_per_rank)  atts = fai_attempts_per_rank[r];
+		if (fai_successes_per_rank) succs = fai_successes_per_rank[r];
+		fails = 0;
+		}
+		else if (tt == SWAP || tt == SWAP_ON_MODIFIED || tt == SWAP_ON_SHARED) {
+		if (swap_attempts_per_rank)  atts = swap_attempts_per_rank[r];
+		if (swap_successes_per_rank) succs = swap_successes_per_rank[r];
+		fails = 0;
+		}
+		else if (tt == LOAD_FROM_MODIFIED || tt == LOAD_FROM_EXCLUSIVE || tt == LOAD_FROM_SHARED ||
+				tt == LOAD_FROM_OWNED    || tt == LOAD_FROM_INVALID   || tt == LOAD_FROM_L1) {
+		if (load_attempts_per_rank)  atts = load_attempts_per_rank[r];
+		if (load_successes_per_rank) succs = load_successes_per_rank[r];
+		fails = 0;
+		}
+		else if (tt == STORE_ON_MODIFIED || tt == STORE_ON_MODIFIED_NO_SYNC || tt == STORE_ON_EXCLUSIVE ||
+				tt == STORE_ON_SHARED   || tt == STORE_ON_OWNED_MINE       || tt == STORE_ON_OWNED     ||
+				tt == STORE_ON_INVALID) {
+		if (store_attempts_per_rank)  atts = store_attempts_per_rank[r];
+		if (store_successes_per_rank) succs = store_successes_per_rank[r];
+		fails = 0;
+		}
+
+      printf("CPU %zu ran %-22s | wins: %10u | attempts: %10llu | successes: %10llu | failures: %10llu\n",
+             core_for_rank ? core_for_rank[r] : (size_t)r,
+             tname,
+             win_counts_per_rank ? win_counts_per_rank[r] : 0u,
+             (unsigned long long) atts,
+             (unsigned long long) succs,
+             (unsigned long long) fails);
+		}
+		printf("====================================\n\n");
+	} 
+	
+	else {
+		printf("\n\n");
+		printf("---- Cross-core summary ------------------------------------------------------------\n");
+  	  double min_avg = DBL_MAX;
       double max_avg = 0.0;
       double sum_avg = 0.0;
       uint32_t min_core = 0;
@@ -2177,6 +2458,7 @@ run_benchmark(void* arg)
 	  break;
 	}
     }
+  }
 
   B0;
 

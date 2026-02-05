@@ -219,8 +219,8 @@ def plot_heatmaps(df: pd.DataFrame, out_dir: str) -> None:
         ax.grid(which="major", visible=False)
 
         ax.set_title(f"{processor_name}: Latency Heatmap — {test_label(t)}")
-        ax.set_xlabel("Seed Thread (-b)")
-        ax.set_ylabel("Worker Thread")
+        ax.set_xlabel("Seed Core (-b)")
+        ax.set_ylabel("Worker Core")
         ax.tick_params(top=True, labeltop=True, bottom=True, labelbottom=True)
         ax.tick_params(left=True, labelleft=True, right=True, labelright=True)
 
@@ -266,7 +266,7 @@ def plot_fairness_across_seeds(df: pd.DataFrame, out_dir: str) -> None:
     ax.yaxis.set_major_locator(MultipleLocator(0.1))
 
     ax.set_title(f"{processor_name}: Jain Fairness Index (1/latency) Across Seeds")
-    ax.set_xlabel("Worker Thread")
+    ax.set_xlabel("Worker Core")
     ax.set_ylabel("Jain Fairness Index")
     ax.set_xticks(x)
     ax.set_xticklabels(mat.index)

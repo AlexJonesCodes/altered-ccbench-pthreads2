@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Non-contention placement latency sweep (dual metrics).
+Non-contention placement latency sweep (dual metrics) with robust one-thread-per-core selection.
 
 Runs ccbench with a single worker thread (-x has one core) while sweeping the seed (-b)
 across all selected cores, for tests 13 (FAI), 14 (TAS), 15 (SWAP), and 34 (CAS_UNTIL_SUCCESS).
@@ -14,7 +14,8 @@ Writes a CSV with both metrics:
 Notes:
 - For tests that don’t populate the Common-start latency (in older builds), latency_b4 may be missing; we record NaN.
 - For CAS_UNTIL_SUCCESS and with the code changes applied, latency_b4 should be meaningful.
-- This script excludes CPU 0 by default and selects one logical CPU per physical core (no SMT siblings) for cleaner data.
+- This script excludes CPU 0 and 1 by default and selects one logical CPU per physical core (no SMT siblings)
+  using kernel-reported topology and the current process CPU affinity.
 """
 
 import os
@@ -22,7 +23,7 @@ import re
 import sys
 import subprocess
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set, Dict
 
 # ==============================
 # Configuration (edit in code)
@@ -46,8 +47,8 @@ VERBOSE = True        # add -v (and -p 0 to keep output parse-stable)
 USE_MLOCK = False     # add -K
 
 # Core selection:
-# - Exclude these CPUs everywhere (CPU 0 by default to avoid housekeeping noise)
-EXCLUDE_CPUS = {0}
+# - Exclude these CPUs everywhere (skip housekeeping; add more if needed)
+EXCLUDE_CPUS: Set[int] = {}
 
 # - Use one logical CPU per physical core (SMT off) for workers and seeds
 USE_ONE_PER_CORE_FOR_WORKERS = True
@@ -58,8 +59,8 @@ USE_ALL_ONLINE_FOR_WORKERS = False
 USE_ALL_ONLINE_FOR_SEEDS   = False
 
 # If not using "all online" or "one per core", set these manually:
-WORKER_CORES = [1, 2, 3]   # example; ignored if USE_ONE_PER_CORE_FOR_WORKERS or USE_ALL_ONLINE_FOR_WORKERS is True
-SEED_CORES   = [4, 5, 6]   # example; ignored if USE_ONE_PER_CORE_FOR_SEEDS   or USE_ALL_ONLINE_FOR_SEEDS   is True
+WORKER_CORES = [2, 3, 4]   # example; ignored if USE_ONE_PER_CORE_FOR_WORKERS or USE_ALL_ONLINE_FOR_WORKERS is True
+SEED_CORES   = [5, 6, 7]   # example; ignored if USE_ONE_PER_CORE_FOR_SEEDS   or USE_ALL_ONLINE_FOR_SEEDS   is True
 
 # Output
 OUT_DIR  = "./r53600/"
@@ -82,6 +83,8 @@ CROSS_RE = re.compile(
     re.IGNORECASE
 )
 
+# ---------- CPU selection helpers (robust one-per-core) ----------
+
 def read_file(path: str) -> str:
     with open(path, "r") as f:
         return f.read().strip()
@@ -102,66 +105,90 @@ def parse_cpu_list(s: str) -> List[int]:
 
 def get_online_cpus() -> List[int]:
     sysfs = "/sys/devices/system/cpu/online"
-    if not os.path.exists(sysfs):
-        raise RuntimeError("Cannot find /sys/devices/system/cpu/online")
-    return parse_cpu_list(read_file(sysfs))
+    if os.path.exists(sysfs):
+        return parse_cpu_list(read_file(sysfs))
+    # Fallback: enumerate cpu directories
+    cpus = []
+    base = "/sys/devices/system/cpu"
+    if os.path.isdir(base):
+        for name in os.listdir(base):
+            if name.startswith("cpu") and name[3:].isdigit():
+                cpus.append(int(name[3:]))
+    return sorted(cpus)
 
-def one_thread_per_core(exclude=set()) -> List[int]:
-    """
-    Return a sorted list of logical CPUs: one per physical core,
-    excluding any in 'exclude'. Robust across sockets; prefers the
-    lowest logical CPU id in each core that's not excluded.
-    """
+def get_affinity_cpus() -> List[int]:
+    # CPUs the current process is allowed to run on
+    try:
+        return sorted(os.sched_getaffinity(0))
+    except AttributeError:
+        return get_online_cpus()
+
+def get_allowed_cpus(exclude: Set[int]) -> List[int]:
     online = set(get_online_cpus())
-    # Map (package_id, core_id) -> chosen logical cpu
-    coremap = {}
+    aff = set(get_affinity_cpus())
+    allowed = (online & aff) - set(exclude)
+    return sorted(allowed)
 
-    def topo_read(path) -> Optional[int]:
-        try:
-            with open(path) as f:
-                return int(f.read().strip())
-        except FileNotFoundError:
-            return None
+def read_topology_ids(cpu: int) -> Optional[Tuple[int, int]]:
+    """Return (physical_package_id, core_id) for a cpu, or None if unavailable."""
+    base = f"/sys/devices/system/cpu/cpu{cpu}/topology"
+    try:
+        pkg = int(read_file(os.path.join(base, "physical_package_id")))
+        cid = int(read_file(os.path.join(base, "core_id")))
+        return (pkg, cid)
+    except Exception:
+        return None
 
-    for cpu in online:
-        if cpu in exclude:
-            continue
-        pkg = topo_read(f"/sys/devices/system/cpu/cpu{cpu}/topology/physical_package_id")
-        cid = topo_read(f"/sys/devices/system/cpu/cpu{cpu}/topology/core_id")
-        if pkg is None or cid is None:
-            # Fallback: group by thread_siblings_list
-            sib_path = f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
-            try:
-                with open(sib_path) as f:
-                    sibs = parse_cpu_list(f.read().strip())
-                rep = next((s for s in sorted(sibs) if s not in exclude), None)
-                if rep is not None:
-                    coremap[frozenset(sibs)] = rep
-                continue
-            except FileNotFoundError:
-                continue
+def read_thread_siblings(cpu: int) -> Optional[frozenset]:
+    """Return the full sibling set for this core as a frozenset of CPU IDs, or None."""
+    path = f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+    try:
+        return frozenset(parse_cpu_list(read_file(path)))
+    except Exception:
+        return None
 
-        key = (pkg, cid)
-        prev = coremap.get(key)
-        if prev is None or cpu < prev:
-            coremap[key] = cpu
+def one_thread_per_core(exclude: Set[int]) -> List[int]:
+    """
+    Return one logical CPU per physical core, excluding any in 'exclude',
+    and respecting the process's CPU affinity. Stable ordering by CPU ID.
+    """
+    allowed = get_allowed_cpus(exclude)
+    if not allowed:
+        return []
 
-    # If the chosen rep for a core is excluded (e.g., cpu0), pick another sibling
-    for key, chosen in list(coremap.items()):
-        if chosen in exclude:
-            sibs_file = f"/sys/devices/system/cpu/cpu{chosen}/topology/thread_siblings_list"
-            try:
-                with open(sibs_file) as f:
-                    sibs = parse_cpu_list(f.read().strip())
-                repl = next((s for s in sibs if s not in exclude), None)
-                if repl is not None:
-                    coremap[key] = repl
-                else:
-                    del coremap[key]
-            except FileNotFoundError:
-                del coremap[key]
+    # First try grouping by (package, core_id)
+    groups: Dict[Tuple[int,int], List[int]] = {}
+    missing_topology = False
+    for cpu in allowed:
+        key = read_topology_ids(cpu)
+        if key is None:
+            missing_topology = True
+            break
+        groups.setdefault(key, []).append(cpu)
 
-    return sorted(set(coremap.values()))
+    reps: Set[int] = set()
+    if not missing_topology and groups:
+        for _, lst in groups.items():
+            reps.add(min(lst))
+    else:
+        # Fallback: use thread_siblings_list
+        core_groups: Dict[frozenset, List[int]] = {}
+        for cpu in allowed:
+            sibs = read_thread_siblings(cpu)
+            if sibs is None:
+                core_groups.setdefault(frozenset([cpu]), []).append(cpu)
+            else:
+                # intersect with allowed to avoid picking excluded siblings
+                sibs_allowed = frozenset(s for s in sibs if s in allowed)
+                core_groups.setdefault(sibs_allowed if sibs_allowed else frozenset([cpu]), []).append(cpu)
+        for key, lst in core_groups.items():
+            # pick the lowest CPU id present in this group
+            reps.add(min(key) if key else min(lst))
+
+    result = sorted(reps)
+    # Sanity: ensure excluded CPUs not present
+    assert not (set(result) & set(exclude)), f"Excluded CPUs leaked into selection: {set(result)&set(exclude)}"
+    return result
 
 def ensure_dir(d: str):
     os.makedirs(d, exist_ok=True)
@@ -170,7 +197,7 @@ def build_worker_set() -> List[int]:
     if USE_ONE_PER_CORE_FOR_WORKERS:
         return one_thread_per_core(exclude=EXCLUDE_CPUS)
     if USE_ALL_ONLINE_FOR_WORKERS:
-        cores = [c for c in get_online_cpus() if c not in EXCLUDE_CPUS]
+        cores = [c for c in get_online_cpus() if c not in EXCLUDE_CPUS and c in set(get_affinity_cpus())]
         return cores
     return [c for c in WORKER_CORES if c not in EXCLUDE_CPUS]
 
@@ -178,9 +205,11 @@ def build_seed_set() -> List[int]:
     if USE_ONE_PER_CORE_FOR_SEEDS:
         return one_thread_per_core(exclude=EXCLUDE_CPUS)
     if USE_ALL_ONLINE_FOR_SEEDS:
-        cores = [c for c in get_online_cpus() if c not in EXCLUDE_CPUS]
+        cores = [c for c in get_online_cpus() if c not in EXCLUDE_CPUS and c in set(get_affinity_cpus())]
         return cores
     return [c for c in SEED_CORES if c not in EXCLUDE_CPUS]
+
+# ---------- ccbench run and parsers ----------
 
 def run_ccbench(test_id: int, worker_core: int, seed_core: int) -> str:
     # -t and -x for one worker
@@ -219,8 +248,7 @@ def parse_b4_latency(stdout: str) -> float:
         tid = int(m.group(1))
         mean = float(m.group(3))
         if tid == 0:
-            # In your ccbench.c we now skip zero entries; still, guard here
-            return mean if mean != 0.0 else float("nan")
+            return mean if mean > 0.0 else float("nan")
     return float("nan")
 
 def parse_crosscore_stats(stdout: str) -> Tuple[float, float, float, float, float]:
@@ -268,6 +296,10 @@ def append_csv(path: str, test_id: int, seed_core: int, worker_core: int,
             fmt(pfd_absdev),
         ]) + "\n")
 
+# ==============================
+# Main
+# ==============================
+
 def main():
     ensure_dir(OUT_DIR)
     if SAVE_LOGS:
@@ -277,6 +309,9 @@ def main():
         print(f"Error: ccbench not found or not executable at {CCBENCH_PATH}", file=sys.stderr)
         sys.exit(1)
 
+    # Build sets and print diagnostics
+    online = get_online_cpus()
+    affinity = get_affinity_cpus()
     workers = build_worker_set()
     seeds   = build_seed_set()
 
@@ -287,10 +322,16 @@ def main():
         print("No seed cores configured.", file=sys.stderr)
         sys.exit(3)
 
+    # Guards to ensure exclusions are respected
+    assert set(workers).isdisjoint(EXCLUDE_CPUS), f"Excluded CPUs in workers: {set(workers)&EXCLUDE_CPUS}"
+    assert set(seeds).isdisjoint(EXCLUDE_CPUS), f"Excluded CPUs in seeds: {set(seeds)&EXCLUDE_CPUS}"
+
     write_csv_header(CSV_FILE)
 
-    print(f"Workers (one per core, excluding {sorted(EXCLUDE_CPUS)} if configured): {workers}")
-    print(f"Seeds   (one per core, excluding {sorted(EXCLUDE_CPUS)} if configured): {seeds}")
+    print(f"Online CPUs:   {online}")
+    print(f"Affinity CPUs: {affinity}")
+    print(f"Workers (one per core, excluding {sorted(EXCLUDE_CPUS)}): {workers}")
+    print(f"Seeds   (one per core, excluding {sorted(EXCLUDE_CPUS)}): {seeds}")
     print(f"Tests:   {TEST_IDS}  REPS={REPS}  STRIDE={STRIDE}  NUMA {'off' if DISABLE_NUMA else 'on'}  VERBOSE={VERBOSE}")
 
     for test_id in TEST_IDS:
