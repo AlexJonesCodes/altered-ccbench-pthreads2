@@ -26,7 +26,7 @@ Options:
 
 Outputs:
   runs.csv                One row per run configuration
-  winner_sequence.csv     Concatenated sequence rows for all runs
+  winner_sequence.csv     Concatenated normalized sequence rows for all runs (adds seq_idx)
   logs/*.log              Raw ccbench logs per run
   sequences/*.csv         Raw per-run winner sequence CSVs from ccbench
 
@@ -133,7 +133,7 @@ mkdir -p "$output_dir" "$output_dir/logs" "$output_dir/sequences"
 runs_csv="$output_dir/runs.csv"
 all_seq_csv="$output_dir/winner_sequence.csv"
 echo "run_id,op,op_id,core_set_id,thread_count,seed_core,cores,reps,log_file,sequence_file" > "$runs_csv"
-echo "run_id,op,op_id,core_set_id,thread_count,seed_core,rep,winner_thread_id,winner_core,group,role" > "$all_seq_csv"
+echo "run_id,op,op_id,core_set_id,thread_count,seed_core,rep,seq_idx,winner_thread_id,winner_core,group,role" > "$all_seq_csv"
 
 IFS=',' read -r -a op_tokens <<<"$ops_raw"
 op_specs=()
@@ -230,7 +230,27 @@ for set_tok in "${core_set_tokens[@]}"; do
 
         echo "$run_id,$op_name,$op_id,$core_set_id,$tcount,$seed_core,$cores_arg,$reps,$log_file,$seq_file" >> "$runs_csv"
 
-        awk -F',' -v run_id="$run_id" -v op="$op_name" -v op_id="$op_id" -v set_id="$core_set_id" -v tcount="$tcount" -v seed="$seed_core" 'NR>1 { printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n", run_id, op, op_id, set_id, tcount, seed, $1, $2, $3, $4, $5 }' "$seq_file" >> "$all_seq_csv"
+        awk -F',' -v run_id="$run_id" -v op="$op_name" -v op_id="$op_id" -v set_id="$core_set_id" -v tcount="$tcount" -v seed="$seed_core" '
+          BEGIN { OFS=","; seq_idx=0; bad=0 }
+          NR==1 { next }
+          {
+            if (NF < 5) { bad++; next }
+            rep=$1; wtid=$2; wcore=$3; grp=$4; role=$5
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", rep)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", wtid)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", wcore)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", grp)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", role)
+            if (rep == "") { rep = seq_idx }
+            print run_id, op, op_id, set_id, tcount, seed, rep, seq_idx, wtid, wcore, grp, role
+            seq_idx++
+          }
+          END {
+            if (bad > 0) {
+              printf "WARN run_id=%s dropped %d malformed winner-seq rows from %s\n", run_id, bad, FILENAME > "/dev/stderr"
+            }
+          }
+        ' "$seq_file" >> "$all_seq_csv"
       done
     done
   done
