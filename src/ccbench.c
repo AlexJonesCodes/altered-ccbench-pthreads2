@@ -109,6 +109,7 @@ static uint64_t* load_attempts_per_rank = NULL;
 static uint64_t* load_successes_per_rank = NULL;
 static uint64_t* store_attempts_per_rank = NULL;
 static uint64_t* store_successes_per_rank = NULL;
+static const char* winner_seq_path = NULL;
 
 
 /* Continuous run mode */
@@ -280,6 +281,7 @@ static struct option long_options[] = {
 	{"no-numa",                  no_argument,       NULL, 'n'},
 	{"print",                    required_argument, NULL, 'p'},
 	{"run",                      no_argument,       NULL, 'R'},
+	{"winner-seq",               required_argument, NULL, 'W'},
 	{NULL, 0, NULL, 0}
 };
 
@@ -290,7 +292,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:FR", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:FRW:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -353,10 +355,12 @@ int main(int argc, char** argv)
 		 "        Verbose printing of results (default=" XSTR(DEFAULT_VERBOSE) ")\n"
 		 "  -p, --print <int>\n"
 		 "        If verbose, how many results to print (default=" XSTR(DEFAULT_PRINT) ")\n"
-		"  -R, --run\n"
-		"        Continuous run mode: -r is total successful executions across all threads.\n"
-		"        No per-repetition reset; single seed/init only; prints total and per-CPU wins/failures.\n" 
-		);
+		 "  -R, --run\n"
+		 "        Continuous run mode: -r is total successful executions across all threads.\n"
+		 "        No per-repetition reset; single seed/init only; prints total and per-CPU wins/failures.\n" 
+		 "  -W, --winner-seq <path>\n"
+		 "        Dump per-repetition winner sequence CSV to <path>\n"
+		 );
 	  printf("Supported events: \n");
 	  int ar;
 	  for (ar = 0; ar < NUM_EVENTS; ar++)
@@ -411,6 +415,9 @@ int main(int argc, char** argv)
 		opt_run_mode = 1;
 		/* ensure failure stats for per-thread reporting */
 		test_fail_stats = 1;
+		break;
+	case 'W':
+		winner_seq_path = optarg;
 		break;
 	case 'f':
 	  test_flush = 1;
@@ -2134,9 +2141,9 @@ if (rank == 0) {
 		}
 
 	        /* Report first-op winners across all repetitions (generalised) */
-      if (win_counts_per_rank)
-        {
-          printf("\nFirst-success winners per thread (out of %zu reps):\n", test_reps);
+	      if (win_counts_per_rank)
+	        {
+	          printf("\nFirst-success winners per thread (out of %zu reps):\n", test_reps);
           for (uint32_t r = 0; r < test_cores; r++)
             {
               printf("  Group %u role %u on thread %u (thread ID %u): %u wins\n",
@@ -2146,8 +2153,32 @@ if (rank == 0) {
                      r,
                      win_counts_per_rank[r]);
             }
-          printf("\n");
-        }
+	          printf("\n");
+
+	          if (winner_seq_path && first_winner_per_rep) {
+	            FILE* wf = fopen(winner_seq_path, "w");
+	            if (!wf) {
+	              perror("fopen --winner-seq");
+	              exit(EXIT_FAILURE);
+	            }
+	            fprintf(wf, "rep,winner_thread_id,winner_core,group,role\n");
+	            for (size_t rep = 0; rep < test_reps; rep++) {
+	              uint32_t win = first_winner_per_rep[rep];
+	              if (win == UINT32_MAX || win >= test_cores) {
+	                fprintf(wf, "%zu,-1,-1,-1,-1\n", rep);
+	              } else {
+	                fprintf(wf, "%zu,%u,%zu,%zu,%zu\n",
+	                        rep,
+	                        win,
+	                        core_for_rank ? core_for_rank[win] : (size_t)win,
+	                        group_for_rank ? group_for_rank[win] : 0,
+	                        role_for_rank ? role_for_rank[win] : 0);
+	              }
+	            }
+	            fclose(wf);
+	            printf("Winner sequence written to: %s\n", winner_seq_path);
+	          }
+	        }
 
       if (test_fail_stats) {
         print_fail_stats_for_op("CAS", cas_attempts_per_rank, cas_successes_per_rank, cas_failures_per_rank);
