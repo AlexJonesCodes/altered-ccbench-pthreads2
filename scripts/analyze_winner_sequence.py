@@ -56,7 +56,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--lags",
         default="1,2,4,8",
-        help="Comma-separated lags for same-winner lag correlation checks.",
+        help=(
+            "Comma-separated positive integer offsets for lag-k same-winner rates. "
+            "Example: lag1 checks winner[t] == winner[t-1], lag4 checks winner[t] == winner[t-4]."
+        ),
     )
     p.add_argument(
         "--trials",
@@ -299,6 +302,10 @@ def main() -> None:
     in_path = Path(args.input)
     out_prefix = Path(args.out_prefix)
     lag_values = [int(x) for x in args.lags.split(",") if x.strip()]
+    if not lag_values:
+        raise ValueError("--lags must contain at least one integer, e.g. 1,2,4,8")
+    if any(lag <= 0 for lag in lag_values):
+        raise ValueError("--lags values must be positive integers")
 
     headers, rows = read_rows(in_path)
 
