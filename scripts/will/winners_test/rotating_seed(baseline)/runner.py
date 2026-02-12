@@ -3,7 +3,7 @@ import csv
 import re
 
 NUM_RUNS = 400
-CSV_FILE = "ccbench_results.csv"
+CSV_FILE = "400_runs_1mill_reps_random_addr_moving_seed.csv.csv"
 
 # Regex to parse lines like:
 # CPU 0 ran STORE_ON_MODIFIED | wins: 1014746 | attempts: 1014748 | successes: 1014748 | failures: 0
@@ -17,6 +17,10 @@ CPU_LINE_RE = re.compile(
 
 # The -x array string — could be out-of-order, gaps, etc.
 X_ARRAY_STR = str(list(range(0,40)))  # example, replace with your -x
+
+
+
+
 print(f"Using -x array: {X_ARRAY_STR}")
 # Convert to actual list of integers
 X_ARRAY = [int(x.strip()) for x in X_ARRAY_STR.strip("[]").split(",")]
