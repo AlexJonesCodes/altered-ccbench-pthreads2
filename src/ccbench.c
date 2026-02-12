@@ -36,6 +36,18 @@
 #include <float.h>   /* for DBL_MAX */
 #include <sched.h>   /* for CPU_SET, sched_getcpu */
 
+#ifdef __linux__
+#include <stdint.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+/* Forward declaration so calls compile before the definition is seen. */
+static int virt_to_phys(void* vaddr, uint64_t* phys_out);
+#endif
+
+
 __thread uint8_t ID;
 __thread unsigned long* seeds;
 
@@ -260,6 +272,16 @@ static void create_rand_list_cl(volatile uint64_t* list, size_t n);
 static void collect_core_stats(uint32_t store, uint32_t num_vals, uint32_t num_print);
 static void free_jagged(size_t **a, size_t *cols, size_t rows);
 
+static int opt_fixed_target = 0;              /* enabled by --fixed-addr */
+static uintptr_t fixed_vaddr = 0;             /* 0 => use internal static */
+static int cache_line_from_fixed_mmap = 0;    /* did we mmap at fixed addr? */
+static void* fixed_mmap_base = NULL;          /* page-aligned mapping base */
+static size_t fixed_mmap_size = 0;            /* size of mapping (page) */
+
+/* 64B-aligned static line (used if fixed_vaddr==0) */
+static cache_line_t fixed_static_line __attribute__((aligned(64)));
+
+
 /* command-line long options */
 static struct option long_options[] = {
 	{"help",                     no_argument,       NULL, 'h'},
@@ -282,6 +304,7 @@ static struct option long_options[] = {
 	{"print",                    required_argument, NULL, 'p'},
 	{"run",                      no_argument,       NULL, 'R'},
 	{"winner-seq",               required_argument, NULL, 'W'},
+	{"fixed-addr",               required_argument, NULL, 'Z'},
 	{NULL, 0, NULL, 0}
 };
 
@@ -292,7 +315,7 @@ int main(int argc, char** argv)
 	while (1)
 		{
 			i = 0;
-			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:FRW:", long_options, &i);
+			c = getopt_long(argc, argv, "r:t:c:x:s:b:fe:m:uvp:Kno:BM:A:FRW:Z:", long_options, &i);
 
 			if (c == -1)
 				break;
@@ -360,7 +383,12 @@ int main(int argc, char** argv)
 		 "        No per-repetition reset; single seed/init only; prints total and per-CPU wins/failures.\n" 
 		 "  -W, --winner-seq <path>\n"
 		 "        Dump per-repetition winner sequence CSV to <path>\n"
-		 );
+		"  -Z, --fixed-addr <hex|static>\n"
+		"        Force a single 64B cache line at a fixed virtual address.\n"
+		"        Use 'static' to use a built-in, 64B-aligned global (stable if linked -no-pie),\n"
+		"        or give a hex address (e.g., 0x7f0000000000) to mmap a page there.\n"
+		"        Implies a single cache line (disables random walk) and suppresses per-iter pointer bumps.\n" 
+		);
 	  printf("Supported events: \n");
 	  int ar;
 	  for (ar = 0; ar < NUM_EVENTS; ar++)
@@ -381,6 +409,23 @@ int main(int argc, char** argv)
 	break;
 	case 'b': /* --seed: physical core id where the line is primed each repetition */
 		seed_core = atoi(optarg);
+		break;
+	case 'Z':  /* --fixed-addr */
+		opt_fixed_target = 1;
+		if (strcmp(optarg, "static") == 0) {
+			fixed_vaddr = 0;  /* use built-in static line */
+		} else {
+			char* endp = NULL;
+			unsigned long long v = strtoull(optarg, &endp, 0);
+			if (endp == optarg) {
+			fprintf(stderr, "Invalid address for --fixed-addr: %s\n", optarg);
+			exit(EXIT_FAILURE);
+			}
+			fixed_vaddr = (uintptr_t) v;
+		}
+		/* Single-line buffer + freeze movement */
+		test_mem_size = sizeof(cache_line_t);
+		test_stride = 0;                 /* IMPORTANT: 0 < 1 satisfies the assert */
 		break;
 	case 'B': /* --backoff: enable exponential backoff for CAS_UNTIL_SUCCESS */
 		test_backoff = 1;
@@ -741,6 +786,35 @@ int main(int argc, char** argv)
 
 		/* Now allocate the test buffer */
 		volatile cache_line_t* cache_line = cache_line_open();
+		if (opt_fixed_target) {
+		/* Ensure the page is faulted in */
+		(void) cache_line->word[0];
+		_mm_mfence();
+
+		printf("Fixed target cache line (virtual): %p\n", (void*) cache_line);
+
+		#ifdef __linux__
+		uint64_t phys = 0;
+		int rc = virt_to_phys((void*) cache_line, &phys);
+		if (rc == 0) {
+			printf("Fixed target cache line (physical): 0x%llx (page size %ld)\n",
+				(unsigned long long) phys, sysconf(_SC_PAGESIZE));
+		} else {
+			/* Best-effort diagnostics */
+			const char* why = "unknown";
+			if (rc == -1) why = "open(/proc/self/pagemap) failed";
+			else if (rc == -2) why = "lseek(pagemap) failed";
+			else if (rc == -3) why = "read(pagemap) failed (likely restricted)";
+			else if (rc == -4) why = "page not present (fault and retry)";
+			else if (rc == -5) why = "unsupported page size or pagemap restricted";
+			printf("Fixed target cache line physical address: unavailable (%s). "
+				"If on Linux, try running as root or relaxing pagemap restrictions.\n", why);
+		}
+  #else
+  printf("Physical address reporting not supported on this OS build.\n");
+  #endif
+}
+
 		if (opt_run_mode) {
 			global_remaining_successes = (uint64_t) test_reps; /* -r is success quota */
 			global_stop_flag = 0;
@@ -1268,10 +1342,10 @@ run_benchmark(void* arg)
 		B1;    /* BARRIER 1 */
 	      }
 
-	    if (!test_flush)
-	      {
-		cache_line += test_stride;
-	      }
+	    if (!opt_fixed_target && !test_flush) {
+			cache_line += test_stride;
+			}
+
 	    break;
 	  }
 	case STORE_ON_SHARED:	/* 3 */
@@ -1356,18 +1430,16 @@ run_benchmark(void* arg)
 		B1;
 		/* store_0_eventually(cache_line, reps); */
 		store_0(cache_line, reps);
-		if (!test_flush)
-		  {
-		    cache_line += test_stride;
-		  }
+		if (!opt_fixed_target && !test_flush) {
+		cache_line += test_stride;
+		}
 	      }
 		else if (role == 1)
 	      {
 		invalidate(cache_line, 0, reps);
-		if (!test_flush)
-		  {
-		    cache_line += test_stride;
-		  }
+		if (!opt_fixed_target && !test_flush) {
+		cache_line += test_stride;
+		}
 		B1;
 	      }
 	    else
@@ -1401,20 +1473,20 @@ run_benchmark(void* arg)
 		sum += load_0_eventually(cache_line, reps);
 		B1;            /* BARRIER 1 */
 
-		if (!test_flush)
-		  {
-		    cache_line += test_stride;
-		  }
+		if (!opt_fixed_target && !test_flush) {
+			cache_line += test_stride;
+			}
+
 	      }
 		else if (role == 1)
 	      {
 		B1;            /* BARRIER 1 */
 		sum += load_0_eventually(cache_line, reps);
 
-		if (!test_flush)
-		  {
-		    cache_line += test_stride;
-		  }
+		if (!opt_fixed_target && !test_flush) {
+			cache_line += test_stride;
+			}
+
 	      }
 	    else
 	      {
@@ -1467,10 +1539,10 @@ run_benchmark(void* arg)
 		B1;            /* BARRIER 1 */
 	      }
 
-	    if (!test_flush)
-	      {
-		cache_line += test_stride;
-	      }
+	    if (!opt_fixed_target && !test_flush) {
+			cache_line += test_stride;
+			}
+
 	    break;
 	  }
 	case CAS: /* 12 */
@@ -1774,10 +1846,10 @@ run_benchmark(void* arg)
 			B1; 		/* BARRIER 1 */
 			}
 
-	    if (!test_flush)
-	      {
+	    if (!opt_fixed_target && !test_flush) {
 		cache_line += test_stride;
-	      }
+		}
+
 	    break;
 	  }
 	case LOAD_FROM_L1:	/* 26 */
@@ -3231,10 +3303,86 @@ collect_core_stats(uint32_t store, uint32_t num_vals, uint32_t num_print)
     }
 }
 
+#ifdef __linux__
+/* Return 0 on success; fill *phys_out with physical address.
+   Errors: -1 open, -2 lseek, -3 read, -4 not present, -5 restricted. */
+   static int virt_to_phys(void* vaddr, uint64_t* phys_out)
+{
+  long pagesz = sysconf(_SC_PAGESIZE);
+  if (pagesz <= 0) return -5;
+
+  uint64_t vpn = (uint64_t)(uintptr_t)vaddr / (uint64_t)pagesz;
+  uint64_t off = (uint64_t)(uintptr_t)vaddr % (uint64_t)pagesz;
+
+  int fd = open("/proc/self/pagemap", O_RDONLY);
+  if (fd < 0) return -1;
+
+  uint64_t entry = 0;
+  off_t pos = (off_t)(vpn * sizeof(entry));
+  if (lseek(fd, pos, SEEK_SET) == (off_t)-1) { close(fd); return -2; }
+  ssize_t n = read(fd, &entry, sizeof(entry));
+  close(fd);
+  if (n != (ssize_t)sizeof(entry)) return -3;
+
+  /* Bit 63: present; bits 0..54: PFN on x86_64 */
+  if ((entry & (1ULL << 63)) == 0) return -4;
+
+  uint64_t pfn = (entry & ((1ULL << 55) - 1));
+  *phys_out = pfn * (uint64_t)pagesz + off;
+  return 0;
+}
+#endif
+
 volatile cache_line_t*
 cache_line_open()
 {
   uint64_t size = test_cache_line_num * sizeof(cache_line_t);
+
+  /* NEW: fixed-address single target mode */
+  if (opt_fixed_target) {
+    volatile cache_line_t* cache_line = NULL;
+
+    if (fixed_vaddr == 0) {
+      /* Use the built-in static line (address is stable across runs if linked -no-pie) */
+      cache_line = &fixed_static_line;
+      cache_line->word[0] = 0;
+      _mm_mfence();
+      return cache_line;
+    } else {
+      /* Try to mmap one page at the requested virtual address */
+      long pagesz = sysconf(_SC_PAGESIZE);
+      if (pagesz <= 0) { perror("sysconf"); exit(1); }
+      uintptr_t pg = (uintptr_t)fixed_vaddr & ~((uintptr_t)pagesz - 1);
+      size_t len = (size_t) pagesz;
+
+      int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#ifdef MAP_FIXED_NOREPLACE
+      flags |= MAP_FIXED_NOREPLACE;
+#else
+      /* Fallback: MAP_FIXED will replace existing mappings. Use with care. */
+      flags |= MAP_FIXED;
+#endif
+      void* p = mmap((void*)pg, len, PROT_READ | PROT_WRITE, flags, -1, 0);
+      if (p == MAP_FAILED) {
+        perror("mmap --fixed-addr");
+        fprintf(stderr, "Failed to map at fixed address %p\n", (void*)pg);
+        exit(1);
+      }
+      cache_line_from_fixed_mmap = 1;
+      fixed_mmap_base = p;
+      fixed_mmap_size = len;
+
+      /* Use exactly the address the user asked for. Warn if not 64B-aligned. */
+      cache_line = (volatile cache_line_t*) (fixed_vaddr);
+      if (((uintptr_t)cache_line & 63ULL) != 0) {
+        fprintf(stderr, "Warning: --fixed-addr is not 64B-aligned; results may be noisy.\n");
+      }
+
+      cache_line->word[0] = 0;
+      _mm_mfence();
+      return cache_line;
+    }
+  }
 
 #if defined(__tile__)
   tmc_alloc_t alloc = TMC_ALLOC_INIT;
@@ -3362,6 +3510,14 @@ create_rand_list_cl(volatile uint64_t* list, size_t n)
 void
 cache_line_close(volatile cache_line_t* cache_line)
 {
+  /* NEW: fixed-address mode cleanup */
+  if (opt_fixed_target) {
+    if (cache_line_from_fixed_mmap && fixed_mmap_base && fixed_mmap_size) {
+      munmap(fixed_mmap_base, fixed_mmap_size);
+    }
+    /* static case requires no free */
+    return;
+  }
 #if !defined(__tile__)
   size_t size = test_cache_line_num * sizeof(cache_line_t);
   #ifdef PLATFORM_NUMA
