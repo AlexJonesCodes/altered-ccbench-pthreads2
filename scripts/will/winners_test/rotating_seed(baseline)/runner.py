@@ -1,10 +1,8 @@
 import subprocess
 import csv
 import re
-import sys
 
-
-NUM_RUNS = 20
+NUM_RUNS = 400
 CSV_FILE = "ccbench_results.csv"
 
 # Regex to parse lines like:
@@ -17,14 +15,19 @@ CPU_LINE_RE = re.compile(
     r"failures:\s+(\d+)"
 )
 
-CMD = [
-    "../../../ccbench",
+# The -x array string — could be out-of-order, gaps, etc.
+X_ARRAY_STR = str(list(range(0,40)))  # example, replace with your -x
+print(f"Using -x array: {X_ARRAY_STR}")
+# Convert to actual list of integers
+X_ARRAY = [int(x.strip()) for x in X_ARRAY_STR.strip("[]").split(",")]
+NUM_CPUS = len(X_ARRAY)
+
+CMD_BASE = [
+    "../../../../ccbench",
     "-r", "10000000",
-    "-x", "[0,...,9]",
+    "-x", X_ARRAY_STR,
     "-t", "[0]",
-    "-b", "0",
-    "-R",
-    "-Z", "static"
+    "-R"
 ]
 
 with open(CSV_FILE, "w", newline="") as f:
@@ -32,6 +35,7 @@ with open(CSV_FILE, "w", newline="") as f:
     writer.writerow([
         "run",
         "cpu",
+        "b_value",
         "test_type",
         "wins",
         "attempts",
@@ -39,11 +43,16 @@ with open(CSV_FILE, "w", newline="") as f:
         "failures"
     ])
 
-    for run in range(1, NUM_RUNS + 1):
-        print(f"Starting run {run}...")
+    for run in range(NUM_RUNS):
+        # Rotate -b through the actual X_ARRAY values
+        b_value = X_ARRAY[run % NUM_CPUS]
+
+        cmd = CMD_BASE + ["-b", str(b_value)]
+
+        print(f"Starting run {run + 1} with -b {b_value}...")
 
         result = subprocess.run(
-            CMD,
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -55,8 +64,9 @@ with open(CSV_FILE, "w", newline="") as f:
             if match:
                 cpu, test_type, wins, attempts, successes, failures = match.groups()
                 writer.writerow([
-                    run,
+                    run + 1,
                     cpu,
+                    b_value,
                     test_type,
                     wins,
                     attempts,
@@ -64,6 +74,6 @@ with open(CSV_FILE, "w", newline="") as f:
                     failures
                 ])
 
-        print(f"Run {run} completed.")
+        print(f"Run {run + 1} completed.")
 
 print(f"All runs completed. Results saved to {CSV_FILE}")
