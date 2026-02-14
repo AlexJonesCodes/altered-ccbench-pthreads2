@@ -5,6 +5,7 @@ Outputs:
   * <prefix>_seed_summary.csv
   * <prefix>_seed_thread_summary.csv
   * <prefix>_window_summary.csv (when --window-size > 0)
+  * <prefix>_window_thread_summary.csv (when --window-size > 0)
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ def parse_args() -> argparse.Namespace:
         default="winner_repeat_by_seed",
         help=(
             "Output prefix. Writes <prefix>_seed_summary.csv, "
-            "<prefix>_seed_thread_summary.csv, and optional <prefix>_window_summary.csv"
+            "<prefix>_seed_thread_summary.csv, and optional window CSVs"
         ),
     )
     p.add_argument("--winner-col", default="winner_thread_id", help="Winner id column.")
@@ -185,7 +186,6 @@ def per_thread_metrics(seq: Sequence[str]) -> Dict[str, Dict[str, float]]:
 
 
 def detect_change_point(values: Sequence[float], min_seg: int = 2) -> Tuple[float, int, float, float, float]:
-    """Return (score, cp_index, left_mean, right_mean, abs_delta). cp_index is split-window index."""
     clean = [v for v in values if not (v != v)]
     if len(clean) < (2 * min_seg):
         return float("nan"), -1, float("nan"), float("nan"), float("nan")
@@ -250,6 +250,7 @@ def main() -> None:
     seed_rows: List[Dict[str, object]] = []
     seed_thread_rows: List[Dict[str, object]] = []
     window_rows: List[Dict[str, object]] = []
+    window_thread_rows: List[Dict[str, object]] = []
 
     for key, grows in grouped.items():
         grows.sort(key=lambda r: safe_int(r.get(rep_col, "0"), 0))
@@ -292,7 +293,6 @@ def main() -> None:
 
         base_key = {c: key[i] for i, c in enumerate(group_cols)}
 
-        # Optional window/regime analysis
         group_window_z: List[float] = []
         if window_size > 0 and n >= window_size:
             widx = 0
@@ -301,16 +301,30 @@ def main() -> None:
                 w_obs = repeat_rate(wseq)
                 w_dom = dominant_share(wseq)
                 wn = len(wseq)
+                w_thread_obs = per_thread_metrics(wseq)
+
                 if args.trials <= 0 or wn > args.mc_max_n:
                     w_mode = "exact_repeat_only_n_too_large" if wn > args.mc_max_n else "exact_repeat_only_trials_0"
                     w_res = metric_baseline(w_obs, [], w_mode)
+                    w_thread_global_trials: Dict[str, List[float]] = {}
+                    w_thread_cond_trials: Dict[str, List[float]] = {}
                 else:
                     w_mode = "mc_shuffle"
                     wwork = list(wseq)
                     w_trials: List[float] = []
+                    w_thread_global_trials = {t: [] for t in w_thread_obs}
+                    w_thread_cond_trials = {t: [] for t in w_thread_obs}
                     for _ in range(args.trials):
                         rng.shuffle(wwork)
                         w_trials.append(repeat_rate(wwork))
+                        wt_metrics = per_thread_metrics(wwork)
+                        for t in w_thread_obs:
+                            m = wt_metrics.get(t)
+                            if not m:
+                                continue
+                            w_thread_global_trials[t].append(m["repeat_rate_global"])
+                            if m["prev_count"] > 0:
+                                w_thread_cond_trials[t].append(m["repeat_rate_given_prev"])
                     w_res = metric_baseline(w_obs, w_trials, w_mode)
 
                 group_window_z.append(w_res["zscore"])
@@ -330,11 +344,39 @@ def main() -> None:
                         "baseline_mode": w_res["baseline_mode"],
                     }
                 )
+
+                for thread_id, tobs in w_thread_obs.items():
+                    wt_g = metric_baseline(tobs["repeat_rate_global"], w_thread_global_trials.get(thread_id, []), w_mode)
+                    wt_c = metric_baseline(tobs["repeat_rate_given_prev"], w_thread_cond_trials.get(thread_id, []), w_mode)
+                    window_thread_rows.append(
+                        {
+                            **base_key,
+                            "window_index": widx,
+                            "window_start": start,
+                            "window_end_exclusive": start + window_size,
+                            "window_n_samples": wn,
+                            "thread_id": thread_id,
+                            "prev_count": int(tobs["prev_count"]),
+                            "repeat_count": int(tobs["repeat_count"]),
+                            "thread_repeat_rate_global": wt_g["observed"],
+                            "thread_repeat_global_baseline_mean": wt_g["baseline_mean"],
+                            "thread_repeat_global_baseline_std": wt_g["baseline_std"],
+                            "thread_repeat_global_zscore": wt_g["zscore"],
+                            "thread_repeat_global_p_ge": wt_g["p_ge"],
+                            "thread_repeat_rate_given_prev": wt_c["observed"],
+                            "thread_repeat_given_prev_baseline_mean": wt_c["baseline_mean"],
+                            "thread_repeat_given_prev_baseline_std": wt_c["baseline_std"],
+                            "thread_repeat_given_prev_zscore": wt_c["zscore"],
+                            "thread_repeat_given_prev_p_ge": wt_c["p_ge"],
+                            "baseline_mode": w_mode,
+                        }
+                    )
                 widx += 1
 
         cp_score, cp_idx, cp_left_mean, cp_right_mean, cp_abs_delta = detect_change_point(group_window_z)
         cp_flag = int(cp_score == cp_score and cp_score >= args.cp_threshold)
 
+        clean_z = [z for z in group_window_z if z == z]
         seed_rows.append(
             {
                 **base_key,
@@ -348,8 +390,8 @@ def main() -> None:
                 "window_size": window_size,
                 "window_step": window_step if window_size > 0 else 0,
                 "n_windows": len(group_window_z),
-                "window_repeat_zscore_mean": statistics.fmean([z for z in group_window_z if z == z]) if group_window_z else float("nan"),
-                "window_repeat_zscore_std": statistics.pstdev([z for z in group_window_z if z == z]) if len([z for z in group_window_z if z == z]) > 1 else float("nan"),
+                "window_repeat_zscore_mean": statistics.fmean(clean_z) if clean_z else float("nan"),
+                "window_repeat_zscore_std": statistics.pstdev(clean_z) if len(clean_z) > 1 else float("nan"),
                 "cp_score": cp_score,
                 "cp_index": cp_idx,
                 "cp_left_mean_z": cp_left_mean,
@@ -386,11 +428,14 @@ def main() -> None:
             )
 
     seed_rows.sort(key=lambda r: str(tuple(r.get(c, "") for c in group_cols)))
-    seed_thread_rows.sort(
-        key=lambda r: (str(tuple(r.get(c, "") for c in group_cols)), safe_int(str(r.get("thread_id", "0")), 0))
-    )
-    window_rows.sort(
-        key=lambda r: (str(tuple(r.get(c, "") for c in group_cols)), safe_int(str(r.get("window_index", "0")), 0))
+    seed_thread_rows.sort(key=lambda r: (str(tuple(r.get(c, "") for c in group_cols)), safe_int(str(r.get("thread_id", "0")), 0)))
+    window_rows.sort(key=lambda r: (str(tuple(r.get(c, "") for c in group_cols)), safe_int(str(r.get("window_index", "0")), 0)))
+    window_thread_rows.sort(
+        key=lambda r: (
+            str(tuple(r.get(c, "") for c in group_cols)),
+            safe_int(str(r.get("window_index", "0")), 0),
+            safe_int(str(r.get("thread_id", "0")), 0),
+        )
     )
 
     seed_fields = list(group_cols) + [
@@ -448,6 +493,27 @@ def main() -> None:
         "baseline_mode",
     ]
 
+    window_thread_fields = list(group_cols) + [
+        "window_index",
+        "window_start",
+        "window_end_exclusive",
+        "window_n_samples",
+        "thread_id",
+        "prev_count",
+        "repeat_count",
+        "thread_repeat_rate_global",
+        "thread_repeat_global_baseline_mean",
+        "thread_repeat_global_baseline_std",
+        "thread_repeat_global_zscore",
+        "thread_repeat_global_p_ge",
+        "thread_repeat_rate_given_prev",
+        "thread_repeat_given_prev_baseline_mean",
+        "thread_repeat_given_prev_baseline_std",
+        "thread_repeat_given_prev_zscore",
+        "thread_repeat_given_prev_p_ge",
+        "baseline_mode",
+    ]
+
     seed_out = out_prefix.with_name(out_prefix.name + "_seed_summary.csv")
     seed_thread_out = out_prefix.with_name(out_prefix.name + "_seed_thread_summary.csv")
     write_csv(seed_out, seed_rows, seed_fields)
@@ -458,8 +524,11 @@ def main() -> None:
 
     if window_size > 0:
         window_out = out_prefix.with_name(out_prefix.name + "_window_summary.csv")
+        window_thread_out = out_prefix.with_name(out_prefix.name + "_window_thread_summary.csv")
         write_csv(window_out, window_rows, window_fields)
+        write_csv(window_thread_out, window_thread_rows, window_thread_fields)
         print(f"Wrote {window_out}")
+        print(f"Wrote {window_thread_out}")
 
 
 if __name__ == "__main__":
