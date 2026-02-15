@@ -28,7 +28,7 @@ NUM_CPUS = len(X_ARRAY)
 
 CMD_BASE = [
     "../../../../ccbench",
-    "-r", "10000000",
+    "-r", "1" + "000" + "000" ,
     "-x", X_ARRAY_STR,
     "-t", "[0]",
     "-R"
