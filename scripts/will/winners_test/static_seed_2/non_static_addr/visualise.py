@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
 
-CSV_FILE = "../../rotating_seed(baseline)/4000_runs_1mill_reps_random_addr_moving_seed.csv"
+CSV_FILE = "../../rotating_seed(baseline)/400runs_1millreps/400_runs_1mill_reps_random_addr_moving_seed.csv"
 
 # Save outputs in current directory using CSV filename only
 outname = os.path.splitext(os.path.basename(CSV_FILE))[0]
