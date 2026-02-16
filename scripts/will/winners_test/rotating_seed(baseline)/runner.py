@@ -2,8 +2,8 @@ import subprocess
 import csv
 import re
 
-NUM_RUNS = 400
-CSV_FILE = "400_runs_1mill_reps_random_addr_moving_seed.csv.csv"
+NUM_RUNS = 4000
+CSV_FILE = "4000_runs_1mill_reps.csv"
 
 # Regex to parse lines like:
 # CPU 0 ran STORE_ON_MODIFIED | wins: 1014746 | attempts: 1014748 | successes: 1014748 | failures: 0

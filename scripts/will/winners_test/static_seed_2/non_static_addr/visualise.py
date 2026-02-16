@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
 
-CSV_FILE = "../../rotating_seed(baseline)/400runs_1millreps/400_runs_1mill_reps_random_addr_moving_seed.csv"
+CSV_FILE = "../../rotating_seed(baseline)/4kruns_1000_reps/4000_runs_1000_reps.csv"
 
 # Save outputs in current directory using CSV filename only
 outname = os.path.splitext(os.path.basename(CSV_FILE))[0]
@@ -76,33 +76,39 @@ def generate_plots_for_b(b_val, core_winners):
         return
 
     # =========================
-    # BOX PLOT
+    # BAR + LINE (replaces boxplot)
     # =========================
     fig, ax = plt.subplots(figsize=(14, 7))
 
-    bp = ax.boxplot(
-        data_for_plot,
-        positions=positions,
-        widths=0.6,
-        patch_artist=True,
-        showmeans=True,
-        meanline=True,
-        meanprops=dict(color="blue", linewidth=2),
-        medianprops=dict(color="black", linewidth=1.5),
-        flierprops=dict(marker="o",
-                        markerfacecolor="none",
-                        markeredgecolor="black",
-                        alpha=0.4)
+    means = [np.mean(d) for d in data_for_plot]
+    medians = [np.median(d) for d in data_for_plot]
+
+    # Bars = Mean
+    bars = ax.bar(
+        positions,
+        means,
+        width=0.6,
+        edgecolor="black",
+        label="Mean"
     )
 
-    # Shade by socket
-    for i, box in enumerate(bp["boxes"]):
+    # Shade by socket (same logic as before)
+    for i, bar in enumerate(bars):
         cpu = int(cpu_labels[i])
-        box.set_facecolor(socket_color(cpu))
-        box.set_edgecolor("black")
+        bar.set_facecolor(socket_color(cpu))
+
+    # Line = Median
+    ax.plot(
+        positions,
+        medians,
+        color="blue",
+        marker="o",
+        linewidth=2,
+        label="Median"
+    )
 
     ax.set_ylabel("Winners")
-    ax.set_title(f"Boxplot — b={b_val} — {test_type}")
+    ax.set_title(f"Bar/Line Plot — b={b_val} — {test_type}")
     ax.set_ylim(bottom=0)
 
     # Top axis (CPU numbers)
@@ -120,9 +126,12 @@ def generate_plots_for_b(b_val, core_winners):
     ax.set_xticklabels(core_labels)
     ax.set_xlabel("Core Number (SMT pairs)")
 
+    ax.legend(loc="upper right", frameon=True)
+
     plt.tight_layout()
-    plt.savefig(f"{outname}_b{b_val}_box.png", dpi=300)
+    plt.savefig(f"{outname}_b{b_val}_barline.png", dpi=300)
     plt.close()
+
 
     # =========================
     # VIOLIN PLOT
