@@ -4,8 +4,10 @@ import numpy as np
 from collections import defaultdict
 from itertools import combinations
 from scipy.stats import ttest_ind, skew, kurtosis
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
-CSV_FILE = "tas_4kruns_1_000_000_reps/4000_runs_1mill_reps_tas.csv"
+CSV_FILE = "tas_4kruns_1_000_000_reps/2/4000_runs_1mill_reps_tas_rep.csv"
 
 # -------------------------------
 # Read data
@@ -13,6 +15,7 @@ CSV_FILE = "tas_4kruns_1_000_000_reps/4000_runs_1mill_reps_tas.csv"
 core_winners = defaultdict(list)
 runs = set()
 test_type = None
+force_top_yticks = False
 
 with open(CSV_FILE, newline="") as f:
     reader = csv.DictReader(f)
@@ -124,24 +127,31 @@ def make_plots(ordering_name, build_positions_func):
     means = [np.mean(d) for d in data_for_plot]
     medians = [np.median(d) for d in data_for_plot]
 
-    bars = ax.bar(positions, means, width=0.6, edgecolor="black")
+    bars = ax.bar(positions, means, width=0.6, edgecolor="black", facecolor="#d9d9d9")
     for i, bar in enumerate(bars):
         bar.set_facecolor(socket_color(int(cpu_labels[i])))
 
-    ax.plot(positions, medians, color="blue", marker="o", linewidth=2)
+    median_line, = ax.plot(positions, medians, color="deepskyblue", marker="o", linewidth=2)
+
+    # legend (bar = mean, line = median)
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Mean"),
+        Line2D([0], [0], color=median_line.get_color(), marker="o", label="Median")
+    ]
+    ax.legend(handles=legend_handles)
+
     ax.set_ylabel("Instructions Executed")
     ax.set_xlabel("Core Number")
     ax.set_title(f"{ordering_name}: {test_type}")
-    ax.set_ylim(bottom=0)  # force y-axis start at 0
+    ax.set_ylim(bottom=0 if not force_top_yticks else 0,
+                top=45000 if force_top_yticks else None)
 
-    # ---------------- Top axis = CPU numbers ----------------
     ax_top = ax.twiny()
     ax_top.set_xlim(ax.get_xlim())
     ax_top.set_xticks(positions)
     ax_top.set_xticklabels(cpu_labels)
     ax_top.set_xlabel("CPU Number")
 
-    # ---------------- Bottom axis = Core centers ----------------
     ax.set_xticks(centers)
     ax.set_xticklabels(core_labels)
 
@@ -152,29 +162,35 @@ def make_plots(ordering_name, build_positions_func):
     # ---------- VIOLIN ----------
     fig, ax = plt.subplots(figsize=(14, 7))
     vp = ax.violinplot(data_for_plot, positions=positions, showmedians=True)
+
     for i, body in enumerate(vp["bodies"]):
         body.set_facecolor(socket_color(int(cpu_labels[i])))
         body.set_edgecolor("black")
         body.set_alpha(0.6)
 
-    # Mean dashed line
     for i, d in enumerate(data_for_plot):
         ax.hlines(np.mean(d), positions[i]-0.3, positions[i]+0.3,
                   colors="red", linestyles="dashed", linewidth=2)
 
+    # legend (solid = median, dashed = mean)
+    legend_handles = [
+        Line2D([0], [0], color="black", lw=2, label="Median"),
+        Line2D([0], [0], color="red", lw=2, linestyle="--", label="Mean")
+    ]
+    ax.legend(handles=legend_handles)
+
     ax.set_ylabel("Instructions Executed")
     ax.set_xlabel("Core Number")
     ax.set_title(f"{ordering_name}: {test_type}")
-    ax.set_ylim(bottom=0)  # force y-axis start at 0
+    ax.set_ylim(bottom=0 if not force_top_yticks else 0,
+                top=45000 if force_top_yticks else None)
 
-    # Top axis = CPU numbers
     ax_top = ax.twiny()
     ax_top.set_xlim(ax.get_xlim())
     ax_top.set_xticks(positions)
     ax_top.set_xticklabels(cpu_labels)
     ax_top.set_xlabel("CPU Number")
 
-    # Bottom axis = Core centers
     ax.set_xticks(centers)
     ax.set_xticklabels(core_labels)
 
@@ -183,7 +199,7 @@ def make_plots(ordering_name, build_positions_func):
     plt.close()
 
 # -------------------------------
-# Ordering builders (SAFE)
+# Ordering builders
 # -------------------------------
 def grouped_by_socket():
     data_for_plot = []
@@ -213,37 +229,8 @@ def grouped_by_socket():
 
     return data_for_plot, cpu_labels, core_labels, positions, group_sizes
 
-def cross_socket():
-    data_for_plot = []
-    cpu_labels = []
-    core_labels = []
-    positions = []
-    group_sizes = []
-    pos = 1
-
-    logical_cores = sorted(set(c % 10 for c in cores))
-
-    for lc in logical_cores:
-        group = []
-        for base in [0, 10]:
-            for cpu in [lc + base, lc + base + 20]:
-                if cpu in core_winners:
-                    data_for_plot.append(core_winners[cpu])
-                    cpu_labels.append(str(cpu))
-                    positions.append(pos)
-                    group.append(cpu)
-                    pos += 1
-        if group:
-            core_labels.append(str(lc))
-            group_sizes.append(len(group))
-
-    if not data_for_plot:
-        return None
-
-    return data_for_plot, cpu_labels, core_labels, positions, group_sizes
-
 # -------------------------------
-# Socket-level plots (SAFE)
+# Socket-level plots
 # -------------------------------
 def socket_level_plots():
     data_for_plot = []
@@ -273,13 +260,23 @@ def socket_level_plots():
     fig, ax = plt.subplots(figsize=(8,7))
     means = [np.mean(d) for d in data_for_plot]
     medians = [np.median(d) for d in data_for_plot]
-    ax.bar(positions, means, edgecolor="black")
-    ax.plot(positions, medians, marker="o")
+
+    bars = ax.bar(positions, means, edgecolor="black", facecolor="#d9d9d9")
+    median_line, = ax.plot(positions, medians, marker="o", color="deepskyblue")
+
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Mean"),
+        Line2D([0], [0], color=median_line.get_color(), marker="o", label="Median")
+    ]
+    ax.legend(handles=legend_handles)
+
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
     ax.set_title(f"Socket Comparison: {test_type}")
     ax.set_ylabel("Instructions Executed")
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(bottom=0 if not force_top_yticks else 0,
+                top=45000 if force_top_yticks else None)
+
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_socket_barline.png", dpi=300)
     plt.close()
@@ -287,20 +284,35 @@ def socket_level_plots():
     # VIOLIN
     fig, ax = plt.subplots(figsize=(8,7))
     vp = ax.violinplot(data_for_plot, positions=positions, showmedians=True)
+
     for body in vp["bodies"]:
         body.set_edgecolor("black")
+        body.set_facecolor("#d9d9d9")
         body.set_alpha(0.6)
+
+    for i, d in enumerate(data_for_plot):
+        ax.hlines(np.mean(d), positions[i]-0.3, positions[i]+0.3,
+                  colors="red", linestyles="dashed", linewidth=2)
+
+    legend_handles = [
+        Line2D([0], [0], color="black", lw=2, label="Median"),
+        Line2D([0], [0], color="red", lw=2, linestyle="--", label="Mean")
+    ]
+    ax.legend(handles=legend_handles)
+
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Instructions Executed")
-    ax.set_ylim(bottom=0)
     ax.set_title(f"Socket Comparison: {test_type}")
+    ax.set_ylim(bottom=0 if not force_top_yticks else 0,
+                top=45000 if force_top_yticks else None)
+
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_socket_violin.png", dpi=300)
     plt.close()
 
 # -------------------------------
-# Per-core SMT totals (SAFE)
+# Per-core SMT totals
 # -------------------------------
 def per_core_total_plots():
     per_core_data = defaultdict(list)
@@ -333,13 +345,23 @@ def per_core_total_plots():
     fig, ax = plt.subplots(figsize=(14,7))
     means = [np.mean(d) for d in data_for_plot]
     medians = [np.median(d) for d in data_for_plot]
-    ax.bar(positions, means, edgecolor="black")
-    ax.plot(positions, medians, marker="o")
+
+    bars = ax.bar(positions, means, edgecolor="black", facecolor="#d9d9d9")
+    median_line, = ax.plot(positions, medians, marker="o", color="deepskyblue")
+
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Mean"),
+        Line2D([0], [0], color=median_line.get_color(), marker="o", label="Median")
+    ]
+    ax.legend(handles=legend_handles)
+
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Instructions Executed")
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(bottom=0 if not force_top_yticks else 0,
+                top=80000 if force_top_yticks else None)
     ax.set_title(f"Per-Core Total Wins: {test_type}")
+
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_per_core_total_barline.png", dpi=300)
     plt.close()
@@ -347,18 +369,29 @@ def per_core_total_plots():
     # VIOLIN
     fig, ax = plt.subplots(figsize=(14,7))
     vp = ax.violinplot(data_for_plot, positions=positions, showmedians=True)
+
     for body in vp["bodies"]:
         body.set_facecolor("#d9d9d9")
         body.set_edgecolor("black")
         body.set_alpha(0.6)
+
     for i, d in enumerate(data_for_plot):
         ax.hlines(np.mean(d), positions[i]-0.3, positions[i]+0.3,
                   colors="red", linestyles="dashed", linewidth=2)
+
+    legend_handles = [
+        Line2D([0], [0], color="black", lw=2, label="Median"),
+        Line2D([0], [0], color="red", lw=2, linestyle="--", label="Mean")
+    ]
+    ax.legend(handles=legend_handles)
+
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Instructions Executed")
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(bottom=0 if not force_top_yticks else 0,
+                top=80000 if force_top_yticks else None)
     ax.set_title(f"Per-Core Total Wins: {test_type}")
+
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_per_core_total_violin.png", dpi=300)
     plt.close()
@@ -367,7 +400,6 @@ def per_core_total_plots():
 # Generate plots
 # -------------------------------
 make_plots("Grouped by Socket", grouped_by_socket)
-make_plots("cross_socket", cross_socket)
 socket_level_plots()
 per_core_total_plots()
 
