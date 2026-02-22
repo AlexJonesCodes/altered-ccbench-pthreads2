@@ -4,7 +4,7 @@ INCLUDE = include
 
 # Compiler and flags
 CC      = gcc
-CFLAGS  = -O3 -Wall
+CFLAGS  = -O3 -Wall -fno-pie -no-pie
 LDFLAGS = -lm -lrt
 VER_FLAGS = -D_GNU_SOURCE
 
