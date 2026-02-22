@@ -21,16 +21,22 @@ CPU_LINE_RE = re.compile(
 X_ARRAY_STR = str(list(range(0,40)))  # example, replace with your -x
 
 uniform_t_array = []  # to track generated -t arrays for uniformity checks
-TEST_INDEXES = [0, 7, 12, 13, 15]
+# === Generator (6-value, randomized 10-element halves) ===
+VALUES = [0, 7, 12, 13, 15, 18]  # new 6 values
 
-# === Generator ===
-def random_doubled_array():
-    half = [v for v in TEST_INDEXES for _ in range(2)]
+def generate_half_10(values):
+    # Start with 1 of each value
+    half = values.copy()
+    # Add remaining 4 slots randomly
+    half += random.choices(values, k=10 - len(values))
     random.shuffle(half)
-    other_half = half.copy()
-    random.shuffle(other_half)
-    block20 = half + other_half
-    return block20 + block20
+    return half
+
+def random_doubled_array():
+    first_half = generate_half_10(VALUES)
+    second_half = generate_half_10(VALUES)
+    block20 = first_half + second_half
+    return block20 + block20  # final 40-element array
 
 print(f"Using -x array: {X_ARRAY_STR}")
 # Convert to actual list of integers
@@ -94,10 +100,9 @@ with open(CSV_FILE, "w", newline="") as f:
 
     
 # --- Config for analysis ---
-EPSILON = 0.015  # tolerance for frequency violations
+EPSILON = 0.02 # tolerance for frequency violations
 T_ARRAY_FILE = "generated_t_arrays.csv"
 ANALYSIS_FILE = "t_array_frequency_analysis.txt"
-VALUES = [0, 7, 12, 13, 15]
 
 # --- 1. Save all generated -t arrays ---
 with open(T_ARRAY_FILE, "w", newline="") as f:
