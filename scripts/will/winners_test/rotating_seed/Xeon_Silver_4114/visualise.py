@@ -7,7 +7,11 @@ from scipy.stats import ttest_ind, skew, kurtosis
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
+<<<<<<< HEAD
 CSV_FILE = "tas_4kruns_1_000_000_reps/3/4000_runs_1mill_reps_tas.csv"
+=======
+CSV_FILE = "tas_4kruns_1_000_000_reps/4000_runs_1mill_reps_tas.csv"
+>>>>>>> a117d36 (create multi-test runner)
 
 # -------------------------------
 # Read data
