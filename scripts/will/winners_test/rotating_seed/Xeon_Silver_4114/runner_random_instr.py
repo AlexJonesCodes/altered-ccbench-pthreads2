@@ -1,3 +1,4 @@
+from collections import Counter
 import random
 import subprocess
 import csv
@@ -37,7 +38,7 @@ X_ARRAY = [int(x.strip()) for x in X_ARRAY_STR.strip("[]").split(",")]
 NUM_CPUS = len(X_ARRAY)
 
 CMD_BASE = [
-    "../../../../ccbench",
+    "../../../../../ccbench",
     "-r", "1" + "000" + "000" ,
     "-x", X_ARRAY_STR,
     "-R"
@@ -64,7 +65,7 @@ with open(CSV_FILE, "w", newline="") as f:
         T_ARRAY_STR = random_doubled_array()
 
         uniform_t_array.append(T_ARRAY_STR) 
-        cmd = cmd + ["-t", T_ARRAY_STR]  # T_ARRAY_STR is already a Python list        
+        cmd = cmd + ["-t", str(T_ARRAY_STR)]  # T_ARRAY_STR is already a Python list        
         print(f"Starting run {run + 1} with -b {b_value} and -t {T_ARRAY_STR}...")
         result = subprocess.run(
             cmd,
@@ -119,14 +120,14 @@ for t_array in uniform_t_array:
 with open(ANALYSIS_FILE, "w") as f:
     f.write("Frequencies per position (first 20-element block):\n")
     for i, counter in enumerate(pos_counts):
-        freqs = {val: f"{counter[val]/NUM_SAMPLES:.3f}" for val in VALUES}
+        freqs = {val: f"{counter[val]/NUM_SAMPLES:.3f}" for val in TEST_INDEXES}
         f.write(f"Position {i}: {freqs}\n")
 
     f.write("\nPositions/values violating tolerance:\n")
-    expected_freq = 1 / len(VALUES)
+    expected_freq = 1 / len(TEST_INDEXES)
     violations = []
     for i, counter in enumerate(pos_counts):
-        for val in VALUES:
+        for val in TEST_INDEXES:
             freq = counter[val] / NUM_SAMPLES
             if abs(freq - expected_freq) > EPSILON:
                 violations.append((i, val, freq))
