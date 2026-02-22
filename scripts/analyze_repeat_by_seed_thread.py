@@ -109,6 +109,26 @@ def dominant_share(seq: Sequence[str]) -> float:
     return counts.most_common(1)[0][1] / len(seq)
 
 
+def jains_fairness_index(seq: Sequence[str]) -> float:
+    """Compute Jain's fairness index over winner frequencies in a window/sequence.
+
+    J = (sum x_i)^2 / (n * sum x_i^2), where x_i are per-thread winner counts and
+    n is number of observed unique winners in the sequence.
+    """
+    if not seq:
+        return float("nan")
+    counts = Counter(seq)
+    vals = list(counts.values())
+    n = len(vals)
+    if n == 0:
+        return float("nan")
+    denom = n * sum(v * v for v in vals)
+    if denom == 0:
+        return float("nan")
+    total = sum(vals)
+    return (total * total) / denom
+
+
 def choose_group_columns(headers: Sequence[str], user_cols: str) -> List[str]:
     if user_cols.strip():
         cols = [c.strip() for c in user_cols.split(",") if c.strip()]
@@ -300,6 +320,7 @@ def main() -> None:
                 wseq = seq[start:start + window_size]
                 w_obs = repeat_rate(wseq)
                 w_dom = dominant_share(wseq)
+                w_jfi = jains_fairness_index(wseq)
                 wn = len(wseq)
                 w_thread_obs = per_thread_metrics(wseq)
 
@@ -341,6 +362,7 @@ def main() -> None:
                         "window_repeat_zscore": w_res["zscore"],
                         "window_repeat_p_ge": w_res["p_ge"],
                         "window_dominant_share": w_dom,
+                        "window_jains_fairness": w_jfi,
                         "baseline_mode": w_res["baseline_mode"],
                     }
                 )
@@ -490,6 +512,7 @@ def main() -> None:
         "window_repeat_zscore",
         "window_repeat_p_ge",
         "window_dominant_share",
+        "window_jains_fairness",
         "baseline_mode",
     ]
 
