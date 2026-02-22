@@ -22,7 +22,7 @@ X_ARRAY_STR = str(list(range(0,40)))  # example, replace with your -x
 
 uniform_t_array = []  # to track generated -t arrays for uniformity checks
 # === Generator (6-value, randomized 10-element halves) ===
-VALUES = [0, 7, 12, 13, 14, 15]  # new 6 values
+TEST_INDEXES = [0, 7, 12, 13, 14, 15]  # new 6 values
 
 def generate_half_10(values):
     # Start with 1 of each value
@@ -33,8 +33,8 @@ def generate_half_10(values):
     return half
 
 def random_doubled_array():
-    first_half = generate_half_10(VALUES)
-    second_half = generate_half_10(VALUES)
+    first_half = generate_half_10(TEST_INDEXES)
+    second_half = generate_half_10(TEST_INDEXES)
     block20 = first_half + second_half
     return block20 + block20  # final 40-element array
 
