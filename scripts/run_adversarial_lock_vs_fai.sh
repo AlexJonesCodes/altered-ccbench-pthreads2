@@ -36,6 +36,7 @@ Options:
   --enforce-no-smt-siblings       Fail if victim/attacker cores share SMT sibling sets
   --ccbench PATH                  Path to ccbench binary (default: ./ccbench)
   --output-dir DIR                Output directory (default: results/adversarial_lock_vs_fai)
+  --results-csv PATH              Flat results CSV path (default: results/adversarial_lock_vs_fai_results.csv)
   --dry-run                       Print commands without running
   -h, --help                      Show this help
 
@@ -70,6 +71,7 @@ fail_stats=0
 enforce_no_smt=0
 ccbench=./ccbench
 output_dir="results/adversarial_lock_vs_fai"
+results_csv="results/adversarial_lock_vs_fai_results.csv"
 dry_run=0
 
 while [[ $# -gt 0 ]]; do
@@ -94,6 +96,7 @@ while [[ $# -gt 0 ]]; do
     --enforce-no-smt-siblings) enforce_no_smt=1; shift ;;
     --ccbench) ccbench="$2"; shift 2 ;;
     --output-dir) output_dir="$2"; shift 2 ;;
+    --results-csv) results_csv="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -117,6 +120,7 @@ if [[ ! -f include/ccbench.h ]]; then
 fi
 
 mkdir -p "$output_dir/logs"
+mkdir -p "$(dirname "$results_csv")"
 
 resolve_test_id() {
   local spec="$1"
@@ -244,6 +248,7 @@ done
 
 summary_csv="$output_dir/summary.csv"
 printf 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path\n' > "$summary_csv"
+printf 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path\n' > "$results_csv"
 
 common_extra=()
 [[ "$fail_stats" -eq 1 ]] && common_extra+=(--fail-stats)
@@ -355,6 +360,7 @@ Attacker seed core:       $attacker_seed_core
 Victim reps:              $victim_reps
 Attacker reps:            $attacker_reps
 SMT overlap detected:     $smt_overlap
+Flat results CSV:         $results_csv
 META
 
 baseline_log="$output_dir/logs/victim_baseline.log"
@@ -365,7 +371,7 @@ run_logged "$baseline_log" bash -lc "${victim_base_cmd[0]}"
 
 if [[ "$dry_run" -eq 0 ]]; then
   IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$baseline_log")"
-  printf 'victim_baseline,0,none,%s,none,%s,%s,%s,%s\n' "$victim_test" "$mean" "$fair" "$succ" "$baseline_log" >> "$summary_csv"
+  printf 'victim_baseline,0,none,%s,none,%s,%s,%s,%s\n' "$victim_test" "$mean" "$fair" "$succ" "$baseline_log" | tee -a "$summary_csv" >> "$results_csv"
 fi
 
 for a_threads in "${attacker_count_arr[@]}"; do
@@ -386,7 +392,7 @@ for a_threads in "${attacker_count_arr[@]}"; do
   run_with_synchronized_attacker "$rmw_victim_log" "$rmw_attacker_log" victim_base_cmd rmw_cmd
   if [[ "$dry_run" -eq 0 ]]; then
     IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$rmw_victim_log")"
-    printf 'victim_plus_attacker_rmw,%s,rmw,%s,%s,%s,%s,%s,%s\n' "$a_threads" "$victim_test" "$attacker_test" "$mean" "$fair" "$succ" "$rmw_victim_log" >> "$summary_csv"
+    printf 'victim_plus_attacker_rmw,%s,rmw,%s,%s,%s,%s,%s,%s\n' "$a_threads" "$victim_test" "$attacker_test" "$mean" "$fair" "$succ" "$rmw_victim_log" | tee -a "$summary_csv" >> "$results_csv"
   fi
 
   echo
@@ -394,7 +400,7 @@ for a_threads in "${attacker_count_arr[@]}"; do
   run_with_synchronized_attacker "$ctrl_victim_log" "$ctrl_attacker_log" victim_base_cmd ctrl_cmd
   if [[ "$dry_run" -eq 0 ]]; then
     IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$ctrl_victim_log")"
-    printf 'victim_plus_attacker_control,%s,control,%s,%s,%s,%s,%s,%s\n' "$a_threads" "$victim_test" "$control_test" "$mean" "$fair" "$succ" "$ctrl_victim_log" >> "$summary_csv"
+    printf 'victim_plus_attacker_control,%s,control,%s,%s,%s,%s,%s,%s\n' "$a_threads" "$victim_test" "$control_test" "$mean" "$fair" "$succ" "$ctrl_victim_log" | tee -a "$summary_csv" >> "$results_csv"
   fi
 done
 
@@ -402,4 +408,5 @@ echo
 echo "Done. Artifacts:"
 echo "  $output_dir/run_meta.txt"
 echo "  $summary_csv"
+echo "  $results_csv"
 echo "  $output_dir/logs/"

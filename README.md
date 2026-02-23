@@ -57,7 +57,8 @@ The script now includes:
 * single long-running attacker run per victim phase (avoids burst gaps),
 * attacker intensity sweeps via `--attacker-thread-sweep`,
 * optional SMT sibling safety check (`--enforce-no-smt-siblings`), and
-* a `summary.csv` with per-phase victim metrics (mean/fairness/success).
+* a `summary.csv` with per-phase victim metrics (mean/fairness/success), and
+* an optional flat CSV export path via `--results-csv` (default `results/adversarial_lock_vs_fai_results.csv`).
 
 Example:
 
