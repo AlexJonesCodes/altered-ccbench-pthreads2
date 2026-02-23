@@ -32,6 +32,8 @@ Options:
   --attacker-stride N             Attacker stride (default: 1)
   --fixed-victim-addr SPEC        Victim fixed line: static|0xHEX (default: static)
   --fixed-attacker-addr HEX       Attacker fixed line address (default: 0x700000100000)
+  --victim-fallback-addr HEX      Victim fallback fixed line address used if static preflight segfaults
+                                  (default: 0x700000200000)
   --fail-stats                    Enable per-thread atomic failure stats
   --enforce-no-smt-siblings       Fail if victim/attacker cores share SMT sibling sets
   --ccbench PATH                  Path to ccbench binary (default: ./ccbench)
@@ -67,9 +69,11 @@ victim_stride=1
 attacker_stride=1
 fixed_victim_addr="static"
 fixed_attacker_addr="0x700000100000"
+victim_fallback_addr="0x700000200000"
 fail_stats=0
 fail_stats_effective=0
 fail_stats_auto_disabled=0
+victim_addr_auto_fallback=0
 enforce_no_smt=0
 ccbench=./ccbench
 output_dir="results/adversarial_lock_vs_fai"
@@ -94,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --attacker-stride) attacker_stride="$2"; shift 2 ;;
     --fixed-victim-addr) fixed_victim_addr="$2"; shift 2 ;;
     --fixed-attacker-addr) fixed_attacker_addr="$2"; shift 2 ;;
+    --victim-fallback-addr) victim_fallback_addr="$2"; shift 2 ;;
     --fail-stats) fail_stats=1; shift ;;
     --enforce-no-smt-siblings) enforce_no_smt=1; shift ;;
     --ccbench) ccbench="$2"; shift 2 ;;
@@ -268,29 +273,57 @@ strip_fail_stats_flag() {
   arr_ref=("${filtered[@]}")
 }
 
-preflight_fail_stats() {
+run_probe_logged() {
+  local probe_log="$1"
+  shift
   local -a cmd=("$@")
-  if [[ "$dry_run" -eq 1 || "$fail_stats" -eq 0 ]]; then
-    return 0
-  fi
-  local preflight_log="$output_dir/logs/preflight_fail_stats_probe.log"
-  echo "=== Preflight: fail-stats probe ==="
   set +e
-  "${cmd[@]}" >"$preflight_log" 2>&1
+  "${cmd[@]}" >"$probe_log" 2>&1
   local rc=$?
   set -e
-  if [[ "$rc" -eq 0 ]]; then
-    return 0
-  fi
-  if [[ "$rc" -eq 139 ]]; then
-    echo "WARNING: preflight crashed with --fail-stats (SIGSEGV). Auto-disabling --fail-stats for this run." >&2
-    fail_stats_effective=0
-    fail_stats_auto_disabled=1
-    common_extra=()
-    return 0
-  fi
-  echo "ERROR: preflight command failed with exit code $rc. See $preflight_log" >&2
   return "$rc"
+}
+
+adaptive_victim_preflight() {
+  if [[ "$dry_run" -eq 1 ]]; then
+    return 0
+  fi
+
+  local preflight_log="$output_dir/logs/preflight_victim_probe.log"
+  while true; do
+    local -a probe_cmd
+    mapfile -t probe_cmd < <(build_cmd "1" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
+
+    echo "=== Preflight: victim probe (addr=$fixed_victim_addr, fail-stats=$fail_stats_effective) ==="
+    local rc
+    if run_probe_logged "$preflight_log" "${probe_cmd[@]}"; then
+      rc=0
+    else
+      rc=$?
+    fi
+
+    if [[ "$rc" -eq 0 ]]; then
+      return 0
+    fi
+
+    if [[ "$rc" -eq 139 && "$fail_stats_effective" -eq 1 ]]; then
+      echo "WARNING: preflight crashed with --fail-stats (SIGSEGV). Auto-disabling --fail-stats for this run." >&2
+      fail_stats_effective=0
+      fail_stats_auto_disabled=1
+      common_extra=()
+      continue
+    fi
+
+    if [[ "$rc" -eq 139 && "$fixed_victim_addr" == "static" ]]; then
+      echo "WARNING: preflight still segfaults with victim static line. Falling back to --fixed-victim-addr $victim_fallback_addr." >&2
+      fixed_victim_addr="$victim_fallback_addr"
+      victim_addr_auto_fallback=1
+      continue
+    fi
+
+    echo "ERROR: victim preflight failed with exit code $rc. See $preflight_log" >&2
+    return "$rc"
+  done
 }
 
 build_cmd() {
@@ -335,7 +368,7 @@ run_logged() {
   set -e
   if [[ "$rc" -eq 139 ]]; then
     echo "ERROR: ccbench crashed with SIGSEGV (exit 139)." >&2
-    echo "Hint: retry without --fail-stats, or use --fixed-victim-addr 0xHEX instead of static." >&2
+    echo "Hint: if using static victim line, set --fixed-victim-addr to a 0xHEX mapping (or tune --victim-fallback-addr)." >&2
   fi
   return "$rc"
 }
@@ -396,12 +429,8 @@ run_with_synchronized_attacker() {
 }
 
 baseline_log="$output_dir/logs/victim_baseline.log"
+adaptive_victim_preflight
 mapfile -t victim_base_cmd < <(build_cmd "$victim_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
-mapfile -t victim_probe_cmd < <(build_cmd "1" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
-preflight_fail_stats "${victim_probe_cmd[@]}"
-if [[ "$fail_stats_auto_disabled" -eq 1 ]]; then
-  strip_fail_stats_flag victim_base_cmd
-fi
 
 cat >"$output_dir/run_meta.txt" <<META
 Victim cores:             $victim_core_list
@@ -412,6 +441,8 @@ Attacker control test:    $control_test (id=$control_test_id)
 Experiment mode:          atomic-vs-atomic
 Attacker thread sweep:    $attacker_thread_sweep
 Victim fixed line:        $fixed_victim_addr
+Victim fallback addr:     $victim_fallback_addr
+Victim addr auto-fallback:$victim_addr_auto_fallback
 Attacker fixed line:      $fixed_attacker_addr
 Victim seed core:         $seed_core
 Attacker seed core:       $attacker_seed_core

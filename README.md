@@ -60,6 +60,10 @@ The script now includes:
 * automatic `--fail-stats` preflight fallback: if a 1-rep probe crashes with
   SIGSEGV, the script disables `--fail-stats` for the run and records that in
   `run_meta.txt`, and
+* automatic victim-address fallback: if the victim preflight still segfaults
+  with `--fixed-victim-addr static`, the script retries using
+  `--victim-fallback-addr` (default `0x700000200000`) and records the fallback
+  in `run_meta.txt`, and
 * a `summary.csv` with per-phase victim metrics (mean/fairness/success), and
 * an optional flat CSV export path via `--results-csv` (default `results/adversarial_lock_vs_fai_results.csv`).
 
