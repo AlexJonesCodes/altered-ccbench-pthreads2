@@ -6,28 +6,28 @@ usage() {
 Usage: scripts/run_adversarial_lock_vs_fai.sh [options]
 
 Adversarial coherence experiment:
-  Victim group contends on a lock-like atomic primitive.
-  Attacker group executes heavy RMW (FAI by default) on a different shared line.
+  Victim group runs an atomic RMW primitive (CAS by default).
+  Attacker group runs a different atomic RMW primitive (FAI by default) on a different shared line.
 
 Phases per attacker intensity:
   1) victim_baseline
   2) victim_plus_attacker_rmw      (synchronized start; attacker single long run)
-  3) victim_plus_attacker_control  (control attacker, default NOP)
+  3) victim_plus_attacker_control  (control attacker, default LOAD_FROM_L1)
 
 Options:
   --victim-cores LIST             Comma-separated victim cores (required)
   --attacker-cores LIST           Comma-separated attacker cores (required)
-  --victim-test NAME|ID           Victim primitive (default: CAS_UNTIL_SUCCESS)
+  --victim-test NAME|ID           Victim atomic primitive (default: CAS)
   --attacker-test NAME|ID         Attacker primitive (default: FAI)
-  --control-test NAME|ID          Control attacker primitive (default: NOP)
+  --control-test NAME|ID          Control attacker primitive (default: LOAD_FROM_L1)
   --attacker-thread-sweep LIST    Attacker thread counts sweep, e.g. "1,2,4,8"
                                   (default: use full attacker core count only)
   --victim-reps N                 Victim repetitions per run (default: 20000)
   --attacker-reps N               Attacker repetitions per run (default: 200000000)
   --seed-core N                   Seed core for victim run (default: first victim core)
   --attacker-seed-core N          Seed core for attacker/control run (default: first attacker core)
-  --victim-backoff-max N          Victim backoff max for CAS_UNTIL_SUCCESS (default: 1024)
-  --attacker-backoff-max N        Attacker backoff max for CAS_UNTIL_SUCCESS (default: 1)
+  --victim-backoff-max N          Victim backoff max (used only if victim is CAS_UNTIL_SUCCESS, default: 1024)
+  --attacker-backoff-max N        Attacker backoff max (used only if attacker is CAS_UNTIL_SUCCESS, default: 1)
   --victim-stride N               Victim stride (default: 1)
   --attacker-stride N             Attacker stride (default: 1)
   --fixed-victim-addr SPEC        Victim fixed line: static|0xHEX (default: static)
@@ -44,17 +44,17 @@ Example:
     --victim-cores "0,2,4,6" \
     --attacker-cores "8,10,12,14" \
     --attacker-thread-sweep "1,2,4" \
-    --victim-test CAS_UNTIL_SUCCESS \
+    --victim-test CAS \
     --attacker-test FAI \
-    --control-test NOP
+    --control-test LOAD_FROM_L1
 USAGE
 }
 
 victim_cores=""
 attacker_cores=""
-victim_test="CAS_UNTIL_SUCCESS"
+victim_test="CAS"
 attacker_test="FAI"
-control_test="NOP"
+control_test="LOAD_FROM_L1"
 attacker_thread_sweep=""
 victim_reps=20000
 attacker_reps=200000000
@@ -243,7 +243,7 @@ for n in "${attacker_count_arr[@]}"; do
 done
 
 summary_csv="$output_dir/summary.csv"
-printf 'phase,attacker_threads,attacker_mode,mean_avg,jain_fairness,success_rate,log_path\n' > "$summary_csv"
+printf 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path\n' > "$summary_csv"
 
 common_extra=()
 [[ "$fail_stats" -eq 1 ]] && common_extra+=(--fail-stats)
@@ -346,6 +346,7 @@ Attacker cores (max):     [$attacker_cores]
 Victim test:              $victim_test (id=$victim_test_id)
 Attacker test (RMW):      $attacker_test (id=$attacker_test_id)
 Attacker control test:    $control_test (id=$control_test_id)
+Experiment mode:          atomic-vs-atomic
 Attacker thread sweep:    $attacker_thread_sweep
 Victim fixed line:        $fixed_victim_addr
 Attacker fixed line:      $fixed_attacker_addr
@@ -364,7 +365,7 @@ run_logged "$baseline_log" bash -lc "${victim_base_cmd[0]}"
 
 if [[ "$dry_run" -eq 0 ]]; then
   IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$baseline_log")"
-  printf 'victim_baseline,0,none,%s,%s,%s,%s\n' "$mean" "$fair" "$succ" "$baseline_log" >> "$summary_csv"
+  printf 'victim_baseline,0,none,%s,none,%s,%s,%s,%s\n' "$victim_test" "$mean" "$fair" "$succ" "$baseline_log" >> "$summary_csv"
 fi
 
 for a_threads in "${attacker_count_arr[@]}"; do
@@ -385,7 +386,7 @@ for a_threads in "${attacker_count_arr[@]}"; do
   run_with_synchronized_attacker "$rmw_victim_log" "$rmw_attacker_log" victim_base_cmd rmw_cmd
   if [[ "$dry_run" -eq 0 ]]; then
     IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$rmw_victim_log")"
-    printf 'victim_plus_attacker_rmw,%s,rmw,%s,%s,%s,%s\n' "$a_threads" "$mean" "$fair" "$succ" "$rmw_victim_log" >> "$summary_csv"
+    printf 'victim_plus_attacker_rmw,%s,rmw,%s,%s,%s,%s,%s,%s\n' "$a_threads" "$victim_test" "$attacker_test" "$mean" "$fair" "$succ" "$rmw_victim_log" >> "$summary_csv"
   fi
 
   echo
@@ -393,7 +394,7 @@ for a_threads in "${attacker_count_arr[@]}"; do
   run_with_synchronized_attacker "$ctrl_victim_log" "$ctrl_attacker_log" victim_base_cmd ctrl_cmd
   if [[ "$dry_run" -eq 0 ]]; then
     IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$ctrl_victim_log")"
-    printf 'victim_plus_attacker_control,%s,control,%s,%s,%s,%s\n' "$a_threads" "$mean" "$fair" "$succ" "$ctrl_victim_log" >> "$summary_csv"
+    printf 'victim_plus_attacker_control,%s,control,%s,%s,%s,%s,%s,%s\n' "$a_threads" "$victim_test" "$control_test" "$mean" "$fair" "$succ" "$ctrl_victim_log" >> "$summary_csv"
   fi
 done
 

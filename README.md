@@ -40,16 +40,16 @@ outputs per-run logs plus a summary CSV of average wins per backoff level.
 This uses the new `--backoff-array` option (e.g., `-A "[1,2,4,8]"`) to supply
 per-thread backoff caps. The array length must match the total thread count.
 
-## Adversarial lock-vs-FAI experiment helper
+## Adversarial atomic-vs-atomic experiment helper
 
 Use `scripts/run_adversarial_lock_vs_fai.sh` to model an adversarial setup with:
 
-* **Victim group**: threads contending on a lock-like atomic primitive
-  (default `CAS_UNTIL_SUCCESS`).
-* **Attacker group (RMW)**: threads running heavy `FAI` on a **different fixed
-  cache line**.
-* **Control attacker**: non-RMW control workload (default `NOP`) to help
-  separate coherence effects from generic execution interference.
+* **Victim group**: threads running a victim atomic primitive
+  (default `CAS`).
+* **Attacker group (RMW)**: threads running heavy atomic `FAI` on a **different
+  fixed cache line**.
+* **Control attacker**: weaker atomic control workload (default `LOAD_FROM_L1`)
+  to help separate heavy-RMW coherence effects from generic execution interference.
 
 The script now includes:
 
@@ -66,7 +66,7 @@ scripts/run_adversarial_lock_vs_fai.sh \
   --victim-cores "0,2,4,6" \
   --attacker-cores "8,10,12,14" \
   --attacker-thread-sweep "1,2,4" \
-  --victim-test CAS_UNTIL_SUCCESS \
+  --victim-test CAS \
   --attacker-test FAI \
-  --control-test NOP
+  --control-test LOAD_FROM_L1
 ```
