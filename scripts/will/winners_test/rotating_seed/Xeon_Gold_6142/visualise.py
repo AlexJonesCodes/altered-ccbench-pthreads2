@@ -5,7 +5,7 @@ from collections import defaultdict
 from itertools import combinations
 from scipy.stats import ttest_ind, skew, kurtosis
 
-CSV_FILE = "6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv"
+CSV_FILE = "swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv"
 
 # -------------------------------
 # Read data
