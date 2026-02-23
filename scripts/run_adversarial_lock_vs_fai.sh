@@ -291,17 +291,23 @@ adaptive_victim_preflight() {
   fi
 
   local preflight_log="$output_dir/logs/preflight_victim_probe.log"
+  local attempt=1
   while true; do
     local -a probe_cmd
     mapfile -t probe_cmd < <(build_cmd "1" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
 
-    echo "=== Preflight: victim probe (addr=$fixed_victim_addr, fail-stats=$fail_stats_effective) ==="
+    local safe_addr="${fixed_victim_addr//[^a-zA-Z0-9]/_}"
+    local attempt_log="$output_dir/logs/preflight_victim_probe_attempt${attempt}_addr_${safe_addr}_failstats_${fail_stats_effective}.log"
+
+    echo "=== Preflight: victim probe (attempt=$attempt, addr=$fixed_victim_addr, fail-stats=$fail_stats_effective) ==="
     local rc
-    if run_probe_logged "$preflight_log" "${probe_cmd[@]}"; then
+    if run_probe_logged "$attempt_log" "${probe_cmd[@]}"; then
       rc=0
     else
       rc=$?
     fi
+
+    cp "$attempt_log" "$preflight_log"
 
     if [[ "$rc" -eq 0 ]]; then
       return 0
@@ -312,6 +318,7 @@ adaptive_victim_preflight() {
       fail_stats_effective=0
       fail_stats_auto_disabled=1
       common_extra=()
+      ((attempt++))
       continue
     fi
 
@@ -319,6 +326,7 @@ adaptive_victim_preflight() {
       echo "WARNING: preflight still segfaults with victim static line. Falling back to --fixed-victim-addr $victim_fallback_addr." >&2
       fixed_victim_addr="$victim_fallback_addr"
       victim_addr_auto_fallback=1
+      ((attempt++))
       continue
     fi
 
@@ -326,6 +334,7 @@ adaptive_victim_preflight() {
       echo "WARNING: preflight still segfaults with fixed victim address ($fixed_victim_addr). Retrying with victim fixed-address mode disabled." >&2
       fixed_victim_addr="none"
       victim_fixed_disabled=1
+      ((attempt++))
       continue
     fi
 
