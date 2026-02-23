@@ -263,7 +263,7 @@ build_cmd() {
     cmd+=(-B -M "$bmax")
   fi
   cmd+=("${common_extra[@]}")
-  printf '%q ' "${cmd[@]}"
+  printf '%s\n' "${cmd[@]}"
 }
 
 extract_run_stats() {
@@ -289,7 +289,15 @@ run_logged() {
   if [[ "$dry_run" -eq 1 ]]; then
     return 0
   fi
+  set +e
   "${cmd[@]}" | tee "$log_file"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 139 ]]; then
+    echo "ERROR: ccbench crashed with SIGSEGV (exit 139)." >&2
+    echo "Hint: retry without --fail-stats, or use --fixed-victim-addr 0xHEX instead of static." >&2
+  fi
+  return "$rc"
 }
 
 run_with_synchronized_attacker() {
@@ -297,13 +305,13 @@ run_with_synchronized_attacker() {
   local attacker_log="$2"
   local victim_var="$3"
   local attacker_var="$4"
-  local victim_cmd="${!victim_var}"
-  local attacker_cmd="${!attacker_var}"
+  local -n victim_cmd_ref="$victim_var"
+  local -n attacker_cmd_ref="$attacker_var"
 
   if [[ "$dry_run" -eq 1 ]]; then
     echo "(synchronized start) victim+attacker"
-    printf 'ATTACKER: %s\n' "$attacker_cmd"
-    printf 'VICTIM:   %s\n' "$victim_cmd"
+    printf 'ATTACKER: ' && printf '%q ' "${attacker_cmd_ref[@]}" && printf '\n'
+    printf 'VICTIM:   ' && printf '%q ' "${victim_cmd_ref[@]}" && printf '\n'
     return 0
   fi
 
@@ -324,13 +332,13 @@ run_with_synchronized_attacker() {
 
   (
     read -r _ < "$gate_fifo"
-    eval "$attacker_cmd" >>"$attacker_log" 2>&1
+    "${attacker_cmd_ref[@]}" >>"$attacker_log" 2>&1
   ) &
   attacker_pid=$!
 
   (
     read -r _ < "$gate_fifo"
-    eval "$victim_cmd"
+    "${victim_cmd_ref[@]}"
   ) | tee "$victim_log" &
   victim_pid=$!
 
@@ -364,10 +372,10 @@ Flat results CSV:         $results_csv
 META
 
 baseline_log="$output_dir/logs/victim_baseline.log"
-victim_base_cmd=("$(build_cmd "$victim_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")")
+mapfile -t victim_base_cmd < <(build_cmd "$victim_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
 
 echo "=== Phase: victim_baseline ==="
-run_logged "$baseline_log" bash -lc "${victim_base_cmd[0]}"
+run_logged "$baseline_log" "${victim_base_cmd[@]}"
 
 if [[ "$dry_run" -eq 0 ]]; then
   IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$baseline_log")"
@@ -384,8 +392,8 @@ for a_threads in "${attacker_count_arr[@]}"; do
   ctrl_victim_log="$output_dir/logs/victim_with_attacker_control_t${a_threads}.log"
   ctrl_attacker_log="$output_dir/logs/attacker_control_t${a_threads}.log"
 
-  rmw_cmd=("$(build_cmd "$attacker_reps" "$attacker_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")")
-  ctrl_cmd=("$(build_cmd "$attacker_reps" "$control_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")")
+  mapfile -t rmw_cmd < <(build_cmd "$attacker_reps" "$attacker_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
+  mapfile -t ctrl_cmd < <(build_cmd "$attacker_reps" "$control_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
 
   echo
   echo "=== Phase: victim_plus_attacker_rmw (threads=$a_threads) ==="
