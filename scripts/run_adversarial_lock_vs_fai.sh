@@ -23,6 +23,9 @@ Options:
   --attacker-thread-sweep LIST    Attacker thread counts sweep, e.g. "1,2,4,8"
                                   (default: use full attacker core count only)
   --victim-reps N                 Victim repetitions per run (default: 20000)
+  --max-auto-victim-reps N        Auto-cap victim reps for CAS_UNTIL_SUCCESS (id=34)
+                                  when reps are very large (default: 5000)
+  --no-auto-victim-reps-cap       Disable auto-cap behavior
   --attacker-reps N               Attacker repetitions per run (default: 200000000)
   --seed-core N                   Seed core for victim run (default: first victim core)
   --attacker-seed-core N          Seed core for attacker/control run (default: first attacker core)
@@ -61,6 +64,8 @@ control_test="LOAD_FROM_L1"
 attacker_thread_sweep=""
 victim_reps=20000
 attacker_reps=200000000
+max_auto_victim_reps=5000
+auto_cap_victim_reps=1
 seed_core=""
 attacker_seed_core=""
 victim_backoff_max=1024
@@ -91,6 +96,8 @@ while [[ $# -gt 0 ]]; do
     --attacker-thread-sweep) attacker_thread_sweep="$2"; shift 2 ;;
     --victim-reps) victim_reps="$2"; shift 2 ;;
     --attacker-reps) attacker_reps="$2"; shift 2 ;;
+    --max-auto-victim-reps) max_auto_victim_reps="$2"; shift 2 ;;
+    --no-auto-victim-reps-cap) auto_cap_victim_reps=0; shift ;;
     --seed-core) seed_core="$2"; shift 2 ;;
     --attacker-seed-core) attacker_seed_core="$2"; shift 2 ;;
     --victim-backoff-max) victim_backoff_max="$2"; shift 2 ;;
@@ -234,6 +241,14 @@ victim_test_id=$(resolve_test_id "$victim_test") || { echo "Unknown --victim-tes
 attacker_test_id=$(resolve_test_id "$attacker_test") || { echo "Unknown --attacker-test: $attacker_test" >&2; exit 1; }
 control_test_id=$(resolve_test_id "$control_test") || { echo "Unknown --control-test: $control_test" >&2; exit 1; }
 
+[[ "$victim_reps" =~ ^[0-9]+$ ]] || { echo "--victim-reps must be an integer" >&2; exit 1; }
+[[ "$max_auto_victim_reps" =~ ^[0-9]+$ ]] || { echo "--max-auto-victim-reps must be an integer" >&2; exit 1; }
+
+if [[ "$auto_cap_victim_reps" -eq 1 && "$victim_test_id" == "34" && "$victim_reps" -gt "$max_auto_victim_reps" ]]; then
+  echo "INFO: --victim-test $victim_test (id=34) can run for a long time with high reps; auto-capping victim reps from $victim_reps to $max_auto_victim_reps. Use --no-auto-victim-reps-cap to disable." >&2
+  victim_reps="$max_auto_victim_reps"
+fi
+
 if [[ -z "$seed_core" ]]; then seed_core="${victim_core_arr[0]}"; fi
 if [[ -z "$attacker_seed_core" ]]; then attacker_seed_core="${attacker_core_arr[0]}"; fi
 
@@ -291,17 +306,23 @@ adaptive_victim_preflight() {
   fi
 
   local preflight_log="$output_dir/logs/preflight_victim_probe.log"
+  local attempt=1
   while true; do
     local -a probe_cmd
     mapfile -t probe_cmd < <(build_cmd "1" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
 
-    echo "=== Preflight: victim probe (addr=$fixed_victim_addr, fail-stats=$fail_stats_effective) ==="
+    local safe_addr="${fixed_victim_addr//[^a-zA-Z0-9]/_}"
+    local attempt_log="$output_dir/logs/preflight_victim_probe_attempt${attempt}_addr_${safe_addr}_failstats_${fail_stats_effective}.log"
+
+    echo "=== Preflight: victim probe (attempt=$attempt, addr=$fixed_victim_addr, fail-stats=$fail_stats_effective) ==="
     local rc
-    if run_probe_logged "$preflight_log" "${probe_cmd[@]}"; then
+    if run_probe_logged "$attempt_log" "${probe_cmd[@]}"; then
       rc=0
     else
       rc=$?
     fi
+
+    cp "$attempt_log" "$preflight_log"
 
     if [[ "$rc" -eq 0 ]]; then
       return 0
@@ -312,6 +333,7 @@ adaptive_victim_preflight() {
       fail_stats_effective=0
       fail_stats_auto_disabled=1
       common_extra=()
+      ((attempt++))
       continue
     fi
 
@@ -319,6 +341,7 @@ adaptive_victim_preflight() {
       echo "WARNING: preflight still segfaults with victim static line. Falling back to --fixed-victim-addr $victim_fallback_addr." >&2
       fixed_victim_addr="$victim_fallback_addr"
       victim_addr_auto_fallback=1
+      ((attempt++))
       continue
     fi
 
@@ -326,6 +349,7 @@ adaptive_victim_preflight() {
       echo "WARNING: preflight still segfaults with fixed victim address ($fixed_victim_addr). Retrying with victim fixed-address mode disabled." >&2
       fixed_victim_addr="none"
       victim_fixed_disabled=1
+      ((attempt++))
       continue
     fi
 
@@ -459,6 +483,8 @@ Attacker fixed line:      $fixed_attacker_addr
 Victim seed core:         $seed_core
 Attacker seed core:       $attacker_seed_core
 Victim reps:              $victim_reps
+Victim reps auto-cap:     $auto_cap_victim_reps
+Victim reps auto-cap max: $max_auto_victim_reps
 Attacker reps:            $attacker_reps
 SMT overlap detected:     $smt_overlap
 Fail stats requested:     $fail_stats
