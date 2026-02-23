@@ -68,6 +68,8 @@ attacker_stride=1
 fixed_victim_addr="static"
 fixed_attacker_addr="0x700000100000"
 fail_stats=0
+fail_stats_effective=0
+fail_stats_auto_disabled=0
 enforce_no_smt=0
 ccbench=./ccbench
 output_dir="results/adversarial_lock_vs_fai"
@@ -252,6 +254,44 @@ printf 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,
 
 common_extra=()
 [[ "$fail_stats" -eq 1 ]] && common_extra+=(--fail-stats)
+fail_stats_effective="$fail_stats"
+
+strip_fail_stats_flag() {
+  local arr_name="$1"
+  local -n arr_ref="$arr_name"
+  local -a filtered=()
+  local tok
+  for tok in "${arr_ref[@]}"; do
+    [[ "$tok" == "--fail-stats" ]] && continue
+    filtered+=("$tok")
+  done
+  arr_ref=("${filtered[@]}")
+}
+
+preflight_fail_stats() {
+  local -a cmd=("$@")
+  if [[ "$dry_run" -eq 1 || "$fail_stats" -eq 0 ]]; then
+    return 0
+  fi
+  local preflight_log="$output_dir/logs/preflight_fail_stats_probe.log"
+  echo "=== Preflight: fail-stats probe ==="
+  set +e
+  "${cmd[@]}" >"$preflight_log" 2>&1
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    return 0
+  fi
+  if [[ "$rc" -eq 139 ]]; then
+    echo "WARNING: preflight crashed with --fail-stats (SIGSEGV). Auto-disabling --fail-stats for this run." >&2
+    fail_stats_effective=0
+    fail_stats_auto_disabled=1
+    common_extra=()
+    return 0
+  fi
+  echo "ERROR: preflight command failed with exit code $rc. See $preflight_log" >&2
+  return "$rc"
+}
 
 build_cmd() {
   local reps="$1" tests="$2" cores="$3" seed="$4" stride="$5" fixed_addr="$6"
@@ -315,11 +355,12 @@ run_with_synchronized_attacker() {
     return 0
   fi
 
-  local gate_fifo="$output_dir/.start_gate_$$.fifo"
-  mkfifo "$gate_fifo"
+  local gate_attacker="$output_dir/.start_gate_attacker_$$.fifo"
+  local gate_victim="$output_dir/.start_gate_victim_$$.fifo"
+  mkfifo "$gate_attacker" "$gate_victim"
 
   cleanup_sync() {
-    rm -f "$gate_fifo"
+    rm -f "$gate_attacker" "$gate_victim"
     if [[ -n "${attacker_pid:-}" ]]; then
       kill "$attacker_pid" >/dev/null 2>&1 || true
       wait "$attacker_pid" >/dev/null 2>&1 || true
@@ -331,27 +372,36 @@ run_with_synchronized_attacker() {
   trap cleanup_sync EXIT INT TERM
 
   (
-    read -r _ < "$gate_fifo"
+    read -r _ < "$gate_attacker"
     "${attacker_cmd_ref[@]}" >>"$attacker_log" 2>&1
   ) &
   attacker_pid=$!
 
   (
-    read -r _ < "$gate_fifo"
+    read -r _ < "$gate_victim"
     "${victim_cmd_ref[@]}"
   ) | tee "$victim_log" &
   victim_pid=$!
 
   # release both waiters
-  { echo go > "$gate_fifo"; echo go > "$gate_fifo"; } || true
+  echo go > "$gate_attacker"
+  echo go > "$gate_victim"
 
   wait "$victim_pid"
   kill "$attacker_pid" >/dev/null 2>&1 || true
   wait "$attacker_pid" >/dev/null 2>&1 || true
 
   trap - EXIT INT TERM
-  rm -f "$gate_fifo"
+  rm -f "$gate_attacker" "$gate_victim"
 }
+
+baseline_log="$output_dir/logs/victim_baseline.log"
+mapfile -t victim_base_cmd < <(build_cmd "$victim_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
+mapfile -t victim_probe_cmd < <(build_cmd "1" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
+preflight_fail_stats "${victim_probe_cmd[@]}"
+if [[ "$fail_stats_auto_disabled" -eq 1 ]]; then
+  strip_fail_stats_flag victim_base_cmd
+fi
 
 cat >"$output_dir/run_meta.txt" <<META
 Victim cores:             $victim_core_list
@@ -368,11 +418,11 @@ Attacker seed core:       $attacker_seed_core
 Victim reps:              $victim_reps
 Attacker reps:            $attacker_reps
 SMT overlap detected:     $smt_overlap
+Fail stats requested:     $fail_stats
+Fail stats effective:     $fail_stats_effective
+Fail stats auto-disabled: $fail_stats_auto_disabled
 Flat results CSV:         $results_csv
 META
-
-baseline_log="$output_dir/logs/victim_baseline.log"
-mapfile -t victim_base_cmd < <(build_cmd "$victim_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
 
 echo "=== Phase: victim_baseline ==="
 run_logged "$baseline_log" "${victim_base_cmd[@]}"
@@ -394,6 +444,10 @@ for a_threads in "${attacker_count_arr[@]}"; do
 
   mapfile -t rmw_cmd < <(build_cmd "$attacker_reps" "$attacker_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
   mapfile -t ctrl_cmd < <(build_cmd "$attacker_reps" "$control_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
+  if [[ "$fail_stats_auto_disabled" -eq 1 ]]; then
+    strip_fail_stats_flag rmw_cmd
+    strip_fail_stats_flag ctrl_cmd
+  fi
 
   echo
   echo "=== Phase: victim_plus_attacker_rmw (threads=$a_threads) ==="
