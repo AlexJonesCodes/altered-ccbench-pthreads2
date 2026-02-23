@@ -30,7 +30,7 @@ Options:
   --attacker-backoff-max N        Attacker backoff max (used only if attacker is CAS_UNTIL_SUCCESS, default: 1)
   --victim-stride N               Victim stride (default: 1)
   --attacker-stride N             Attacker stride (default: 1)
-  --fixed-victim-addr SPEC        Victim fixed line: static|0xHEX (default: static)
+  --fixed-victim-addr SPEC        Victim fixed line: static|0xHEX|none (default: static)
   --fixed-attacker-addr HEX       Attacker fixed line address (default: 0x700000100000)
   --victim-fallback-addr HEX      Victim fallback fixed line address used if static preflight segfaults
                                   (default: 0x700000200000)
@@ -74,6 +74,7 @@ fail_stats=0
 fail_stats_effective=0
 fail_stats_auto_disabled=0
 victim_addr_auto_fallback=0
+victim_fixed_disabled=0
 enforce_no_smt=0
 ccbench=./ccbench
 output_dir="results/adversarial_lock_vs_fai"
@@ -254,8 +255,8 @@ for n in "${attacker_count_arr[@]}"; do
 done
 
 summary_csv="$output_dir/summary.csv"
-printf 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path\n' > "$summary_csv"
-printf 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path\n' > "$results_csv"
+printf '%s\n' 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path' > "$summary_csv"
+printf '%s\n' 'phase,attacker_threads,attacker_mode,victim_test,attacker_test,mean_avg,jain_fairness,success_rate,log_path' > "$results_csv"
 
 common_extra=()
 [[ "$fail_stats" -eq 1 ]] && common_extra+=(--fail-stats)
@@ -321,6 +322,13 @@ adaptive_victim_preflight() {
       continue
     fi
 
+    if [[ "$rc" -eq 139 && "$fixed_victim_addr" != "none" ]]; then
+      echo "WARNING: preflight still segfaults with fixed victim address ($fixed_victim_addr). Retrying with victim fixed-address mode disabled." >&2
+      fixed_victim_addr="none"
+      victim_fixed_disabled=1
+      continue
+    fi
+
     echo "ERROR: victim preflight failed with exit code $rc. See $preflight_log" >&2
     return "$rc"
   done
@@ -328,7 +336,10 @@ adaptive_victim_preflight() {
 
 build_cmd() {
   local reps="$1" tests="$2" cores="$3" seed="$4" stride="$5" fixed_addr="$6"
-  local -a cmd=("$ccbench" -r "$reps" -t "$tests" -x "$cores" -b "$seed" -s "$stride" -Z "$fixed_addr")
+  local -a cmd=("$ccbench" -r "$reps" -t "$tests" -x "$cores" -b "$seed" -s "$stride")
+  if [[ "$fixed_addr" != "none" ]]; then
+    cmd+=(-Z "$fixed_addr")
+  fi
   local op_id
   op_id=$(echo "$tests" | sed -E 's/^\[([0-9]+).*/\1/')
   if [[ "$op_id" == "34" ]]; then
@@ -443,6 +454,7 @@ Attacker thread sweep:    $attacker_thread_sweep
 Victim fixed line:        $fixed_victim_addr
 Victim fallback addr:     $victim_fallback_addr
 Victim addr auto-fallback:$victim_addr_auto_fallback
+Victim fixed disabled:    $victim_fixed_disabled
 Attacker fixed line:      $fixed_attacker_addr
 Victim seed core:         $seed_core
 Attacker seed core:       $attacker_seed_core
