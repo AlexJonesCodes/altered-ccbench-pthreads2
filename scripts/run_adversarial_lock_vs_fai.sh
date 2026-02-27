@@ -377,14 +377,40 @@ build_cmd() {
 extract_run_stats() {
   local log_file="$1"
   awk '
-    /Summary : mean avg/ { if (match($0, /mean avg[[:space:]]*([0-9.]+)/, m)) mean=m[1] }
-    /Jain fairness/ { if (match($0, /Jain fairness[^0-9]*([0-9.]+)/, m)) fair=m[1] }
-    /success rate/ { if (match($0, /success rate[^0-9]*([0-9.]+)/, m)) succ=m[1] }
+    /Summary : mean avg/ {
+      if (match($0, /mean avg[[:space:]]*([0-9.]+)/, m)) mean=m[1]
+    }
+    /Jain fairness/ {
+      if (match($0, /Jain fairness[^0-9]*([0-9.]+)/, m)) fair=m[1]
+    }
+    /success rate/ {
+      if (match($0, /success rate[^0-9]*([0-9.]+)/, m)) succ=m[1]
+    }
+    /Winner==argmin\(B4 -> success\)/ {
+      if (match($0, /\(([0-9.]+)%\)/, m)) succ=m[1]
+    }
+    /First-success winners per thread/ { in_winners=1; next }
+    in_winners && /^[[:space:]]*Group[[:space:]]+/ {
+      if (match($0, /: *([0-9]+) wins/, m)) {
+        w = m[1] + 0
+        sum += w
+        sumsq += (w * w)
+        cnt += 1
+      }
+      next
+    }
+    in_winners && !/^[[:space:]]*Group[[:space:]]+/ {
+      in_winners=0
+    }
     END {
-      if (mean == "") mean = "NA";
-      if (fair == "") fair = "NA";
-      if (succ == "") succ = "NA";
-      printf "%s,%s,%s", mean, fair, succ;
+      if (fair == "" && cnt > 0 && sumsq > 0) {
+        fair = (sum * sum) / (cnt * sumsq)
+      }
+      if (mean == "") mean = "NA"
+      if (fair == "") fair = "NA"
+      if (succ == "") succ = "NA"
+      if (fair != "NA") fair = sprintf("%.4f", fair)
+      printf "%s,%s,%s", mean, fair, succ
     }
   ' "$log_file"
 }
