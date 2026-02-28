@@ -9,7 +9,7 @@ Normalized adversarial coherence experiment with paired randomized crossover.
 
 Design per replicate:
   1) victim_baseline
-  2) for each attacker thread count, run {rmw,control} in randomized order
+  2) for each attacker thread count and each control test, run {rmw,control} in randomized order
   3) compute paired deltas (rmw-control) and baseline-normalized deltas
   4) aggregate median/IQR/sign-consistency across replicates
 
@@ -18,14 +18,15 @@ Options:
   --attacker-cores LIST           Comma-separated attacker cores (required)
   --victim-test NAME|ID           Victim primitive (default: CAS)
   --attacker-test NAME|ID         Attacker primitive (default: FAI)
-  --control-test NAME|ID          Control primitive (default: NOP)
+  --control-tests LIST            Comma-separated controls (default: NOP,LOAD_FROM_L1,LOAD_FROM_MEM_SIZE,PAUSE)
+  --control-test NAME|ID          Single control primitive (compat; overrides --control-tests)
   --attacker-thread-sweep LIST    Attacker thread counts (default: full attacker core count)
   --victim-reps N                 Victim reps per measured run (default: 20000)
   --attacker-reps N               Attacker reps per measured run (default: 200000000)
   --replicates N                  Number of replicate blocks (default: 5)
   --random-seed N                 Seed for randomized phase order (default: 12345)
-  --warmup-reps N                 Victim warmup reps before each measured phase (default: 0)
-  --inter-phase-sleep-ms N        Sleep between phases in ms (default: 0)
+  --warmup-reps N                 Victim warmup reps before each measured phase (default: 5000)
+  --inter-phase-sleep-ms N        Sleep between phases in ms (default: 200)
   --seed-core N                   Victim seed core (default: first victim core)
   --attacker-seed-core N          Attacker seed core (default: first attacker core)
   --victim-backoff-max N          Victim CAS_UNTIL_SUCCESS backoff max (default: 1024)
@@ -48,14 +49,15 @@ victim_cores=""
 attacker_cores=""
 victim_test="CAS"
 attacker_test="FAI"
-control_test="NOP"
+control_tests_csv="NOP,LOAD_FROM_L1,LOAD_FROM_MEM_SIZE,PAUSE"
+control_test=""
 attacker_thread_sweep=""
 victim_reps=20000
 attacker_reps=200000000
 replicates=5
 random_seed=12345
-warmup_reps=0
-inter_phase_sleep_ms=0
+warmup_reps=5000
+inter_phase_sleep_ms=200
 seed_core=""
 attacker_seed_core=""
 victim_backoff_max=1024
@@ -81,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --attacker-cores) attacker_cores="$2"; shift 2 ;;
     --victim-test) victim_test="$2"; shift 2 ;;
     --attacker-test) attacker_test="$2"; shift 2 ;;
+    --control-tests) control_tests_csv="$2"; shift 2 ;;
     --control-test) control_test="$2"; shift 2 ;;
     --attacker-thread-sweep) attacker_thread_sweep="$2"; shift 2 ;;
     --victim-reps) victim_reps="$2"; shift 2 ;;
@@ -107,6 +110,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+if [[ -n "$control_test" ]]; then
+  control_tests_csv="$control_test"
+fi
 
 [[ -n "$victim_cores" && -n "$attacker_cores" ]] || { echo "--victim-cores and --attacker-cores are required." >&2; exit 1; }
 [[ -x "$ccbench" ]] || { echo "ccbench binary not found or not executable: $ccbench" >&2; exit 1; }
@@ -337,7 +344,20 @@ fi
 
 victim_test_id=$(resolve_test_id "$victim_test") || { echo "Unknown --victim-test: $victim_test" >&2; exit 1; }
 attacker_test_id=$(resolve_test_id "$attacker_test") || { echo "Unknown --attacker-test: $attacker_test" >&2; exit 1; }
-control_test_id=$(resolve_test_id "$control_test") || { echo "Unknown --control-test: $control_test" >&2; exit 1; }
+
+as_array "$control_tests_csv" control_test_name_arr
+[[ "${#control_test_name_arr[@]}" -gt 0 ]] || { echo "--control-tests must not be empty" >&2; exit 1; }
+control_test_ids=()
+control_test_name_norm=()
+for ct in "${control_test_name_arr[@]}"; do
+  ct="${ct//[[:space:]]/}"
+  [[ -n "$ct" ]] || continue
+  ct_id=$(resolve_test_id "$ct") || { echo "Unknown control test in --control-tests: $ct" >&2; exit 1; }
+  control_test_ids+=("$ct_id")
+  control_test_name_norm+=("$ct")
+done
+control_test_name_arr=("${control_test_name_norm[@]}")
+[[ "${#control_test_name_arr[@]}" -gt 0 ]] || { echo "No valid control tests in --control-tests" >&2; exit 1; }
 
 [[ -z "$seed_core" ]] && seed_core="${victim_core_arr[0]}"
 [[ -z "$attacker_seed_core" ]] && attacker_seed_core="${attacker_core_arr[0]}"
@@ -359,14 +379,13 @@ pairs_csv="$output_dir/replicate_pairs.csv"
 summary_csv="$output_dir/summary_normalized.csv"
 legacy_summary_csv="$output_dir/summary_normalised.csv"
 printf '%s\n' 'replicate,phase,attacker_threads,attacker_mode,victim_test,attacker_test,order_idx,mean_avg,jain_fairness,success_rate,log_path' > "$raw_csv"
-printf '%s\n' 'replicate,attacker_threads,baseline_mean,rmw_mean,control_mean,delta,delta_pct,norm_delta' > "$pairs_csv"
+printf '%s\n' 'replicate,attacker_threads,control_test,baseline_mean,rmw_mean,control_mean,delta,delta_pct,norm_delta' > "$pairs_csv"
 
 common_extra=()
 [[ "$fail_stats" -eq 1 ]] && common_extra+=(--fail-stats)
 fail_stats_effective="$fail_stats"
 
 adaptive_victim_preflight
-
 RANDOM=$random_seed
 
 cat > "$output_dir/run_meta.txt" <<META
@@ -375,7 +394,7 @@ Victim cores:             $victim_core_list
 Attacker cores (max):     [$attacker_cores]
 Victim test:              $victim_test (id=$victim_test_id)
 Attacker test (RMW):      $attacker_test (id=$attacker_test_id)
-Attacker control test:    $control_test (id=$control_test_id)
+Attacker control tests:   $control_tests_csv
 Replicates:               $replicates
 Random seed:              $random_seed
 Warmup reps:              $warmup_reps
@@ -425,59 +444,56 @@ for ((rep=1; rep<=replicates; rep++)); do
   for a_threads in "${attacker_count_arr[@]}"; do
     attacker_core_list=$(slice_cores "$a_threads" "${attacker_core_arr[@]}")
     attacker_tests=$(make_list "$a_threads" "$attacker_test_id")
-    control_tests=$(make_list "$a_threads" "$control_test_id")
-
     mapfile -t rmw_cmd < <(build_cmd "$attacker_reps" "$attacker_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
-    mapfile -t ctrl_cmd < <(build_cmd "$attacker_reps" "$control_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
 
-    if (( RANDOM % 2 == 0 )); then
-      order=(rmw control)
-    else
-      order=(control rmw)
-    fi
+    for ci in "${!control_test_name_arr[@]}"; do
+      control_name="${control_test_name_arr[$ci]}"
+      control_id="${control_test_ids[$ci]}"
+      control_tests=$(make_list "$a_threads" "$control_id")
+      mapfile -t ctrl_cmd < <(build_cmd "$attacker_reps" "$control_tests" "$attacker_core_list" "$attacker_seed_core" "$attacker_stride" "$fixed_attacker_addr" "$attacker_backoff_max")
 
-    unset mean_map fair_map succ_map
-    declare -A mean_map fair_map succ_map
+      if (( RANDOM % 2 == 0 )); then order=(rmw control); else order=(control rmw); fi
 
-    idx=0
-    for mode in "${order[@]}"; do
-      ((idx+=1))
-      if [[ "$mode" == "rmw" ]]; then
-        victim_log="$output_dir/logs/rep${rep}_victim_with_attacker_rmw_t${a_threads}.log"
-        attacker_log="$output_dir/logs/rep${rep}_attacker_rmw_t${a_threads}.log"
-        attacker_name="$attacker_test"
-        cmd_name=rmw_cmd
-      else
-        victim_log="$output_dir/logs/rep${rep}_victim_with_attacker_control_t${a_threads}.log"
-        attacker_log="$output_dir/logs/rep${rep}_attacker_control_t${a_threads}.log"
-        attacker_name="$control_test"
-        cmd_name=ctrl_cmd
-      fi
+      unset mean_map
+      declare -A mean_map
 
-      if [[ "$warmup_reps" -gt 0 ]]; then
-        warm_log="$output_dir/logs/rep${rep}_warmup_${mode}_t${a_threads}.log"
-        mapfile -t warm_cmd < <(build_cmd "$warmup_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
-        run_logged "$warm_log" "${warm_cmd[@]}" >/dev/null
-      fi
+      idx=0
+      for mode in "${order[@]}"; do
+        ((idx+=1))
+        if [[ "$mode" == "rmw" ]]; then
+          victim_log="$output_dir/logs/rep${rep}_victim_with_attacker_rmw_t${a_threads}_vs_${control_name}.log"
+          attacker_log="$output_dir/logs/rep${rep}_attacker_rmw_t${a_threads}_vs_${control_name}.log"
+          attacker_name="$attacker_test"
+          cmd_name=rmw_cmd
+        else
+          victim_log="$output_dir/logs/rep${rep}_victim_with_attacker_control_${control_name}_t${a_threads}.log"
+          attacker_log="$output_dir/logs/rep${rep}_attacker_control_${control_name}_t${a_threads}.log"
+          attacker_name="$control_name"
+          cmd_name=ctrl_cmd
+        fi
 
-      echo "=== Phase: victim_plus_attacker_${mode} (replicate=$rep threads=$a_threads order=$idx/${#order[@]}) ==="
-      run_with_synchronized_attacker "$victim_log" "$attacker_log" victim_base_cmd "$cmd_name"
-      if [[ "$dry_run" -eq 0 ]]; then
-        IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$victim_log")"
-      else
-        mean="NA"; fair="NA"; succ="NA"
-      fi
-      mean_map["$mode"]="$mean"
-      fair_map["$mode"]="$fair"
-      succ_map["$mode"]="$succ"
-      printf 'rep%02d,victim_plus_attacker_%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$rep" "$mode" "$a_threads" "$mode" "$victim_test" "$attacker_name" "$idx" "$mean" "$fair" "$succ" "$victim_log" >> "$raw_csv"
-      sleep_ms "$inter_phase_sleep_ms"
-    done
+        if [[ "$warmup_reps" -gt 0 ]]; then
+          warm_log="$output_dir/logs/rep${rep}_warmup_${mode}_${control_name}_t${a_threads}.log"
+          mapfile -t warm_cmd < <(build_cmd "$warmup_reps" "$victim_tests" "$victim_core_list" "$seed_core" "$victim_stride" "$fixed_victim_addr" "$victim_backoff_max")
+          run_logged "$warm_log" "${warm_cmd[@]}" >/dev/null
+        fi
 
-    rmw_mean="${mean_map[rmw]:-NA}"
-    ctrl_mean="${mean_map[control]:-NA}"
-    if [[ "$rmw_mean" != "NA" && "$ctrl_mean" != "NA" && "$base_mean" != "NA" ]]; then
-      read -r delta delta_pct norm_delta < <(python - "$rmw_mean" "$ctrl_mean" "$base_mean" <<'PY'
+        echo "=== Phase: victim_plus_attacker_${mode} (replicate=$rep threads=$a_threads control=$control_name order=$idx/${#order[@]}) ==="
+        run_with_synchronized_attacker "$victim_log" "$attacker_log" victim_base_cmd "$cmd_name"
+        if [[ "$dry_run" -eq 0 ]]; then
+          IFS=',' read -r mean fair succ <<<"$(extract_run_stats "$victim_log")"
+        else
+          mean="NA"; fair="NA"; succ="NA"
+        fi
+        mean_map["$mode"]="$mean"
+        printf 'rep%02d,victim_plus_attacker_%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$rep" "$mode" "$a_threads" "$mode" "$victim_test" "$attacker_name" "$idx" "$mean" "$fair" "$succ" "$victim_log" >> "$raw_csv"
+        sleep_ms "$inter_phase_sleep_ms"
+      done
+
+      rmw_mean="${mean_map[rmw]:-NA}"
+      ctrl_mean="${mean_map[control]:-NA}"
+      if [[ "$rmw_mean" != "NA" && "$ctrl_mean" != "NA" && "$base_mean" != "NA" ]]; then
+        read -r delta delta_pct norm_delta < <(python - "$rmw_mean" "$ctrl_mean" "$base_mean" <<'PY'
 import sys
 rmw=float(sys.argv[1]); ctl=float(sys.argv[2]); base=float(sys.argv[3])
 d=rmw-ctl
@@ -486,8 +502,9 @@ nd=(d/base) if base else float('nan')
 print(f"{d:.6f} {pct:.6f} {nd:.6f}")
 PY
 )
-      printf 'rep%02d,%s,%s,%s,%s,%s,%s,%s\n' "$rep" "$a_threads" "$base_mean" "$rmw_mean" "$ctrl_mean" "$delta" "$delta_pct" "$norm_delta" >> "$pairs_csv"
-    fi
+        printf 'rep%02d,%s,%s,%s,%s,%s,%s,%s,%s\n' "$rep" "$a_threads" "$control_name" "$base_mean" "$rmw_mean" "$ctrl_mean" "$delta" "$delta_pct" "$norm_delta" >> "$pairs_csv"
+      fi
+    done
   done
 done
 
@@ -500,10 +517,10 @@ vals = defaultdict(lambda: {"delta": [], "norm_delta": [], "delta_pct": []})
 with open(pairs_csv, newline='') as f:
     r = csv.DictReader(f)
     for row in r:
-        t = int(row["attacker_threads"])
-        vals[t]["delta"].append(float(row["delta"]))
-        vals[t]["norm_delta"].append(float(row["norm_delta"]))
-        vals[t]["delta_pct"].append(float(row["delta_pct"]))
+        key = (int(row["attacker_threads"]), row["control_test"])
+        vals[key]["delta"].append(float(row["delta"]))
+        vals[key]["norm_delta"].append(float(row["norm_delta"]))
+        vals[key]["delta_pct"].append(float(row["delta_pct"]))
 
 def quantile(arr, q):
     arr = sorted(arr)
@@ -521,6 +538,7 @@ with open(out_csv, 'w', newline='') as f:
     w = csv.writer(f)
     w.writerow([
         "attacker_threads",
+        "control_test",
         "n",
         "median_delta",
         "q1_delta",
@@ -529,14 +547,16 @@ with open(out_csv, 'w', newline='') as f:
         "median_norm_delta",
         "sign_consistency_pos"
     ])
-    for t in sorted(vals):
-        d = vals[t]["delta"]
-        dp = vals[t]["delta_pct"]
-        nd = vals[t]["norm_delta"]
+    for key in sorted(vals):
+        t, ctl = key
+        d = vals[key]["delta"]
+        dp = vals[key]["delta_pct"]
+        nd = vals[key]["norm_delta"]
         n = len(d)
         pos = sum(1 for x in d if x > 0) / n if n else float('nan')
         w.writerow([
             t,
+            ctl,
             n,
             f"{quantile(d,0.5):.6f}",
             f"{quantile(d,0.25):.6f}",
@@ -549,7 +569,6 @@ PY
 
 cp "$summary_csv" "$legacy_summary_csv"
 
-# If preflight/early exit happened before any measured phase rows, keep a visible hint.
 if [[ "$dry_run" -eq 0 ]]; then
   raw_rows=$(wc -l < "$raw_csv")
   if [[ "$raw_rows" -le 1 ]]; then
@@ -563,4 +582,5 @@ echo "  $output_dir/run_meta.txt"
 echo "  $raw_csv"
 echo "  $pairs_csv"
 echo "  $summary_csv"
+echo "  $legacy_summary_csv"
 echo "  $output_dir/logs/"
