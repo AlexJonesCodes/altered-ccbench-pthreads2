@@ -357,6 +357,7 @@ done
 raw_csv="$output_dir/raw_results.csv"
 pairs_csv="$output_dir/replicate_pairs.csv"
 summary_csv="$output_dir/summary_normalized.csv"
+legacy_summary_csv="$output_dir/summary_normalised.csv"
 printf '%s\n' 'replicate,phase,attacker_threads,attacker_mode,victim_test,attacker_test,order_idx,mean_avg,jain_fairness,success_rate,log_path' > "$raw_csv"
 printf '%s\n' 'replicate,attacker_threads,baseline_mean,rmw_mean,control_mean,delta,delta_pct,norm_delta' > "$pairs_csv"
 
@@ -396,6 +397,7 @@ Fail stats auto-disabled: $fail_stats_auto_disabled
 Raw results CSV:          $raw_csv
 Pairs CSV:                $pairs_csv
 Summary CSV:              $summary_csv
+Summary CSV (legacy):     $legacy_summary_csv
 META
 
 for ((rep=1; rep<=replicates; rep++)); do
@@ -544,6 +546,16 @@ with open(out_csv, 'w', newline='') as f:
             f"{pos:.6f}",
         ])
 PY
+
+cp "$summary_csv" "$legacy_summary_csv"
+
+# If preflight/early exit happened before any measured phase rows, keep a visible hint.
+if [[ "$dry_run" -eq 0 ]]; then
+  raw_rows=$(wc -l < "$raw_csv")
+  if [[ "$raw_rows" -le 1 ]]; then
+    echo "WARNING: $raw_csv has no measured phase rows (only header). Check preflight logs under $output_dir/logs/." >&2
+  fi
+fi
 
 echo
 echo "Done. Artifacts:"
