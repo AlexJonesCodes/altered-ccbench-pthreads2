@@ -300,6 +300,11 @@ run_probe_logged() {
   return "$rc"
 }
 
+is_crash_exit_code() {
+  local rc="$1"
+  [[ "$rc" -eq 134 || "$rc" -eq 139 ]]
+}
+
 adaptive_victim_preflight() {
   if [[ "$dry_run" -eq 1 ]]; then
     return 0
@@ -328,8 +333,8 @@ adaptive_victim_preflight() {
       return 0
     fi
 
-    if [[ "$rc" -eq 139 && "$fail_stats_effective" -eq 1 ]]; then
-      echo "WARNING: preflight crashed with --fail-stats (SIGSEGV). Auto-disabling --fail-stats for this run." >&2
+    if is_crash_exit_code "$rc" && [[ "$fail_stats_effective" -eq 1 ]]; then
+      echo "WARNING: preflight crashed with --fail-stats (exit $rc). Auto-disabling --fail-stats for this run." >&2
       fail_stats_effective=0
       fail_stats_auto_disabled=1
       common_extra=()
@@ -337,16 +342,16 @@ adaptive_victim_preflight() {
       continue
     fi
 
-    if [[ "$rc" -eq 139 && "$fixed_victim_addr" == "static" ]]; then
-      echo "WARNING: preflight still segfaults with victim static line. Falling back to --fixed-victim-addr $victim_fallback_addr." >&2
+    if is_crash_exit_code "$rc" && [[ "$fixed_victim_addr" == "static" ]]; then
+      echo "WARNING: preflight still crashes with victim static line. Falling back to --fixed-victim-addr $victim_fallback_addr." >&2
       fixed_victim_addr="$victim_fallback_addr"
       victim_addr_auto_fallback=1
       ((attempt++))
       continue
     fi
 
-    if [[ "$rc" -eq 139 && "$fixed_victim_addr" != "none" ]]; then
-      echo "WARNING: preflight still segfaults with fixed victim address ($fixed_victim_addr). Retrying with victim fixed-address mode disabled." >&2
+    if is_crash_exit_code "$rc" && [[ "$fixed_victim_addr" != "none" ]]; then
+      echo "WARNING: preflight still crashes with fixed victim address ($fixed_victim_addr). Retrying with victim fixed-address mode disabled." >&2
       fixed_victim_addr="none"
       victim_fixed_disabled=1
       ((attempt++))
@@ -427,8 +432,8 @@ run_logged() {
   "${cmd[@]}" | tee "$log_file"
   local rc=$?
   set -e
-  if [[ "$rc" -eq 139 ]]; then
-    echo "ERROR: ccbench crashed with SIGSEGV (exit 139)." >&2
+  if is_crash_exit_code "$rc"; then
+    echo "ERROR: ccbench crashed (exit $rc)." >&2
     echo "Hint: if using static victim line, set --fixed-victim-addr to a 0xHEX mapping (or tune --victim-fallback-addr)." >&2
   fi
   return "$rc"
