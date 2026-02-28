@@ -386,7 +386,7 @@ extract_run_stats() {
     /success rate/ {
       if (match($0, /success rate[^0-9]*([0-9.]+)/, m)) succ=m[1]
     }
-    /Winner==argmin\(B4 -> success\)/ {
+    /Winner==argmin\(B4[[:space:]]*->[[:space:]]*success\)/ {
       if (match($0, /\(([0-9.]+)%\)/, m)) succ=m[1]
     }
     /First-success winners per thread/ { in_winners=1; next }
