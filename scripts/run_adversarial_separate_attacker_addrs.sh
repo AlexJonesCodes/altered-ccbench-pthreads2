@@ -98,6 +98,20 @@ dec_to_hex() { printf '0x%x' "$1"; }
 
 is_crash_exit_code() { local rc="$1"; [[ "$rc" -eq 134 || "$rc" -eq 139 ]]; }
 
+run_cmd_quiet() {
+  local log_file="$1"; shift
+  python - "$log_file" "$@" <<'PYQ'
+import subprocess, sys
+log = sys.argv[1]
+cmd = sys.argv[2:]
+with open(log, 'w', encoding='utf-8', errors='replace') as f:
+    rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
+if rc < 0:
+    rc = 128 + (-rc)
+sys.exit(rc)
+PYQ
+}
+
 build_victim_cmd() {
   local reps="$1"
   local -a cmd=("$ccbench" -r "$reps" -t "$victim_tests" -x "$victim_core_list" -b "$seed_core" -s "$victim_stride")
@@ -110,7 +124,7 @@ run_probe_logged() {
   local probe_log="$1"; shift
   local -a cmd=("$@")
   set +e
-  "${cmd[@]}" >"$probe_log" 2>&1
+  run_cmd_quiet "$probe_log" "${cmd[@]}"
   local rc=$?
   set -e
   return "$rc"
@@ -247,7 +261,7 @@ run_cmd_logged() {
     : > "$log_file"
     return 0
   fi
-  "${cmd[@]}" > "$log_file" 2>&1
+  run_cmd_quiet "$log_file" "${cmd[@]}"
 }
 
 run_baseline() {
@@ -276,10 +290,10 @@ run_with_shared_attackers() {
     extract_stats "$v_log"; return
   fi
 
-  ( read -r _ < "$fifo"; "${attacker_cmd[@]}" > "$a_log" 2>&1 ) &
+  ( read -r _ < "$fifo"; run_cmd_quiet "$a_log" "${attacker_cmd[@]}" ) &
   local attacker_pid=$!
   sleep 0.1
-  ( read -r _ < "$fifo"; "${victim_cmd[@]}" > "$v_log" 2>&1 ) &
+  ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
   printf 'go\ngo\n' > "$fifo"
@@ -324,12 +338,12 @@ run_with_separate_attackers() {
     core="${attacker_core_arr[$i]}"
     addr=$(dec_to_hex "$((base_dec + i * step_dec))")
     a_log="$output_dir/logs/attacker_separate_core${core}.log"
-    ( read -r _ < "$fifo"; "$ccbench" -r "$attacker_reps" -t "[$attacker_test_id]" -x "[$core]" -b "$core" -s "$attacker_stride" -Z "$addr" > "$a_log" 2>&1 ) &
+    ( read -r _ < "$fifo"; run_cmd_quiet "$a_log" "$ccbench" -r "$attacker_reps" -t "[$attacker_test_id]" -x "[$core]" -b "$core" -s "$attacker_stride" -Z "$addr" ) &
     pids+=("$!")
   done
 
   sleep 0.1
-  ( read -r _ < "$fifo"; "${victim_cmd[@]}" > "$v_log" 2>&1 ) &
+  ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
 
