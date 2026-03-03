@@ -28,6 +28,9 @@ Options:
   --separate-attacker-base HEX    Base address for separate attackers (default: 0x700000300000)
   --separate-attacker-step HEX    Address step per attacker proc (default: 0x1000)
   --output-dir DIR                Output dir (default: results/adversarial_separate_attacker_addrs)
+  --victim-fallback-addr HEX      Victim fallback address if static segfaults
+                                  (default: 0x700000200000)
+  --fail-stats                    Enable fail stats; auto-disabled if probe segfaults
   --ccbench PATH                  Path to ccbench (default: ./ccbench)
   --dry-run                       Print planned commands only
   -h, --help                      Show help
@@ -49,6 +52,12 @@ shared_attacker_addr="0x700000100000"
 separate_attacker_base="0x700000300000"
 separate_attacker_step="0x1000"
 output_dir="results/adversarial_separate_attacker_addrs"
+victim_fallback_addr="0x700000200000"
+fail_stats=0
+fail_stats_effective=0
+fail_stats_auto_disabled=0
+victim_addr_auto_fallback=0
+victim_fixed_disabled=0
 ccbench="./ccbench"
 dry_run=0
 
@@ -69,6 +78,8 @@ while [[ $# -gt 0 ]]; do
     --separate-attacker-base) separate_attacker_base="$2"; shift 2 ;;
     --separate-attacker-step) separate_attacker_step="$2"; shift 2 ;;
     --output-dir) output_dir="$2"; shift 2 ;;
+    --victim-fallback-addr) victim_fallback_addr="$2"; shift 2 ;;
+    --fail-stats) fail_stats=1; shift ;;
     --ccbench) ccbench="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -84,6 +95,67 @@ as_array() { local csv="$1"; local -n ref="$2"; IFS=',' read -r -a ref <<<"$csv"
 make_list() { local n="$1" v="$2" out=""; for ((i=0;i<n;i++)); do [[ -n "$out" ]] && out+=",$v" || out="$v"; done; printf '[%s]' "$out"; }
 hex_to_dec() { printf '%d' "$(( $1 ))"; }
 dec_to_hex() { printf '0x%x' "$1"; }
+
+is_crash_exit_code() { local rc="$1"; [[ "$rc" -eq 134 || "$rc" -eq 139 ]]; }
+
+build_victim_cmd() {
+  local reps="$1"
+  local -a cmd=("$ccbench" -r "$reps" -t "$victim_tests" -x "$victim_core_list" -b "$seed_core" -s "$victim_stride")
+  [[ "$fixed_victim_addr" != "none" ]] && cmd+=(-Z "$fixed_victim_addr")
+  [[ "$fail_stats_effective" -eq 1 ]] && cmd+=(-f)
+  printf '%s\n' "${cmd[@]}"
+}
+
+run_probe_logged() {
+  local probe_log="$1"; shift
+  local -a cmd=("$@")
+  set +e
+  "${cmd[@]}" >"$probe_log" 2>&1
+  local rc=$?
+  set -e
+  return "$rc"
+}
+
+adaptive_victim_preflight() {
+  [[ "$dry_run" -eq 1 ]] && return 0
+  local preflight_log="$output_dir/logs/preflight_victim_probe.log"
+  local attempt=1
+  while true; do
+    local -a probe_cmd
+    mapfile -t probe_cmd < <(build_victim_cmd "1")
+    local safe_addr="${fixed_victim_addr//[^a-zA-Z0-9]/_}"
+    local attempt_log="$output_dir/logs/preflight_victim_probe_attempt${attempt}_addr_${safe_addr}_failstats_${fail_stats_effective}.log"
+    local rc
+    if run_probe_logged "$attempt_log" "${probe_cmd[@]}"; then rc=0; else rc=$?; fi
+    cp "$attempt_log" "$preflight_log"
+    [[ "$rc" -eq 0 ]] && return 0
+
+    if is_crash_exit_code "$rc" && [[ "$fail_stats_effective" -eq 1 ]]; then
+      echo "WARNING: victim preflight crashed with --fail-stats; auto-disabling --fail-stats." >&2
+      fail_stats_effective=0
+      fail_stats_auto_disabled=1
+      ((attempt++))
+      continue
+    fi
+    if is_crash_exit_code "$rc" && [[ "$fixed_victim_addr" == "static" ]]; then
+      echo "WARNING: victim preflight crashed with static victim address. Falling back to $victim_fallback_addr" >&2
+      fixed_victim_addr="$victim_fallback_addr"
+      victim_addr_auto_fallback=1
+      ((attempt++))
+      continue
+    fi
+    if is_crash_exit_code "$rc" && [[ "$fixed_victim_addr" != "none" ]]; then
+      echo "WARNING: victim preflight still crashes with fixed victim address. Retrying with --fixed-victim-addr none" >&2
+      fixed_victim_addr="none"
+      victim_fixed_disabled=1
+      ((attempt++))
+      continue
+    fi
+
+    echo "ERROR: victim preflight failed with rc=$rc. See $preflight_log" >&2
+    return "$rc"
+  done
+}
 
 resolve_test_id() {
   local spec="$1"
@@ -152,6 +224,19 @@ attacker_core_list="[$attacker_cores]"
 
 mkdir -p "$output_dir/logs"
 summary_csv="$output_dir/summary.csv"
+fail_stats_effective="$fail_stats"
+adaptive_victim_preflight
+
+meta_file="$output_dir/run_meta.txt"
+cat > "$meta_file" <<META
+fixed_victim_addr_effective=$fixed_victim_addr
+fail_stats_requested=$fail_stats
+fail_stats_effective=$fail_stats_effective
+fail_stats_auto_disabled=$fail_stats_auto_disabled
+victim_addr_auto_fallback=$victim_addr_auto_fallback
+victim_fixed_disabled=$victim_fixed_disabled
+META
+
 echo "phase,mean_avg,jain_fairness,success_rate,slowdown_vs_baseline,notes" > "$summary_csv"
 
 run_cmd_logged() {
@@ -167,8 +252,8 @@ run_cmd_logged() {
 
 run_baseline() {
   local log="$output_dir/logs/victim_baseline.log"
-  local -a cmd=("$ccbench" -r "$victim_reps" -t "$victim_tests" -x "$victim_core_list" -b "$seed_core" -s "$victim_stride")
-  [[ "$fixed_victim_addr" != "none" ]] && cmd+=(-Z "$fixed_victim_addr")
+  local -a cmd
+  mapfile -t cmd < <(build_victim_cmd "$victim_reps")
   run_cmd_logged "$log" "${cmd[@]}"
   extract_stats "$log"
 }
@@ -181,8 +266,8 @@ run_with_shared_attackers() {
   rm -f "$fifo"; mkfifo "$fifo"
 
   local -a attacker_cmd=("$ccbench" -r "$attacker_reps" -t "$attacker_tests_shared" -x "$attacker_core_list" -b "$attacker_seed_core" -s "$attacker_stride" -Z "$shared_attacker_addr")
-  local -a victim_cmd=("$ccbench" -r "$victim_reps" -t "$victim_tests" -x "$victim_core_list" -b "$seed_core" -s "$victim_stride")
-  [[ "$fixed_victim_addr" != "none" ]] && victim_cmd+=(-Z "$fixed_victim_addr")
+  local -a victim_cmd
+  mapfile -t victim_cmd < <(build_victim_cmd "$victim_reps")
 
   if [[ "$dry_run" -eq 1 ]]; then
     printf '[dry-run] shared attacker: %q ' "${attacker_cmd[@]}" >&2; echo >&2
@@ -199,10 +284,16 @@ run_with_shared_attackers() {
   sleep 0.1
   printf 'go\ngo\n' > "$fifo"
 
-  wait "$victim_pid"
+  local victim_rc=0
+  if ! wait "$victim_pid"; then victim_rc=$?; fi
   kill "$attacker_pid" 2>/dev/null || true
   wait "$attacker_pid" 2>/dev/null || true
   rm -f "$fifo"
+  if [[ "$victim_rc" -ne 0 ]]; then
+    echo "WARNING: victim_plus_${mode} failed with rc=$victim_rc; see $v_log" >&2
+    printf "NA,NA,NA"
+    return 0
+  fi
   extract_stats "$v_log"
 }
 
@@ -216,8 +307,8 @@ run_with_separate_attackers() {
   base_dec=$(hex_to_dec "$separate_attacker_base")
   step_dec=$(hex_to_dec "$separate_attacker_step")
 
-  local -a victim_cmd=("$ccbench" -r "$victim_reps" -t "$victim_tests" -x "$victim_core_list" -b "$seed_core" -s "$victim_stride")
-  [[ "$fixed_victim_addr" != "none" ]] && victim_cmd+=(-Z "$fixed_victim_addr")
+  local -a victim_cmd
+  mapfile -t victim_cmd < <(build_victim_cmd "$victim_reps")
 
   if [[ "$dry_run" -eq 1 ]]; then
     for i in "${!attacker_core_arr[@]}"; do
@@ -245,10 +336,16 @@ run_with_separate_attackers() {
   local signals=$((attacker_count + 1))
   for ((i=0; i<signals; i++)); do printf 'go\n'; done > "$fifo"
 
-  wait "$victim_pid"
+  local victim_rc=0
+  if ! wait "$victim_pid"; then victim_rc=$?; fi
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
   for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
   rm -f "$fifo"
+  if [[ "$victim_rc" -ne 0 ]]; then
+    echo "WARNING: victim_plus_separate failed with rc=$victim_rc; see $v_log" >&2
+    printf "NA,NA,NA"
+    return 0
+  fi
   extract_stats "$v_log"
 }
 
@@ -270,11 +367,16 @@ shared_slow=$(calc_slowdown "$base_mean" "$shared_mean")
 sep_slow=$(calc_slowdown "$base_mean" "$sep_mean")
 
 echo "victim_baseline,$base_mean,$base_fair,$base_succ,1.0000,no_attackers" >> "$summary_csv"
-echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_slow,attackers_share_one_line" >> "$summary_csv"
-echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_slow,each_attacker_has_distinct_line" >> "$summary_csv"
+shared_note="attackers_share_one_line"
+sep_note="each_attacker_has_distinct_line"
+[[ "$shared_mean" == "NA" ]] && shared_note+="_victim_failed"
+[[ "$sep_mean" == "NA" ]] && sep_note+="_victim_failed"
+echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_slow,$shared_note" >> "$summary_csv"
+echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_slow,$sep_note" >> "$summary_csv"
 
 cat <<REPORT
 Wrote: $summary_csv
+Run meta: $meta_file
 
 Interpretation guide:
   - Compare slowdown_vs_baseline for shared vs separate attacker layouts.

@@ -60,10 +60,40 @@ interference is broader than a single cache-line hotspot.
 Example:
 
 ```bash
-scripts/run_adversarial_separate_attacker_addrs.sh   --victim-cores "0,2,4,6"   --attacker-cores "8,10,12,14"   --victim-test CAS   --attacker-test FAI
+scripts/run_adversarial_separate_attacker_addrs.sh \
+  --victim-cores "0,2,4,6" \
+  --attacker-cores "8,10,12,14" \
+  --victim-test CAS \
+  --attacker-test FAI
 ```
 
+A ready-to-run example wrapper is also provided at
+`scripts/run_adversarial_separate_attacker_addrs_example.sh`.
+
 Results are written to `results/adversarial_separate_attacker_addrs/summary.csv`.
+Run metadata (including auto-fallback decisions) is written to
+`results/adversarial_separate_attacker_addrs/run_meta.txt`.
+
+If you have seen victim segfaults with static addresses, try:
+
+```bash
+scripts/run_adversarial_separate_attacker_addrs.sh \
+  --victim-cores "0,2,4,6" \
+  --attacker-cores "8,10,12,14" \
+  --victim-test CAS \
+  --attacker-test FAI \
+  --victim-fallback-addr 0x700000200000 \
+  --fail-stats
+```
+
+The script now probes the victim setup and automatically falls back from
+`--fixed-victim-addr static` → `--victim-fallback-addr` → `none` on crash.
+Interpretation:
+
+* `slowdown_vs_baseline > 1.0` means the victim got slower than baseline.
+* Lower `jain_fairness` means victim thread progress became less fair.
+* If `victim_plus_separate` remains slow/unfair, interference is broader than
+  a single shared-line hotspot.
 
 ## Adversarial atomic-vs-atomic experiment helper
 
