@@ -35,7 +35,7 @@ How to read summary.csv:
   - victim_plus_shared: attackers active, all on one line.
   - victim_plus_separate: attackers active, each on distinct lines.
 
-  slowdown_vs_baseline > 1.0 means the victim got slower than baseline.
+  latency_ratio_vs_baseline > 1.0 means higher latency (slower), while < 1.0 means lower latency (faster).
   Lower jain_fairness means less fair distribution across victim threads.
 
 If victim_plus_separate is still bad, interference is broader than

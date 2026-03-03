@@ -74,6 +74,30 @@ scripts/run_adversarial_separate_attacker_addrs.sh \
 A ready-to-run example wrapper is also provided at
 `scripts/run_adversarial_separate_attacker_addrs_example.sh`.
 
+
+For deeper studies (seed rotation + adversary intensity trend), use:
+`scripts/run_adversarial_separate_attacker_addrs_sweep.sh`.
+
+Example:
+
+```bash
+scripts/run_adversarial_separate_attacker_addrs_sweep.sh \
+  --victim-cores "0,2,4,6" \
+  --attacker-cores "8,10,12,14,16,18,20,22" \
+  --attacker-core-sweep "1,2,4,6,8" \
+  --seed-cores "0,2,4,6" \
+  --replicates 3 \
+  --victim-test CAS \
+  --attacker-test FAI \
+  --output-dir results/adversarial_separate_attacker_addrs_sweep
+```
+
+This produces:
+
+* `raw_phase_results.csv` (one row per run/phase),
+* `summary_by_attacker_threads.csv` (averages over seeds/replicates), and
+* `trend_separate_minus_shared.csv` (difference trend as adversary cores increase).
+
 Results are written to `results/adversarial_separate_attacker_addrs/summary.csv`.
 Run metadata (including auto-fallback decisions) is written to
 `results/adversarial_separate_attacker_addrs/run_meta.txt`.
@@ -92,10 +116,14 @@ scripts/run_adversarial_separate_attacker_addrs.sh \
 
 The script now probes the victim setup and automatically falls back from
 `--fixed-victim-addr static` → `--victim-fallback-addr` → `none` on crash.
+The script prints `INFO: phase start ...` / `INFO: phase done ...` messages, so
+a long run after fallback warnings is expected and not treated as a hang.
 Interpretation:
 
-* `slowdown_vs_baseline > 1.0` means the victim got slower than baseline.
+* `latency_ratio_vs_baseline > 1.0` means higher latency (slower), while `< 1.0` means lower latency (faster).
 * Lower `jain_fairness` means victim thread progress became less fair.
+* `latency_delta_pct_vs_baseline` is the percent change in mean latency vs baseline (positive = slower, negative = faster).
+* `effect_vs_baseline` is a categorical summary (`slower`, `faster`, `neutral`).
 * If `victim_plus_separate` remains slow/unfair, interference is broader than
   a single shared-line hotspot.
 

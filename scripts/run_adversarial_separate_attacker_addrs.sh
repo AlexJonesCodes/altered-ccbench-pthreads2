@@ -12,6 +12,9 @@ Adversarial fairness/slowdown test where attacker traffic is compared across:
 
 This directly answers: "do attackers touching separate addresses still induce unfairness/slowdown?"
 
+The run can take a long time with large --attacker-reps; phase-start messages are printed
+so long-running phases do not look like a hang.
+
 Options:
   --victim-cores LIST             Comma-separated victim cores (required)
   --attacker-cores LIST           Comma-separated attacker cores (required)
@@ -97,6 +100,7 @@ hex_to_dec() { printf '%d' "$(( $1 ))"; }
 dec_to_hex() { printf '0x%x' "$1"; }
 
 is_crash_exit_code() { local rc="$1"; [[ "$rc" -eq 134 || "$rc" -eq 139 ]]; }
+log_info() { echo "INFO: $*" >&2; }
 
 run_cmd_quiet() {
   local log_file="$1"; shift
@@ -142,7 +146,10 @@ adaptive_victim_preflight() {
     local rc
     if run_probe_logged "$attempt_log" "${probe_cmd[@]}"; then rc=0; else rc=$?; fi
     cp "$attempt_log" "$preflight_log"
-    [[ "$rc" -eq 0 ]] && return 0
+    if [[ "$rc" -eq 0 ]]; then
+      log_info "victim preflight succeeded (attempt=$attempt, fixed-victim-addr=$fixed_victim_addr, fail-stats=$fail_stats_effective)"
+      return 0
+    fi
 
     if is_crash_exit_code "$rc" && [[ "$fail_stats_effective" -eq 1 ]]; then
       echo "WARNING: victim preflight crashed with --fail-stats; auto-disabling --fail-stats." >&2
@@ -261,7 +268,9 @@ victim_fixed_disabled=$victim_fixed_disabled
 attacker_launch_mode=per_core_processes_for_shared_and_separate
 META
 
-echo "phase,mean_avg,jain_fairness,success_rate,slowdown_vs_baseline,notes" > "$summary_csv"
+echo "phase,mean_avg,jain_fairness,success_rate,latency_ratio_vs_baseline,latency_delta_pct_vs_baseline,effect_vs_baseline,notes" > "$summary_csv"
+log_info "effective victim config: fixed-victim-addr=$fixed_victim_addr, fail-stats=$fail_stats_effective"
+log_info "starting experiment (victim_reps=$victim_reps, attacker_reps=$attacker_reps, victim_threads=$victim_count, attacker_threads=$attacker_count)"
 
 run_cmd_logged() {
   local log_file="$1"; shift
@@ -275,15 +284,18 @@ run_cmd_logged() {
 }
 
 run_baseline() {
+  log_info "phase start: victim_baseline"
   local log="$output_dir/logs/victim_baseline.log"
   local -a cmd
   mapfile -t cmd < <(build_victim_cmd "$victim_reps")
   run_cmd_logged "$log" "${cmd[@]}"
+  log_info "phase done: victim_baseline (log=$log)"
   extract_stats "$log"
 }
 
 run_with_shared_attackers() {
   local mode="$1"
+  log_info "phase start: victim_plus_${mode}"
   local v_log="$output_dir/logs/victim_plus_${mode}.log"
   local fifo="$output_dir/.start_fifo_${mode}"
   rm -f "$fifo"; mkfifo "$fifo"
@@ -325,10 +337,12 @@ run_with_shared_attackers() {
     printf "NA,NA,NA"
     return 0
   fi
+  log_info "phase done: victim_plus_${mode} (log=$v_log)"
   extract_stats "$v_log"
 }
 
 run_with_separate_attackers() {
+  log_info "phase start: victim_plus_separate"
   local v_log="$output_dir/logs/victim_plus_separate.log"
   local fifo="$output_dir/.start_fifo_separate"
   rm -f "$fifo"; mkfifo "$fifo"
@@ -377,6 +391,7 @@ run_with_separate_attackers() {
     printf "NA,NA,NA"
     return 0
   fi
+  log_info "phase done: victim_plus_separate (log=$v_log)"
   extract_stats "$v_log"
 }
 
@@ -388,29 +403,49 @@ IFS=',' read -r base_mean base_fair base_succ <<<"$baseline_stats"
 IFS=',' read -r shared_mean shared_fair shared_succ <<<"$shared_stats"
 IFS=',' read -r sep_mean sep_fair sep_succ <<<"$separate_stats"
 
-calc_slowdown() {
+calc_latency_ratio() {
   local base="$1" now="$2"
   if [[ "$base" == "NA" || "$now" == "NA" ]]; then printf 'NA'; return; fi
   awk -v b="$base" -v n="$now" 'BEGIN { if (b==0) {print "NA"} else {printf "%.4f", n/b} }'
 }
 
-shared_slow=$(calc_slowdown "$base_mean" "$shared_mean")
-sep_slow=$(calc_slowdown "$base_mean" "$sep_mean")
+calc_latency_delta_pct() {
+  local base="$1" now="$2"
+  if [[ "$base" == "NA" || "$now" == "NA" ]]; then printf 'NA'; return; fi
+  awk -v b="$base" -v n="$now" 'BEGIN { if (b==0) {print "NA"} else {printf "%.2f", ((n-b)/b)*100.0} }'
+}
 
-echo "victim_baseline,$base_mean,$base_fair,$base_succ,1.0000,no_attackers" >> "$summary_csv"
+effect_label() {
+  local ratio="$1"
+  if [[ "$ratio" == "NA" ]]; then printf 'unknown'; return; fi
+  awk -v r="$ratio" 'BEGIN {
+    if (r > 1.0001) print "slower";
+    else if (r < 0.9999) print "faster";
+    else print "neutral";
+  }'
+}
+
+shared_ratio=$(calc_latency_ratio "$base_mean" "$shared_mean")
+sep_ratio=$(calc_latency_ratio "$base_mean" "$sep_mean")
+shared_delta_pct=$(calc_latency_delta_pct "$base_mean" "$shared_mean")
+sep_delta_pct=$(calc_latency_delta_pct "$base_mean" "$sep_mean")
+shared_effect=$(effect_label "$shared_ratio")
+sep_effect=$(effect_label "$sep_ratio")
+
+echo "victim_baseline,$base_mean,$base_fair,$base_succ,1.0000,0.00,baseline,no_attackers" >> "$summary_csv"
 shared_note="attackers_share_one_line"
 sep_note="each_attacker_has_distinct_line"
 [[ "$shared_mean" == "NA" ]] && shared_note+="_victim_failed"
 [[ "$sep_mean" == "NA" ]] && sep_note+="_victim_failed"
-echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_slow,$shared_note" >> "$summary_csv"
-echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_slow,$sep_note" >> "$summary_csv"
+echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_ratio,$shared_delta_pct,$shared_effect,$shared_note" >> "$summary_csv"
+echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_ratio,$sep_delta_pct,$sep_effect,$sep_note" >> "$summary_csv"
 
 cat <<REPORT
 Wrote: $summary_csv
 Run meta: $meta_file
 
 Interpretation guide:
-  - Compare slowdown_vs_baseline for shared vs separate attacker layouts.
+  - Compare latency_ratio_vs_baseline ( >1 slower, <1 faster ) for shared vs separate layouts.
   - If victim_plus_separate still slows down or lowers fairness, interference is not only same-line contention.
   - If separate is much better than shared, unfairness is likely coherence-hotspot driven.
 REPORT
