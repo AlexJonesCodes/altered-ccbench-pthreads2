@@ -40,6 +40,65 @@ outputs per-run logs plus a summary CSV of average wins per backoff level.
 This uses the new `--backoff-array` option (e.g., `-A "[1,2,4,8]"`) to supply
 per-thread backoff caps. The array length must match the total thread count.
 
+
+## Adversary test: attackers on separate addresses
+
+To test whether unfairness/slowdown still appears when attackers do **not**
+share a cache line, use `scripts/run_adversarial_separate_attacker_addrs.sh`.
+
+The script runs three phases with the same victim setup:
+
+1. `victim_baseline` (no attackers),
+2. `victim_plus_shared` (each attacker core runs in its own process, all
+   processes hammer the same fixed line),
+3. `victim_plus_separate` (each attacker core runs in its own process on a
+   distinct fixed address).
+
+This isolates same-line coherence pressure from broader interference effects.
+
+This keeps process count constant across shared/separate attacker phases,
+so differences are less likely to be caused by process-model artifacts.
+If the separate-address phase still slows the victim or hurts fairness,
+interference is broader than a single cache-line hotspot.
+
+Example:
+
+```bash
+scripts/run_adversarial_separate_attacker_addrs.sh \
+  --victim-cores "0,2,4,6" \
+  --attacker-cores "8,10,12,14" \
+  --victim-test CAS \
+  --attacker-test FAI
+```
+
+A ready-to-run example wrapper is also provided at
+`scripts/run_adversarial_separate_attacker_addrs_example.sh`.
+
+Results are written to `results/adversarial_separate_attacker_addrs/summary.csv`.
+Run metadata (including auto-fallback decisions) is written to
+`results/adversarial_separate_attacker_addrs/run_meta.txt`.
+
+If you have seen victim segfaults with static addresses, try:
+
+```bash
+scripts/run_adversarial_separate_attacker_addrs.sh \
+  --victim-cores "0,2,4,6" \
+  --attacker-cores "8,10,12,14" \
+  --victim-test CAS \
+  --attacker-test FAI \
+  --victim-fallback-addr 0x700000200000 \
+  --fail-stats
+```
+
+The script now probes the victim setup and automatically falls back from
+`--fixed-victim-addr static` → `--victim-fallback-addr` → `none` on crash.
+Interpretation:
+
+* `slowdown_vs_baseline > 1.0` means the victim got slower than baseline.
+* Lower `jain_fairness` means victim thread progress became less fair.
+* If `victim_plus_separate` remains slow/unfair, interference is broader than
+  a single shared-line hotspot.
+
 ## Adversarial atomic-vs-atomic experiment helper
 
 Use `scripts/run_adversarial_lock_vs_fai.sh` to model an adversarial setup with:
