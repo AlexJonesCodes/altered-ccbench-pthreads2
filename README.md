@@ -49,11 +49,15 @@ share a cache line, use `scripts/run_adversarial_separate_attacker_addrs.sh`.
 The script runs three phases with the same victim setup:
 
 1. `victim_baseline` (no attackers),
-2. `victim_plus_shared` (all attacker threads hammer one line),
+2. `victim_plus_shared` (each attacker core runs in its own process, all
+   processes hammer the same fixed line),
 3. `victim_plus_separate` (each attacker core runs in its own process on a
    distinct fixed address).
 
 This isolates same-line coherence pressure from broader interference effects.
+
+This keeps process count constant across shared/separate attacker phases,
+so differences are less likely to be caused by process-model artifacts.
 If the separate-address phase still slows the victim or hurts fairness,
 interference is broader than a single cache-line hotspot.
 

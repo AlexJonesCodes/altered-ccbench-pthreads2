@@ -7,7 +7,7 @@ Usage: scripts/run_adversarial_separate_attacker_addrs.sh [options]
 
 Adversarial fairness/slowdown test where attacker traffic is compared across:
   1) victim_baseline          : victim alone
-  2) victim_plus_shared       : one attacker process, all attacker threads share one cache line
+  2) victim_plus_shared       : one attacker process per attacker core, all sharing one cache line
   3) victim_plus_separate     : one attacker process per attacker core, each using a different cache line
 
 This directly answers: "do attackers touching separate addresses still induce unfairness/slowdown?"
@@ -20,7 +20,7 @@ Options:
   --victim-reps N                 Victim repetitions (default: 20000)
   --attacker-reps N               Attacker repetitions (default: 200000000)
   --seed-core N                   Victim seed core (default: first victim core)
-  --attacker-seed-core N          Shared-attacker seed core (default: first attacker core)
+  --attacker-seed-core N          (compat option; ignored, per-core seed is used)
   --victim-stride N               Victim stride (default: 1)
   --attacker-stride N             Attacker stride (default: 1)
   --fixed-victim-addr SPEC        static|0xHEX|none (default: static)
@@ -258,6 +258,7 @@ fail_stats_effective=$fail_stats_effective
 fail_stats_auto_disabled=$fail_stats_auto_disabled
 victim_addr_auto_fallback=$victim_addr_auto_fallback
 victim_fixed_disabled=$victim_fixed_disabled
+attacker_launch_mode=per_core_processes_for_shared_and_separate
 META
 
 echo "phase,mean_avg,jain_fairness,success_rate,slowdown_vs_baseline,notes" > "$summary_csv"
@@ -284,33 +285,40 @@ run_baseline() {
 run_with_shared_attackers() {
   local mode="$1"
   local v_log="$output_dir/logs/victim_plus_${mode}.log"
-  local a_log="$output_dir/logs/attacker_${mode}.log"
   local fifo="$output_dir/.start_fifo_${mode}"
   rm -f "$fifo"; mkfifo "$fifo"
 
-  local -a attacker_cmd=("$ccbench" -r "$attacker_reps" -t "$attacker_tests_shared" -x "$attacker_core_list" -b "$attacker_seed_core" -s "$attacker_stride" -Z "$shared_attacker_addr")
+  local -a pids=()
   local -a victim_cmd
   mapfile -t victim_cmd < <(build_victim_cmd "$victim_reps")
 
   if [[ "$dry_run" -eq 1 ]]; then
-    printf '[dry-run] shared attacker: %q ' "${attacker_cmd[@]}" >&2; echo >&2
+    for core in "${attacker_core_arr[@]}"; do
+      printf '[dry-run] shared attacker core=%s addr=%s\n' "$core" "$shared_attacker_addr" >&2
+    done
     printf '[dry-run] shared victim:   %q ' "${victim_cmd[@]}" >&2; echo >&2
-    : > "$a_log"; : > "$v_log"; rm -f "$fifo"
+    : > "$v_log"; rm -f "$fifo"
     extract_stats "$v_log"; return
   fi
 
-  ( read -r _ < "$fifo"; run_cmd_quiet "$a_log" "${attacker_cmd[@]}" ) &
-  local attacker_pid=$!
+  for core in "${attacker_core_arr[@]}"; do
+    local a_log="$output_dir/logs/attacker_${mode}_core${core}.log"
+    ( read -r _ < "$fifo"; run_cmd_quiet "$a_log" "$ccbench" -r "$attacker_reps" -t "[$attacker_test_id]" -x "[$core]" -b "$core" -s "$attacker_stride" -Z "$shared_attacker_addr" ) &
+    pids+=("$!")
+  done
+
   sleep 0.1
   ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
-  printf 'go\ngo\n' > "$fifo"
+
+  local signals=$((attacker_count + 1))
+  for ((i=0; i<signals; i++)); do printf 'go\n'; done > "$fifo"
 
   local victim_rc=0
   if ! wait "$victim_pid"; then victim_rc=$?; fi
-  kill "$attacker_pid" 2>/dev/null || true
-  wait "$attacker_pid" 2>/dev/null || true
+  for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+  for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
   rm -f "$fifo"
   if [[ "$victim_rc" -ne 0 ]]; then
     echo "WARNING: victim_plus_${mode} failed with rc=$victim_rc; see $v_log" >&2
