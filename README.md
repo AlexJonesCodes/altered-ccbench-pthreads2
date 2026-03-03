@@ -40,6 +40,31 @@ outputs per-run logs plus a summary CSV of average wins per backoff level.
 This uses the new `--backoff-array` option (e.g., `-A "[1,2,4,8]"`) to supply
 per-thread backoff caps. The array length must match the total thread count.
 
+
+## Adversary test: attackers on separate addresses
+
+To test whether unfairness/slowdown still appears when attackers do **not**
+share a cache line, use `scripts/run_adversarial_separate_attacker_addrs.sh`.
+
+The script runs three phases with the same victim setup:
+
+1. `victim_baseline` (no attackers),
+2. `victim_plus_shared` (all attacker threads hammer one line),
+3. `victim_plus_separate` (each attacker core runs in its own process on a
+   distinct fixed address).
+
+This isolates same-line coherence pressure from broader interference effects.
+If the separate-address phase still slows the victim or hurts fairness,
+interference is broader than a single cache-line hotspot.
+
+Example:
+
+```bash
+scripts/run_adversarial_separate_attacker_addrs.sh   --victim-cores "0,2,4,6"   --attacker-cores "8,10,12,14"   --victim-test CAS   --attacker-test FAI
+```
+
+Results are written to `results/adversarial_separate_attacker_addrs/summary.csv`.
+
 ## Adversarial atomic-vs-atomic experiment helper
 
 Use `scripts/run_adversarial_lock_vs_fai.sh` to model an adversarial setup with:
