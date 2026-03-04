@@ -134,6 +134,47 @@ raw_csv="$output_dir/raw_phase_results.csv"
 agg_csv="$output_dir/summary_by_attacker_threads.csv"
 trend_csv="$output_dir/trend_separate_minus_shared.csv"
 
+# One-time preflight: run the inner script once to discover the effective
+# fixed-victim-addr (the inner script's adaptive_victim_preflight may fall
+# back from "static" to a hex address to "none").  Reuse that result for
+# every subsequent run so we don't repeat the crash/fallback cycle.
+if [[ "$dry_run" -eq 0 && "$fixed_victim_addr" == "static" ]]; then
+  preflight_dir="$output_dir/runs/_preflight"
+  mkdir -p "$preflight_dir"
+  first_seed="${seed_arr[0]}"
+  first_atk=$(join_first_n_csv "${attacker_count_arr[0]}" "${attacker_arr[@]}")
+  echo "INFO: running one-time preflight to determine effective fixed-victim-addr" >&2
+  "$base_runner" \
+    --victim-cores "$victim_cores" \
+    --attacker-cores "$first_atk" \
+    --seed-core "$first_seed" \
+    --victim-test "$victim_test" \
+    --attacker-test "$attacker_test" \
+    --victim-reps 1 \
+    --attacker-reps 1 \
+    --victim-stride "$victim_stride" \
+    --attacker-stride "$attacker_stride" \
+    --fixed-victim-addr "$fixed_victim_addr" \
+    --victim-fallback-addr "$victim_fallback_addr" \
+    --shared-attacker-addr "$shared_attacker_addr" \
+    --separate-attacker-base "$separate_attacker_base" \
+    --separate-attacker-step "$separate_attacker_step" \
+    --ccbench "$ccbench" \
+    --output-dir "$preflight_dir" >/dev/null 2>&1 || true
+  if [[ -f "$preflight_dir/run_meta.txt" ]]; then
+    eff_addr=$(grep '^fixed_victim_addr_effective=' "$preflight_dir/run_meta.txt" | cut -d= -f2)
+    if [[ -n "$eff_addr" ]]; then
+      if [[ "$eff_addr" != "$fixed_victim_addr" ]]; then
+        echo "INFO: preflight resolved fixed-victim-addr: $fixed_victim_addr -> $eff_addr (will use for all runs)" >&2
+      else
+        echo "INFO: preflight confirmed fixed-victim-addr=$eff_addr works" >&2
+      fi
+      fixed_victim_addr="$eff_addr"
+    fi
+  fi
+  rm -rf "$preflight_dir"
+fi
+
 printf '%s\n' 'run_id,seed_core,attacker_threads,replicate,phase,mean_avg,jain_fairness,success_rate,latency_ratio_vs_baseline,latency_delta_pct_vs_baseline,effect_vs_baseline,notes,run_dir' > "$raw_csv"
 
 run_id=0
