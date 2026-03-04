@@ -358,7 +358,7 @@ xorshf96(uint64_t* x, uint64_t* y, uint64_t* z)
 
   return *z;
 }
-#define clrand() (xorshf96(seeds, seeds + 1, seeds + 2) & (test_stride - 1))
+#define clrand() (test_stride == 0 ? 0 : (xorshf96(seeds, seeds + 1, seeds + 2) & (test_stride - 1)))
 #define sirand(range) ((xorshf96(seeds, seeds + 1, seeds + 2) % range) + 64)
 #define my_random(a, b, c) xorshf96(a, b, c)
 
