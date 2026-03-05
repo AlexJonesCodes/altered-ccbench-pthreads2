@@ -34,6 +34,8 @@ Options:
   --victim-fallback-addr HEX      Victim fallback address if static segfaults
                                   (default: 0x700000200000)
   --fail-stats                    Enable fail stats; auto-disabled if probe segfaults
+  --perf-counters                 Collect perf stat HW counters per phase (zero overhead)
+  --perf-events LIST              Comma-separated perf events (default: see below)
   --ccbench PATH                  Path to ccbench (default: ./ccbench)
   --dry-run                       Print planned commands only
   -h, --help                      Show help
@@ -63,6 +65,8 @@ victim_addr_auto_fallback=0
 victim_fixed_disabled=0
 ccbench="./ccbench"
 dry_run=0
+perf_counters=0
+perf_events="cache-misses,cache-references,L1-dcache-load-misses,LLC-load-misses,LLC-store-misses,bus-cycles"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,6 +87,8 @@ while [[ $# -gt 0 ]]; do
     --output-dir) output_dir="$2"; shift 2 ;;
     --victim-fallback-addr) victim_fallback_addr="$2"; shift 2 ;;
     --fail-stats) fail_stats=1; shift ;;
+    --perf-counters) perf_counters=1; shift ;;
+    --perf-events) perf_events="$2"; shift 2 ;;
     --ccbench) ccbench="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -230,6 +236,74 @@ extract_stats() {
   ' "$log_file"
 }
 
+# --- perf stat support ---
+if [[ "$perf_counters" -eq 1 ]]; then
+  if ! command -v perf &>/dev/null; then
+    echo "WARNING: --perf-counters requested but 'perf' not found in PATH; disabling." >&2
+    perf_counters=0
+  else
+    # Quick probe: can we use perf stat on this system?
+    if ! perf stat -e cycles -- true 2>/dev/null; then
+      echo "WARNING: perf stat probe failed (missing permissions or kernel support); disabling --perf-counters." >&2
+      perf_counters=0
+    fi
+  fi
+fi
+
+# Run a command wrapped with perf stat if --perf-counters is enabled.
+# Usage: run_cmd_with_perf <perf_output_file> <log_file> <cmd...>
+# When perf_counters=0, behaves identically to run_cmd_quiet.
+run_cmd_with_perf() {
+  local perf_out="$1"; shift
+  local log_file="$1"; shift
+  local -a cmd=("$@")
+  if [[ "$perf_counters" -eq 1 ]]; then
+    # Use perf stat in counting mode (zero overhead).
+    # -C targets only the cores the victim/attacker runs on, but since
+    # ccbench pins its own threads we wrap the whole process — the counters
+    # still reflect only the pinned core's work.
+    perf stat -e "$perf_events" -o "$perf_out" -- \
+      python - "$log_file" "${cmd[@]}" <<'PYQ'
+import subprocess, sys
+log = sys.argv[1]
+cmd = sys.argv[2:]
+with open(log, 'w', encoding='utf-8', errors='replace') as f:
+    rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
+if rc < 0:
+    rc = 128 + (-rc)
+sys.exit(rc)
+PYQ
+  else
+    run_cmd_quiet "$log_file" "${cmd[@]}"
+  fi
+}
+
+# Extract key metrics from a perf stat output file into CSV format.
+# Returns: cache_misses,cache_refs,llc_load_misses,llc_store_misses,bus_cycles,miss_rate_pct
+extract_perf_stats() {
+  local perf_file="$1"
+  if [[ ! -f "$perf_file" ]]; then
+    printf 'NA,NA,NA,NA,NA,NA'
+    return
+  fi
+  awk '
+    /cache-misses/       && !/LLC/ { gsub(/,/,"",$1); cm=$1 }
+    /cache-references/              { gsub(/,/,"",$1); cr=$1 }
+    /L1-dcache-load-misses/         { gsub(/,/,"",$1); l1m=$1 }
+    /LLC-load-misses/               { gsub(/,/,"",$1); llcl=$1 }
+    /LLC-store-misses/              { gsub(/,/,"",$1); llcs=$1 }
+    /bus-cycles/                    { gsub(/,/,"",$1); bc=$1 }
+    END {
+      if (cm=="") cm="NA"; if (cr=="") cr="NA"
+      if (l1m=="") l1m="NA"; if (llcl=="") llcl="NA"
+      if (llcs=="") llcs="NA"; if (bc=="") bc="NA"
+      mr="NA"
+      if (cm!="NA" && cr!="NA" && cr+0>0) mr=sprintf("%.4f", (cm+0)/(cr+0)*100)
+      printf "%s,%s,%s,%s,%s,%s,%s", cm, cr, l1m, llcl, llcs, bc, mr
+    }
+  ' "$perf_file"
+}
+
 as_array "$victim_cores" victim_core_arr
 as_array "$attacker_cores" attacker_core_arr
 for c in "${victim_core_arr[@]}" "${attacker_core_arr[@]}"; do [[ "$c" =~ ^[0-9]+$ ]] || { echo "Non-integer core id: $c" >&2; exit 1; }; done
@@ -266,9 +340,15 @@ fail_stats_auto_disabled=$fail_stats_auto_disabled
 victim_addr_auto_fallback=$victim_addr_auto_fallback
 victim_fixed_disabled=$victim_fixed_disabled
 attacker_launch_mode=per_core_processes_for_shared_and_separate
+perf_counters=$perf_counters
+perf_events=$perf_events
 META
 
-echo "phase,mean_avg,jain_fairness,success_rate,latency_ratio_vs_baseline,latency_delta_pct_vs_baseline,effect_vs_baseline,notes" > "$summary_csv"
+if [[ "$perf_counters" -eq 1 ]]; then
+  echo "phase,mean_avg,jain_fairness,success_rate,latency_ratio_vs_baseline,latency_delta_pct_vs_baseline,effect_vs_baseline,notes,cache_misses,cache_refs,l1d_load_misses,llc_load_misses,llc_store_misses,bus_cycles,cache_miss_rate_pct" > "$summary_csv"
+else
+  echo "phase,mean_avg,jain_fairness,success_rate,latency_ratio_vs_baseline,latency_delta_pct_vs_baseline,effect_vs_baseline,notes" > "$summary_csv"
+fi
 log_info "effective victim config: fixed-victim-addr=$fixed_victim_addr, fail-stats=$fail_stats_effective"
 log_info "starting experiment (victim_reps=$victim_reps, attacker_reps=$attacker_reps, victim_threads=$victim_count, attacker_threads=$attacker_count)"
 
@@ -286,9 +366,15 @@ run_cmd_logged() {
 run_baseline() {
   log_info "phase start: victim_baseline"
   local log="$output_dir/logs/victim_baseline.log"
+  local perf_out="$output_dir/logs/perf_victim_baseline.txt"
   local -a cmd
   mapfile -t cmd < <(build_victim_cmd "$victim_reps")
-  run_cmd_logged "$log" "${cmd[@]}"
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf '[dry-run] %q ' "${cmd[@]}" >&2; echo >&2
+    : > "$log"
+  else
+    run_cmd_with_perf "$perf_out" "$log" "${cmd[@]}"
+  fi
   log_info "phase done: victim_baseline (log=$log)"
   extract_stats "$log"
 }
@@ -297,6 +383,7 @@ run_with_shared_attackers() {
   local mode="$1"
   log_info "phase start: victim_plus_${mode}"
   local v_log="$output_dir/logs/victim_plus_${mode}.log"
+  local perf_out="$output_dir/logs/perf_victim_plus_${mode}.txt"
   local fifo="$output_dir/.start_fifo_${mode}"
   rm -f "$fifo"; mkfifo "$fifo"
 
@@ -320,7 +407,7 @@ run_with_shared_attackers() {
   done
 
   sleep 0.1
-  ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
+  ( read -r _ < "$fifo"; run_cmd_with_perf "$perf_out" "$v_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
 
@@ -344,6 +431,7 @@ run_with_shared_attackers() {
 run_with_separate_attackers() {
   log_info "phase start: victim_plus_separate"
   local v_log="$output_dir/logs/victim_plus_separate.log"
+  local perf_out="$output_dir/logs/perf_victim_plus_separate.txt"
   local fifo="$output_dir/.start_fifo_separate"
   rm -f "$fifo"; mkfifo "$fifo"
 
@@ -374,7 +462,7 @@ run_with_separate_attackers() {
   done
 
   sleep 0.1
-  ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
+  ( read -r _ < "$fifo"; run_cmd_with_perf "$perf_out" "$v_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
 
@@ -432,13 +520,22 @@ sep_delta_pct=$(calc_latency_delta_pct "$base_mean" "$sep_mean")
 shared_effect=$(effect_label "$shared_ratio")
 sep_effect=$(effect_label "$sep_ratio")
 
-echo "victim_baseline,$base_mean,$base_fair,$base_succ,1.0000,0.00,baseline,no_attackers" >> "$summary_csv"
+perf_suffix_baseline=""
+perf_suffix_shared=""
+perf_suffix_separate=""
+if [[ "$perf_counters" -eq 1 ]]; then
+  perf_suffix_baseline=",$(extract_perf_stats "$output_dir/logs/perf_victim_baseline.txt")"
+  perf_suffix_shared=",$(extract_perf_stats "$output_dir/logs/perf_victim_plus_shared.txt")"
+  perf_suffix_separate=",$(extract_perf_stats "$output_dir/logs/perf_victim_plus_separate.txt")"
+fi
+
+echo "victim_baseline,$base_mean,$base_fair,$base_succ,1.0000,0.00,baseline,no_attackers${perf_suffix_baseline}" >> "$summary_csv"
 shared_note="attackers_share_one_line"
 sep_note="each_attacker_has_distinct_line"
 [[ "$shared_mean" == "NA" ]] && shared_note+="_victim_failed"
 [[ "$sep_mean" == "NA" ]] && sep_note+="_victim_failed"
-echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_ratio,$shared_delta_pct,$shared_effect,$shared_note" >> "$summary_csv"
-echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_ratio,$sep_delta_pct,$sep_effect,$sep_note" >> "$summary_csv"
+echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_ratio,$shared_delta_pct,$shared_effect,$shared_note${perf_suffix_shared}" >> "$summary_csv"
+echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_ratio,$sep_delta_pct,$sep_effect,$sep_note${perf_suffix_separate}" >> "$summary_csv"
 
 cat <<REPORT
 Wrote: $summary_csv
@@ -449,3 +546,20 @@ Interpretation guide:
   - If victim_plus_separate still slows down or lowers fairness, interference is not only same-line contention.
   - If separate is much better than shared, unfairness is likely coherence-hotspot driven.
 REPORT
+
+if [[ "$perf_counters" -eq 1 ]]; then
+  cat <<PERF_REPORT
+
+Perf counter files (raw):
+  baseline:  $output_dir/logs/perf_victim_baseline.txt
+  shared:    $output_dir/logs/perf_victim_plus_shared.txt
+  separate:  $output_dir/logs/perf_victim_plus_separate.txt
+
+Perf columns in summary.csv:
+  cache_misses, cache_refs, l1d_load_misses, llc_load_misses,
+  llc_store_misses, bus_cycles, cache_miss_rate_pct
+
+Compare cache_miss_rate_pct across phases: higher miss rate under shared
+attackers indicates coherence-traffic is the bottleneck.
+PERF_REPORT
+fi
