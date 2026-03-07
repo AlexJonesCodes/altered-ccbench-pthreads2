@@ -260,6 +260,414 @@ for phase in "${phase_arr[@]}"; do
   esac
 done
 
+# --- Generate combined summary report ---
+
+generate_summary() {
+  local summary_file="$output_dir/c2c_summary_report.txt"
+  log_info "Generating combined summary report: $summary_file"
+
+  # Python script to parse all three reports and produce a side-by-side summary
+  python3 - "$output_dir" "${phase_arr[@]}" > "$summary_file" <<'PYEOF'
+import sys, re, os
+from collections import OrderedDict
+
+output_dir = sys.argv[1]
+phases = sys.argv[2:]
+
+# --- Parse trace event info section ---
+def parse_trace_events(text):
+    """Extract key-value pairs from the Trace Event Information section."""
+    metrics = OrderedDict()
+    in_section = False
+    for line in text.splitlines():
+        if 'Trace Event Information' in line:
+            in_section = True
+            continue
+        if in_section and line.strip().startswith('='):
+            if metrics:  # end of section (second === line)
+                break
+            continue
+        if in_section:
+            m = re.match(r'\s+(.+?)\s{2,}:\s+(.+)', line)
+            if m:
+                metrics[m.group(1).strip()] = m.group(2).strip()
+    return metrics
+
+# --- Parse global shared cache line section ---
+def parse_shared_cacheline_info(text):
+    """Extract key-value pairs from the Global Shared Cache Line section."""
+    metrics = OrderedDict()
+    in_section = False
+    for line in text.splitlines():
+        if 'Global Shared Cache Line Event Information' in line:
+            in_section = True
+            continue
+        if in_section and line.strip().startswith('='):
+            if metrics:
+                break
+            continue
+        if in_section:
+            m = re.match(r'\s+(.+?)\s{2,}:\s+(.+)', line)
+            if m:
+                metrics[m.group(1).strip()] = m.group(2).strip()
+    return metrics
+
+# --- Parse top N hottest shared cache lines ---
+def parse_top_cachelines(text, top_n=5):
+    """Parse the Shared Data Cache Line Table for the top N entries."""
+    lines = text.splitlines()
+    rows = []
+    in_table = False
+    header_seen = False
+    for line in lines:
+        if 'Shared Data Cache Line Table' in line:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        stripped = line.strip()
+        # Skip comment/header lines
+        if stripped.startswith('#') or stripped.startswith('='):
+            if 'Index' in stripped:
+                header_seen = True
+            continue
+        if not header_seen:
+            continue
+        if not stripped or stripped.startswith('-'):
+            continue
+        # Data row: index, address, node, pa_cnt, hitm%, ...
+        parts = stripped.split()
+        if len(parts) < 5:
+            continue
+        try:
+            idx = int(parts[0])
+        except ValueError:
+            continue
+        rows.append({
+            'index': idx,
+            'address': parts[1],
+            'node': parts[2],
+            'pa_cnt': parts[3],
+            'hitm_pct': parts[4],
+            'total_hitm': parts[5] if len(parts) > 5 else '-',
+            'lcl_hitm': parts[6] if len(parts) > 6 else '-',
+            'rmt_hitm': parts[7] if len(parts) > 7 else '-',
+            'total_records': parts[8] if len(parts) > 8 else '-',
+            'total_loads': parts[9] if len(parts) > 9 else '-',
+            'total_stores': parts[10] if len(parts) > 10 else '-',
+        })
+        if len(rows) >= top_n:
+            break
+    return rows
+
+# --- Load reports ---
+report_data = OrderedDict()
+for phase in phases:
+    report_file = os.path.join(output_dir, f'c2c_{phase}_report.txt')
+    if not os.path.isfile(report_file):
+        continue
+    with open(report_file, 'r') as f:
+        text = f.read()
+    report_data[phase] = {
+        'trace': parse_trace_events(text),
+        'shared': parse_shared_cacheline_info(text),
+        'top_lines': parse_top_cachelines(text),
+    }
+
+if not report_data:
+    print("No report files found to summarize.")
+    sys.exit(0)
+
+avail_phases = list(report_data.keys())
+
+# === Output ===
+W = 78  # report width
+
+def banner(title):
+    print('=' * W)
+    print(f'{title:^{W}}')
+    print('=' * W)
+
+def section(title):
+    print()
+    print('-' * W)
+    print(f'  {title}')
+    print('-' * W)
+
+def safe_int(val):
+    """Try to convert a string to int, stripping % signs."""
+    if val is None:
+        return None
+    val = val.replace('%', '').strip()
+    try:
+        return int(val)
+    except ValueError:
+        return None
+
+def safe_float(val):
+    if val is None:
+        return None
+    val = val.replace('%', '').strip()
+    try:
+        return float(val)
+    except ValueError:
+        return None
+
+def delta_str(base_val, other_val):
+    """Compute delta between two numeric values, return formatted string."""
+    b = safe_int(base_val)
+    o = safe_int(other_val)
+    if b is None or o is None:
+        return ''
+    diff = o - b
+    if b == 0:
+        if diff == 0:
+            return '(+0)'
+        return f'(+{diff})'
+    pct = (diff / b) * 100
+    sign = '+' if diff >= 0 else ''
+    return f'({sign}{diff}, {sign}{pct:.0f}%)'
+
+# --- Title ---
+print()
+banner('perf c2c Combined Summary Report')
+print()
+print(f'  Phases analysed: {", ".join(avail_phases)}')
+print(f'  Output directory: {output_dir}')
+print()
+
+# --- Side-by-side Trace Event Info ---
+section('Trace Event Overview (side-by-side)')
+
+# Collect all metric keys across phases
+all_trace_keys = list(OrderedDict.fromkeys(
+    k for p in avail_phases for k in report_data[p]['trace']
+))
+
+# Key metrics to highlight
+key_metrics = [
+    'Total records', 'Locked Load/Store Operations',
+    'Load Operations', 'Loads - Miss',
+    'Load Fill Buffer Hit', 'Load L1D hit', 'Load L2D hit',
+    'Load LLC hit', 'Load Local HITM', 'Load Remote HITM',
+    'LLC Misses to Local DRAM', 'LLC Misses to Remote DRAM',
+    'Store Operations', 'Store L1D Hit', 'Store L1D Miss',
+]
+
+# Print header
+label_w = 34
+col_w = 14
+hdr = f'  {"Metric":<{label_w}}'
+for p in avail_phases:
+    hdr += f'  {p:>{col_w}}'
+if len(avail_phases) > 1 and 'baseline' in avail_phases:
+    hdr += f'  {"delta (vs base)":>{col_w + 6}}'
+print(hdr)
+print('  ' + '-' * (label_w + (col_w + 2) * len(avail_phases) + (col_w + 8 if len(avail_phases) > 1 and 'baseline' in avail_phases else 0)))
+
+for key in all_trace_keys:
+    vals = [report_data[p]['trace'].get(key, '-') for p in avail_phases]
+    row = f'  {key:<{label_w}}'
+    for v in vals:
+        row += f'  {v:>{col_w}}'
+    # Add delta column for the last non-baseline phase vs baseline
+    if len(avail_phases) > 1 and 'baseline' in avail_phases:
+        base_val = report_data['baseline']['trace'].get(key, '-')
+        last_phase = [p for p in avail_phases if p != 'baseline'][-1]
+        other_val = report_data[last_phase]['trace'].get(key, '-')
+        d = delta_str(base_val, other_val)
+        row += f'  {d:>{col_w + 6}}'
+    print(row)
+
+# --- Side-by-side Shared Cache Line Info ---
+section('Global Shared Cache Line Info (side-by-side)')
+
+all_shared_keys = list(OrderedDict.fromkeys(
+    k for p in avail_phases for k in report_data[p]['shared']
+))
+
+hdr = f'  {"Metric":<{label_w}}'
+for p in avail_phases:
+    hdr += f'  {p:>{col_w}}'
+if len(avail_phases) > 1 and 'baseline' in avail_phases:
+    hdr += f'  {"delta (vs base)":>{col_w + 6}}'
+print(hdr)
+print('  ' + '-' * (label_w + (col_w + 2) * len(avail_phases) + (col_w + 8 if len(avail_phases) > 1 and 'baseline' in avail_phases else 0)))
+
+for key in all_shared_keys:
+    vals = [report_data[p]['shared'].get(key, '-') for p in avail_phases]
+    row = f'  {key:<{label_w}}'
+    for v in vals:
+        row += f'  {v:>{col_w}}'
+    if len(avail_phases) > 1 and 'baseline' in avail_phases:
+        base_val = report_data['baseline']['shared'].get(key, '-')
+        last_phase = [p for p in avail_phases if p != 'baseline'][-1]
+        other_val = report_data[last_phase]['shared'].get(key, '-')
+        d = delta_str(base_val, other_val)
+        row += f'  {d:>{col_w + 6}}'
+    print(row)
+
+# --- Top contended cache lines per phase ---
+section('Top Contended Cache Lines (per phase)')
+
+for phase in avail_phases:
+    top = report_data[phase]['top_lines']
+    if not top:
+        print(f'\n  [{phase}] No shared cache line entries found.')
+        continue
+    print(f'\n  [{phase.upper()}] Top {len(top)} hottest shared lines:')
+    print(f'  {"#":<4} {"Address":<22} {"HITM%":>7} {"TotHITM":>8} {"LclHITM":>8} '
+          f'{"RmtHITM":>8} {"Records":>8} {"Loads":>8} {"Stores":>8}')
+    print('  ' + '-' * 87)
+    for r in top:
+        print(f'  {r["index"]:<4} {r["address"]:<22} {r["hitm_pct"]:>7} '
+              f'{r["total_hitm"]:>8} {r["lcl_hitm"]:>8} {r["rmt_hitm"]:>8} '
+              f'{r["total_records"]:>8} {r["total_loads"]:>8} {r["total_stores"]:>8}')
+
+# --- Key findings / analysis ---
+section('Analysis & Key Findings')
+
+def get_int(phase, section_name, key):
+    if phase not in report_data:
+        return None
+    return safe_int(report_data[phase][section_name].get(key))
+
+# 1. HITM comparison
+print()
+hitm_data = {}
+for p in avail_phases:
+    local = get_int(p, 'trace', 'Load Local HITM')
+    remote = get_int(p, 'trace', 'Load Remote HITM')
+    total = (local or 0) + (remote or 0)
+    hitm_data[p] = {'local': local, 'remote': remote, 'total': total}
+    print(f'  {p:<12} Total HITM = {total:>8}  (Local: {local if local is not None else "?":>6}, '
+          f'Remote: {remote if remote is not None else "?":>6})')
+
+# Compare phases if we have baseline
+if 'baseline' in hitm_data and len(hitm_data) > 1:
+    base_hitm = hitm_data['baseline']['total']
+    print()
+    for p in avail_phases:
+        if p == 'baseline':
+            continue
+        p_hitm = hitm_data[p]['total']
+        if base_hitm > 0:
+            ratio = p_hitm / base_hitm
+            print(f'  {p} vs baseline: {ratio:.1f}x HITM '
+                  f'({"SIGNIFICANT contention increase" if ratio > 2 else "moderate increase" if ratio > 1.2 else "similar level"})')
+        elif p_hitm > 0:
+            print(f'  {p} vs baseline: baseline had 0 HITM, {p} has {p_hitm} — new contention introduced')
+        else:
+            print(f'  {p} vs baseline: both have minimal HITM — low contention')
+
+# 2. Shared cache line count comparison
+print()
+for p in avail_phases:
+    scl = get_int(p, 'shared', 'Total Shared Cache Lines')
+    print(f'  {p:<12} Shared cache lines: {scl if scl is not None else "?"}')
+
+# 3. Store vs Load ratio
+print()
+for p in avail_phases:
+    loads = get_int(p, 'trace', 'Load Operations')
+    stores = get_int(p, 'trace', 'Store Operations')
+    if loads and stores and loads > 0:
+        ratio = stores / loads
+        print(f'  {p:<12} Store/Load ratio: {ratio:.2f} '
+              f'({"store-heavy" if ratio > 1.5 else "balanced" if ratio > 0.5 else "load-heavy"})')
+
+# 4. Cache hit distribution
+print()
+print('  Cache hit distribution (loads):')
+for p in avail_phases:
+    loads = get_int(p, 'trace', 'Load Operations')
+    l1 = get_int(p, 'trace', 'Load L1D hit')
+    fb = get_int(p, 'trace', 'Load Fill Buffer Hit')
+    llc = get_int(p, 'trace', 'Load LLC hit')
+    if loads and loads > 0:
+        l1_pct = (l1 or 0) / loads * 100
+        fb_pct = (fb or 0) / loads * 100
+        llc_pct = (llc or 0) / loads * 100
+        other_pct = 100 - l1_pct - fb_pct - llc_pct
+        print(f'    {p:<12} L1D: {l1_pct:5.1f}%  FillBuf: {fb_pct:5.1f}%  '
+              f'LLC: {llc_pct:5.1f}%  Other: {other_pct:5.1f}%')
+
+# 5. Contention diagnosis
+print()
+if 'shared' in hitm_data and 'separate' in hitm_data and 'baseline' in hitm_data:
+    sh = hitm_data['shared']['total']
+    sep = hitm_data['separate']['total']
+    base = hitm_data['baseline']['total']
+
+    print('  Contention diagnosis:')
+    if sh > base * 2 and sh > sep * 1.5:
+        print('    -> SHARED attackers cause significantly more HITM than SEPARATE.')
+        print('    -> This confirms TRUE contention on shared cache lines (not just')
+        print('       general coherence traffic from having more threads).')
+    elif sh > base * 2 and sep > base * 2:
+        print('    -> Both SHARED and SEPARATE show elevated HITM vs baseline.')
+        if abs(sh - sep) / max(sh, sep, 1) < 0.2:
+            print('    -> HITM levels are similar — contention may be due to general')
+            print('       coherence traffic rather than address-specific false sharing.')
+        else:
+            print('    -> SHARED is higher — some address-specific contention exists,')
+            print('       but general coherence traffic also contributes.')
+    elif sh <= base * 1.2 and sep <= base * 1.2:
+        print('    -> Neither SHARED nor SEPARATE show significant HITM increase.')
+        print('    -> Low contention — the workload may not be contention-sensitive,')
+        print('       or the perf c2c sampling rate is too low to capture it.')
+    else:
+        print('    -> Mixed results. Review the per-cacheline tables above for')
+        print('       address-specific hotspots.')
+elif len(avail_phases) >= 2:
+    print('  (Partial phases available — run all three for full contention diagnosis)')
+
+# 6. Hottest address check
+print()
+print('  Hottest cache lines across phases:')
+for p in avail_phases:
+    top = report_data[p]['top_lines']
+    if top:
+        hottest = top[0]
+        print(f'    {p:<12} #{hottest["index"]} {hottest["address"]}  '
+              f'HITM={hottest["total_hitm"]}  ({hottest["hitm_pct"]} of total)')
+
+# Check if the same address appears as hottest across phases
+if len(avail_phases) >= 2:
+    addrs = {}
+    for p in avail_phases:
+        top = report_data[p]['top_lines']
+        if top:
+            addrs[p] = set(r['address'] for r in top)
+    all_top = set()
+    for s in addrs.values():
+        all_top |= s
+    common = all_top.copy()
+    for s in addrs.values():
+        common &= s
+    if common:
+        print(f'\n    Addresses appearing in top lines across ALL phases: {", ".join(sorted(common))}')
+        print('    -> These are persistent hotspots worth investigating.')
+
+print()
+print('=' * W)
+print(f'{"End of Summary Report":^{W}}')
+print('=' * W)
+PYEOF
+}
+
+# --- Run requested phases ---
+
+# (phases were already run above; now generate summary if we have reports)
+has_reports=0
+for phase in "${phase_arr[@]}"; do
+  [[ -f "$output_dir/c2c_${phase}_report.txt" ]] && has_reports=1 && break
+done
+
+if [[ "$has_reports" -eq 1 && "$dry_run" -eq 0 ]]; then
+  generate_summary
+fi
+
 cat <<REPORT
 
 perf c2c diagnostic complete.
@@ -275,6 +683,11 @@ for phase in "${phase_arr[@]}"; do
   fi
 done
 
+summary_file="$output_dir/c2c_summary_report.txt"
+if [[ -f "$summary_file" ]]; then
+  echo "  $summary_file  <-- COMBINED SUMMARY"
+fi
+
 cat <<'GUIDE'
 
 How to interpret:
@@ -285,6 +698,8 @@ How to interpret:
      but not in "separate" confirms coherence-hotspot contention.
   5. The "Snoop" column shows snoop filter activity — high snoop counts
      on a line indicate it's bouncing between cores.
+  6. See c2c_summary_report.txt for a combined side-by-side comparison
+     with automated contention diagnosis.
 
 For deeper analysis:
   perf c2c report -i <data_file> --stdio --full-symbols
