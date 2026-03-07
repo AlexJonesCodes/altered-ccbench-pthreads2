@@ -17,7 +17,7 @@ Options:
   --reps N               Repetitions per run (default: 10000)
   --ccbench PATH         Path to ccbench binary (default: ./ccbench)
   --output-dir DIR       Output directory for logs/report (default: results)
-                         Reports: seed_rotation_wins_<OP>.txt and .csv
+                         Reports: seed_rotation_wins_<OP>.txt/.csv plus summary CSVs
   --dry-run              Print commands without running them
   -h, --help             Show this help
 
@@ -320,6 +320,87 @@ append_summary_csv() {
   ' "$log_file"
 }
 
+append_run_summary_csv() {
+  local log_file="$1"
+  local op_label="$2"
+  local seed_core="$3"
+  local thread_count="$4"
+  local skip_thread="$5"
+  local csv_file="$6"
+
+  awk -v op="$op_label" -v seed="$seed_core" -v threads="$thread_count" -v skip="$skip_thread" -v csv_file="$csv_file" '
+    /Core number/ {
+      if (match($0, /Core number[[:space:]]+([0-9]+)[^0-9]+thread:[[:space:]]+([0-9]+).*avg[[:space:]]+([0-9.]+)/, m)) {
+        core = m[2]
+        avg = m[3]
+        avg_by_core[core] = avg
+      }
+    }
+    /wins$/ {
+      if (match($0, /thread[[:space:]]+([0-9]+)[^0-9]+thread ID[[:space:]]+([0-9]+)[^0-9]+([0-9]+)[[:space:]]+wins$/, m)) {
+        core = m[1]
+        thread = m[2]
+        wins[thread] = m[3]
+        core_by_thread[thread] = core
+        thread_seen[thread] = 1
+      } else if (match($0, /thread ID[[:space:]]+([0-9]+):[[:space:]]+([0-9]+)[[:space:]]+wins$/, m)) {
+        thread = m[1]
+        wins[thread] = m[2]
+        thread_seen[thread] = 1
+      }
+    }
+    END {
+      sum_all = 0
+      sum_sq_all = 0
+      sum_workers = 0
+      sum_sq_workers = 0
+      count_all = 0
+      count_workers = 0
+      total_wins = 0
+      latency_sum = 0
+      latency_count = 0
+
+      for (i = 0; i < threads; i++) {
+        val = wins[i]
+        if (val == "") val = 0
+        sum_all += val
+        sum_sq_all += val * val
+        total_wins += val
+        count_all++
+        if (i != skip) {
+          sum_workers += val
+          sum_sq_workers += val * val
+          count_workers++
+        }
+        core = core_by_thread[i]
+        if (core != "") {
+          avg = avg_by_core[core]
+          if (avg != "") {
+            latency_sum += avg
+            latency_count++
+          }
+        }
+      }
+
+      fairness_all = 0
+      if (count_all > 0 && sum_sq_all > 0) {
+        fairness_all = (sum_all * sum_all) / (count_all * sum_sq_all)
+      }
+      fairness_workers = 0
+      if (count_workers > 0 && sum_sq_workers > 0) {
+        fairness_workers = (sum_workers * sum_workers) / (count_workers * sum_sq_workers)
+      }
+      latency_avg = 0
+      if (latency_count > 0) {
+        latency_avg = latency_sum / latency_count
+      }
+
+      printf "%s,%s,%s,%s,%.6f,%.6f,%.3f\n", op, threads, seed, total_wins, fairness_all, fairness_workers, latency_avg \
+        >> csv_file
+    }
+  ' "$log_file"
+}
+
 mapfile -t core_array < <(parse_cores "$cores")
 total_cores=${#core_array[@]}
 if [[ "$total_cores" -lt 1 ]]; then
@@ -344,8 +425,10 @@ for count in "${thread_counts[@]}"; do
 done
 
 summary_csv="$output_dir/seed_rotation_wins_summary.csv"
+run_summary_csv="$output_dir/seed_rotation_wins_runs_summary.csv"
 if [[ "$dry_run" -eq 0 ]]; then
   printf "op,threads,seed_core,thread_id,core,avg_latency,wins\n" >"$summary_csv"
+  printf "op,threads,seed_core,total_wins,fairness_all,fairness_workers,avg_latency_mean\n" >"$run_summary_csv"
 fi
 
 for op_name in "${ops[@]}"; do
@@ -392,6 +475,7 @@ for op_name in "${ops[@]}"; do
       } >>"$report_file"
       append_thread_csv "$log_file" "$op_label" "$seed_core" "$csv_file"
       append_summary_csv "$log_file" "$op_label" "$seed_core" "$thread_count" "$summary_csv"
+      append_run_summary_csv "$log_file" "$op_label" "$seed_core" "$thread_count" "$i" "$run_summary_csv"
 
     done
   done
@@ -413,4 +497,5 @@ if [[ "$dry_run" -eq 0 ]]; then
     fi
   done
   printf '  %s\n' "$summary_csv"
+  printf '  %s\n' "$run_summary_csv"
 fi
