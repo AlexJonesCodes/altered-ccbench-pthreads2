@@ -440,12 +440,211 @@ sep_note="each_attacker_has_distinct_line"
 echo "victim_plus_shared,$shared_mean,$shared_fair,$shared_succ,$shared_ratio,$shared_delta_pct,$shared_effect,$shared_note" >> "$summary_csv"
 echo "victim_plus_separate,$sep_mean,$sep_fair,$sep_succ,$sep_ratio,$sep_delta_pct,$sep_effect,$sep_note" >> "$summary_csv"
 
-cat <<REPORT
-Wrote: $summary_csv
-Run meta: $meta_file
+report_file="$output_dir/diagnostic_summary.txt"
 
-Interpretation guide:
-  - Compare latency_ratio_vs_baseline ( >1 slower, <1 faster ) for shared vs separate layouts.
-  - If victim_plus_separate still slows down or lowers fairness, interference is not only same-line contention.
-  - If separate is much better than shared, unfairness is likely coherence-hotspot driven.
-REPORT
+sep_vs_shared_ratio="NA"
+sep_vs_shared_delta_pct="NA"
+if [[ "$shared_mean" != "NA" && "$sep_mean" != "NA" ]]; then
+  sep_vs_shared_ratio=$(awk -v s="$shared_mean" -v p="$sep_mean" 'BEGIN { if (s==0) print "NA"; else printf "%.4f", p/s }')
+  sep_vs_shared_delta_pct=$(awk -v s="$shared_mean" -v p="$sep_mean" 'BEGIN { if (s==0) print "NA"; else printf "%.2f", ((p-s)/s)*100.0 }')
+fi
+
+fair_drop_shared="NA"
+fair_drop_separate="NA"
+if [[ "$base_fair" != "NA" && "$shared_fair" != "NA" ]]; then
+  fair_drop_shared=$(awk -v b="$base_fair" -v s="$shared_fair" 'BEGIN { printf "%.4f", s - b }')
+fi
+if [[ "$base_fair" != "NA" && "$sep_fair" != "NA" ]]; then
+  fair_drop_separate=$(awk -v b="$base_fair" -v s="$sep_fair" 'BEGIN { printf "%.4f", s - b }')
+fi
+
+interference_diagnosis="unknown"
+if [[ "$shared_ratio" != "NA" && "$sep_ratio" != "NA" ]]; then
+  interference_diagnosis=$(awk -v sr="$shared_ratio" -v pr="$sep_ratio" 'BEGIN {
+    both_slow  = (sr > 1.05 && pr > 1.05)
+    shared_only = (sr > 1.05 && pr <= 1.05)
+    neither    = (sr <= 1.05 && pr <= 1.05)
+
+    if (shared_only)
+      print "coherence_hotspot"
+    else if (both_slow && pr >= sr * 0.90)
+      print "broad_interconnect"
+    else if (both_slow)
+      print "mixed"
+    else if (neither)
+      print "no_significant_interference"
+    else
+      print "inconclusive"
+  }')
+fi
+
+fairness_diagnosis="unknown"
+if [[ "$base_fair" != "NA" && "$shared_fair" != "NA" && "$sep_fair" != "NA" ]]; then
+  fairness_diagnosis=$(awk -v bf="$base_fair" -v sf="$shared_fair" -v pf="$sep_fair" 'BEGIN {
+    sd = bf - sf; pd = bf - pf
+    if (sd > 0.05 && pd <= 0.02)
+      print "shared_contention_unfair"
+    else if (sd > 0.05 && pd > 0.05)
+      print "both_unfair"
+    else if (sd <= 0.02 && pd <= 0.02)
+      print "fairness_preserved"
+    else
+      print "marginal"
+  }')
+fi
+
+fmt_val() {
+  local v="$1" w="${2:-12}"
+  if [[ "$v" == "NA" ]]; then printf "%${w}s" "N/A"; else printf "%${w}s" "$v"; fi
+}
+
+generate_summary() {
+cat <<'BANNER'
+==========================================================================
+          ADVERSARIAL SEPARATE-ADDRESS DIAGNOSTIC SUMMARY
+==========================================================================
+BANNER
+
+printf "\n"
+printf "  Experiment Configuration\n"
+printf "  %-30s : %s\n" "Victim cores" "$victim_cores"
+printf "  %-30s : %s\n" "Attacker cores" "$attacker_cores"
+printf "  %-30s : %s\n" "Victim test" "$victim_test (id=$victim_test_id)"
+printf "  %-30s : %s\n" "Attacker test" "$attacker_test (id=$attacker_test_id)"
+printf "  %-30s : %s\n" "Victim reps" "$victim_reps"
+printf "  %-30s : %s\n" "Attacker reps" "$attacker_reps"
+printf "  %-30s : %s\n" "Seed core" "$seed_core"
+printf "  %-30s : %s\n" "Fixed victim addr" "$fixed_victim_addr"
+printf "  %-30s : %s\n" "Shared attacker addr" "$shared_attacker_addr"
+printf "  %-30s : %s ...\n" "Separate attacker base" "$separate_attacker_base (+$separate_attacker_step)"
+if [[ "$victim_addr_auto_fallback" -eq 1 ]]; then
+  printf "  %-30s : %s\n" "NOTE" "victim addr fell back to $victim_fallback_addr"
+fi
+if [[ "$fail_stats_auto_disabled" -eq 1 ]]; then
+  printf "  %-30s : %s\n" "NOTE" "fail-stats auto-disabled (crash)"
+fi
+
+cat <<'HDR'
+
+--------------------------------------------------------------------------
+  Phase Comparison                  Baseline      Shared     Separate
+--------------------------------------------------------------------------
+HDR
+
+printf "  %-30s :%s  %s  %s\n" \
+  "Mean latency (cycles)" "$(fmt_val "$base_mean")" "$(fmt_val "$shared_mean")" "$(fmt_val "$sep_mean")"
+printf "  %-30s :%s  %s  %s\n" \
+  "Jain fairness index" "$(fmt_val "$base_fair")" "$(fmt_val "$shared_fair")" "$(fmt_val "$sep_fair")"
+printf "  %-30s :%s  %s  %s\n" \
+  "Success rate (%)" "$(fmt_val "$base_succ")" "$(fmt_val "$shared_succ")" "$(fmt_val "$sep_succ")"
+
+cat <<'HDR2'
+
+--------------------------------------------------------------------------
+  Latency Impact (vs Baseline)             Shared     Separate
+--------------------------------------------------------------------------
+HDR2
+
+printf "  %-30s :         %s  %s\n" \
+  "Ratio (>1 = slower)" "$(fmt_val "$shared_ratio")" "$(fmt_val "$sep_ratio")"
+printf "  %-30s :         %s%%  %s%%\n" \
+  "Delta" "$(fmt_val "$shared_delta_pct")" "$(fmt_val "$sep_delta_pct")"
+printf "  %-30s :         %s  %s\n" \
+  "Effect" "$(fmt_val "$shared_effect")" "$(fmt_val "$sep_effect")"
+
+cat <<'HDR3'
+
+--------------------------------------------------------------------------
+  Cross-Phase Comparison             Separate vs Shared
+--------------------------------------------------------------------------
+HDR3
+
+printf "  %-30s :         %s\n" "Latency ratio" "$(fmt_val "$sep_vs_shared_ratio")"
+printf "  %-30s :         %s%%\n" "Delta" "$(fmt_val "$sep_vs_shared_delta_pct")"
+
+cat <<'HDR4'
+
+--------------------------------------------------------------------------
+  Fairness Change (vs Baseline)        Shared     Separate
+--------------------------------------------------------------------------
+HDR4
+
+printf "  %-30s :         %s  %s\n" \
+  "Jain delta (neg = worse)" "$(fmt_val "$fair_drop_shared")" "$(fmt_val "$fair_drop_separate")"
+
+cat <<'HDR5'
+
+--------------------------------------------------------------------------
+  Diagnosis
+--------------------------------------------------------------------------
+HDR5
+
+printf "  %-30s : %s\n" "Interference pattern" "$interference_diagnosis"
+printf "  %-30s : %s\n" "Fairness pattern" "$fairness_diagnosis"
+
+printf "\n  Interpretation:\n"
+case "$interference_diagnosis" in
+  coherence_hotspot)
+    printf "    Shared attackers slow the victim significantly, but separate attackers\n"
+    printf "    do not. Interference is driven by cache-line coherence hotspot contention.\n"
+    ;;
+  broad_interconnect)
+    printf "    Both shared and separate attackers slow the victim similarly.\n"
+    printf "    Interference is from broad interconnect/memory-subsystem pressure,\n"
+    printf "    not just single-line coherence.\n"
+    ;;
+  mixed)
+    printf "    Both layouts cause slowdown, but shared is notably worse.\n"
+    printf "    There is a coherence-hotspot component on top of general\n"
+    printf "    interconnect interference.\n"
+    ;;
+  no_significant_interference)
+    printf "    Neither layout causes meaningful slowdown (< 5%% overhead).\n"
+    printf "    Attacker traffic at this intensity does not measurably affect the victim.\n"
+    ;;
+  *)
+    printf "    Results are inconclusive or one/more phases failed.\n"
+    printf "    Consider re-running with different parameters.\n"
+    ;;
+esac
+
+printf "\n"
+case "$fairness_diagnosis" in
+  shared_contention_unfair)
+    printf "    Fairness degrades under shared contention but is preserved when\n"
+    printf "    attackers use separate lines. Unfairness is contention-driven.\n"
+    ;;
+  both_unfair)
+    printf "    Fairness degrades in both configurations. Interference at this\n"
+    printf "    intensity disrupts fair scheduling regardless of address layout.\n"
+    ;;
+  fairness_preserved)
+    printf "    Fairness remains stable across all configurations.\n"
+    ;;
+  marginal)
+    printf "    Fairness changes are small and may not be significant.\n"
+    ;;
+  *)
+    printf "    Fairness analysis inconclusive (missing data).\n"
+    ;;
+esac
+
+cat <<'FOOTER'
+
+==========================================================================
+  Files
+==========================================================================
+FOOTER
+
+printf "  Summary CSV     : %s\n" "$summary_csv"
+printf "  Run metadata    : %s\n" "$meta_file"
+printf "  Diagnostic report : %s\n" "$report_file"
+printf "  Logs            : %s/logs/\n" "$output_dir"
+
+cat <<'FOOTER2'
+
+==========================================================================
+FOOTER2
+}
+
+generate_summary | tee "$report_file"
