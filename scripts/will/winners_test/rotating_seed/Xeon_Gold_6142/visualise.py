@@ -5,7 +5,7 @@ from collections import defaultdict
 from itertools import combinations
 from scipy.stats import ttest_ind, skew, kurtosis
 
-CSV_FILE = "swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv"
+CSV_FILE = "6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv"
 
 # -------------------------------
 # Read data
@@ -165,6 +165,11 @@ def make_plots(ordering_name, build_positions_func):
 # -------------------------------
 # Ordering functions
 # -------------------------------
+
+def socket_grouped_core_order():
+    # Even cores first (socket 0), then odd cores (socket 1)
+    return list(range(0, NUM_CORES, 2)) + list(range(1, NUM_CORES, 2))
+
 def grouped_by_socket():
     data_for_plot = []
     cpu_labels = []
@@ -173,7 +178,7 @@ def grouped_by_socket():
     group_sizes = []
     pos = 1
 
-    for core_id in range(NUM_CORES):
+    for core_id in socket_grouped_core_order():
         smt_pair = smt_cpus(core_id)
         for cpu in smt_pair:
             data_for_plot.append(core_winners[cpu])
@@ -194,7 +199,7 @@ def cross_socket_interleaved():
     pos = 1
 
     # Interleave SMT threads from both sockets for each core
-    for core_id in range(NUM_CORES):
+    for core_id in socket_grouped_core_order():
         smt_pair = [core_id, core_id+32]  # socket0, socket1
         smt_pair = sorted(smt_pair)       # keep consistent order
         for cpu in smt_pair:
@@ -273,7 +278,7 @@ def per_core_total_plots():
     group_sizes = []
     pos = 1
 
-    for core_id in range(NUM_CORES):
+    for core_id in socket_grouped_core_order():
         smt_pair = smt_cpus(core_id)
         total_per_run = [a+b for a,b in zip(core_winners[smt_pair[0]], core_winners[smt_pair[1]])]
         data_for_plot.append(total_per_run)

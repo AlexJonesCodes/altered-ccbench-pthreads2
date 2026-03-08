@@ -5,8 +5,7 @@ import re
 NUM_RUNS = 4000
 CSV_FILE = "4000_runs_1mill_reps_repeat.csv"
 
-# Regex to parse lines like:
-# CPU 0 ran STORE_ON_MODIFIED | wins: 1014746 | attempts: 1014748 | successes: 1014748 | failures: 0
+# Regex to parse ccbench out:
 CPU_LINE_RE = re.compile(
     r"CPU\s+(\d+)\s+ran\s+(\S+)\s+\|\s+"
     r"wins:\s+(\d+)\s+\|\s+"
@@ -15,8 +14,8 @@ CPU_LINE_RE = re.compile(
     r"failures:\s+(\d+)"
 )
 
-# The -x array string — could be out-of-order, gaps, etc.
-X_ARRAY_STR = str(list(range(0,40)))  # example, replace with your -x
+# The -x array string 
+X_ARRAY_STR = str(list(range(0,40)))  # For 39 cpu sys, do 40
 
 
 

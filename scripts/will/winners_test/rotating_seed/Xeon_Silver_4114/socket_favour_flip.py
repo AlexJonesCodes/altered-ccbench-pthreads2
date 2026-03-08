@@ -6,7 +6,7 @@ import sys
 # USER SETTINGS — adjust if needed
 # --------------------------------------------------
 
-CSV_PATH = "rand_test_with_tas_4kruns_1_000_000_reps/6/4000_runs_1mill_reps_random_test_including_tas.csv"   # <-- change to your file
+CSV_PATH = "rand_test_with_tas_4kruns_1_000_000_reps/6/4000_runs_1mill_reps_random_test_including_tas.csv"  
 
 RUN_COLUMN = "run"           # column identifying run number
 CPU_COLUMN = "cpu"           # column identifying cpu id
