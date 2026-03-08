@@ -31,18 +31,6 @@ uniform_t_array = []
 
 TEST_INDEXES = [0, 7, 12, 13, 14, 15]
 
-def weave_t_array(arr):
-    first32 = arr[:32]  # base block
-
-    # Split first 32 into 16-element segments
-    even16 = [first32[i] for i in range(0, 32, 2)] 
-    odd16  = [first32[i] for i in range(1, 32, 2)]
-
-    # Duplicate segments to get 32-element arrays
-    socket0_32 = even16 + even16
-    socket1_32 = odd16 + odd16
-
-    return socket0_32, socket1_32
 
 def generate_segment_16(values):
 
@@ -63,9 +51,14 @@ def random_doubled_array():
     seg1 = generate_segment_16(TEST_INDEXES)
     seg2 = generate_segment_16(TEST_INDEXES)
 
-    block32 = seg1 + seg2
+    final_arr = []
+    for loop in range(len(seg1)):
+        final_arr.append(seg1[loop])
+        final_arr.append(seg2[loop])
 
-    return block32 + block32
+    final_arr += final_arr
+
+    return final_arr
 
 
 print(f"Using -x array: {X_ARRAY_STR}")
@@ -102,8 +95,7 @@ with open(CSV_FILE, "w", newline="") as f:
 
         cmd = CMD_BASE + ["-b", str(b_value)]
 
-        raw_array = random_doubled_array()
-        socket0_32, socket1_32 = weave_t_array(raw_array)
+        T_ARRAY = random_doubled_array()
 
         uniform_t_array.append(T_ARRAY)
 
