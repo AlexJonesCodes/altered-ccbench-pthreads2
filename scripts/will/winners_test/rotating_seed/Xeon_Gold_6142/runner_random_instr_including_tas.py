@@ -32,11 +32,17 @@ uniform_t_array = []
 TEST_INDEXES = [0, 7, 12, 13, 14, 15]
 
 def weave_t_array(arr):
-    """Reorder instruction array to match CPU topology layout"""
-    woven = [None] * 64
-    for i, cpu in enumerate(TOPO_ORDER):
-        woven[cpu] = arr[i]
-    return woven
+    first32 = arr[:32]  # base block
+
+    # Split first 32 into 16-element segments
+    even16 = [first32[i] for i in range(0, 32, 2)] 
+    odd16  = [first32[i] for i in range(1, 32, 2)]
+
+    # Duplicate segments to get 32-element arrays
+    socket0_32 = even16 + even16
+    socket1_32 = odd16 + odd16
+
+    return socket0_32, socket1_32
 
 def generate_segment_16(values):
 
@@ -97,7 +103,7 @@ with open(CSV_FILE, "w", newline="") as f:
         cmd = CMD_BASE + ["-b", str(b_value)]
 
         raw_array = random_doubled_array()
-        T_ARRAY = weave_t_array(raw_array)
+        socket0_32, socket1_32 = weave_t_array(raw_array)
 
         uniform_t_array.append(T_ARRAY)
 
