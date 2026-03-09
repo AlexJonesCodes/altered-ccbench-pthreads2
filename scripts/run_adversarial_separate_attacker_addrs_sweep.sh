@@ -31,6 +31,8 @@ Options:
   --separate-attacker-base HEX    Separate-address base (default: 0x700000300000)
   --separate-attacker-step HEX    Separate-address step (default: 0x1000)
   --fail-stats                    Enable fail stats
+  --perf-counters                 Collect perf stat HW counters per phase (zero overhead)
+  --perf-events LIST              Comma-separated perf events (passed to inner script)
   --ccbench PATH                  Path to ccbench (default: ./ccbench)
   --output-dir DIR                Output dir (default: results/adversarial_separate_attacker_addrs_sweep)
   --dry-run                       Print planned commands only
@@ -55,6 +57,8 @@ shared_attacker_addr="0x700000100000"
 separate_attacker_base="0x700000300000"
 separate_attacker_step="0x1000"
 fail_stats=0
+perf_counters=0
+perf_events=""
 ccbench="./ccbench"
 output_dir="results/adversarial_separate_attacker_addrs_sweep"
 dry_run=0
@@ -78,6 +82,8 @@ while [[ $# -gt 0 ]]; do
     --separate-attacker-base) separate_attacker_base="$2"; shift 2 ;;
     --separate-attacker-step) separate_attacker_step="$2"; shift 2 ;;
     --fail-stats) fail_stats=1; shift ;;
+    --perf-counters) perf_counters=1; shift ;;
+    --perf-events) perf_events="$2"; shift 2 ;;
     --ccbench) ccbench="$2"; shift 2 ;;
     --output-dir) output_dir="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
@@ -204,6 +210,8 @@ for seed in "${seed_arr[@]}"; do
         --ccbench "$ccbench"
         --output-dir "$run_dir")
       [[ "$fail_stats" -eq 1 ]] && cmd+=(--fail-stats)
+      [[ "$perf_counters" -eq 1 ]] && cmd+=(--perf-counters)
+      [[ -n "$perf_events" ]] && cmd+=(--perf-events "$perf_events")
       [[ "$dry_run" -eq 1 ]] && cmd+=(--dry-run)
 
       echo "INFO: run_id=$run_id seed=$seed attacker_threads=$atk_n rep=$rep out=$run_dir" >&2

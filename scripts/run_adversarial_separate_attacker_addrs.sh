@@ -34,6 +34,9 @@ Options:
   --victim-fallback-addr HEX      Victim fallback address if static segfaults
                                   (default: 0x700000200000)
   --fail-stats                    Enable fail stats; auto-disabled if probe segfaults
+  --perf-counters                 Collect perf stat counters per phase (victim process)
+  --perf-events LIST              Comma-separated perf events for perf stat
+                                  (default: cycles,instructions,cache-references,cache-misses)
   --ccbench PATH                  Path to ccbench (default: ./ccbench)
   --dry-run                       Print planned commands only
   -h, --help                      Show help
@@ -61,6 +64,8 @@ fail_stats_effective=0
 fail_stats_auto_disabled=0
 victim_addr_auto_fallback=0
 victim_fixed_disabled=0
+perf_counters=0
+perf_events="cycles,instructions,cache-references,cache-misses"
 ccbench="./ccbench"
 dry_run=0
 
@@ -83,6 +88,8 @@ while [[ $# -gt 0 ]]; do
     --output-dir) output_dir="$2"; shift 2 ;;
     --victim-fallback-addr) victim_fallback_addr="$2"; shift 2 ;;
     --fail-stats) fail_stats=1; shift ;;
+    --perf-counters) perf_counters=1; shift ;;
+    --perf-events) perf_events="$2"; shift 2 ;;
     --ccbench) ccbench="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -93,6 +100,10 @@ done
 [[ -n "$victim_cores" && -n "$attacker_cores" ]] || { echo "--victim-cores and --attacker-cores are required." >&2; exit 1; }
 [[ -x "$ccbench" ]] || { echo "ccbench not found/executable: $ccbench" >&2; exit 1; }
 [[ -f include/ccbench.h ]] || { echo "include/ccbench.h not found; run from repo root." >&2; exit 1; }
+if [[ "$perf_counters" -eq 1 ]] && ! command -v perf &>/dev/null; then
+  echo "ERROR: --perf-counters requested but 'perf' is not installed." >&2
+  exit 1
+fi
 
 as_array() { local csv="$1"; local -n ref="$2"; IFS=',' read -r -a ref <<<"$csv"; }
 make_list() { local n="$1" v="$2" out=""; for ((i=0;i<n;i++)); do [[ -n "$out" ]] && out+=",$v" || out="$v"; done; printf '[%s]' "$out"; }
@@ -266,6 +277,8 @@ fail_stats_auto_disabled=$fail_stats_auto_disabled
 victim_addr_auto_fallback=$victim_addr_auto_fallback
 victim_fixed_disabled=$victim_fixed_disabled
 attacker_launch_mode=per_core_processes_for_shared_and_separate
+perf_counters=$perf_counters
+perf_events=$perf_events
 META
 
 echo "phase,mean_avg,jain_fairness,success_rate,latency_ratio_vs_baseline,latency_delta_pct_vs_baseline,effect_vs_baseline,notes" > "$summary_csv"
@@ -274,11 +287,20 @@ log_info "starting experiment (victim_reps=$victim_reps, attacker_reps=$attacker
 
 run_cmd_logged() {
   local log_file="$1"; shift
+  local perf_file="${1:-}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
   local -a cmd=("$@")
   if [[ "$dry_run" -eq 1 ]]; then
     printf '[dry-run] %q ' "${cmd[@]}" >&2; echo >&2
     : > "$log_file"
+    [[ -n "$perf_file" ]] && : > "$perf_file"
     return 0
+  fi
+  if [[ "$perf_counters" -eq 1 && -n "$perf_file" ]]; then
+    run_cmd_quiet "$log_file" perf stat -x, -o "$perf_file" -e "$perf_events" -- "${cmd[@]}"
+    return $?
   fi
   run_cmd_quiet "$log_file" "${cmd[@]}"
 }
@@ -286,9 +308,10 @@ run_cmd_logged() {
 run_baseline() {
   log_info "phase start: victim_baseline"
   local log="$output_dir/logs/victim_baseline.log"
+  local perf_log="$output_dir/logs/perf_victim_baseline.csv"
   local -a cmd
   mapfile -t cmd < <(build_victim_cmd "$victim_reps")
-  run_cmd_logged "$log" "${cmd[@]}"
+  run_cmd_logged "$log" "$perf_log" "${cmd[@]}"
   log_info "phase done: victim_baseline (log=$log)"
   extract_stats "$log"
 }
@@ -297,6 +320,7 @@ run_with_shared_attackers() {
   local mode="$1"
   log_info "phase start: victim_plus_${mode}"
   local v_log="$output_dir/logs/victim_plus_${mode}.log"
+  local v_perf_log="$output_dir/logs/perf_victim_plus_${mode}.csv"
   local fifo="$output_dir/.start_fifo_${mode}"
   rm -f "$fifo"; mkfifo "$fifo"
 
@@ -320,7 +344,7 @@ run_with_shared_attackers() {
   done
 
   sleep 0.1
-  ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
+  ( read -r _ < "$fifo"; run_cmd_logged "$v_log" "$v_perf_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
 
@@ -344,6 +368,7 @@ run_with_shared_attackers() {
 run_with_separate_attackers() {
   log_info "phase start: victim_plus_separate"
   local v_log="$output_dir/logs/victim_plus_separate.log"
+  local v_perf_log="$output_dir/logs/perf_victim_plus_separate.csv"
   local fifo="$output_dir/.start_fifo_separate"
   rm -f "$fifo"; mkfifo "$fifo"
 
@@ -374,7 +399,7 @@ run_with_separate_attackers() {
   done
 
   sleep 0.1
-  ( read -r _ < "$fifo"; run_cmd_quiet "$v_log" "${victim_cmd[@]}" ) &
+  ( read -r _ < "$fifo"; run_cmd_logged "$v_log" "$v_perf_log" "${victim_cmd[@]}" ) &
   local victim_pid=$!
   sleep 0.1
 
