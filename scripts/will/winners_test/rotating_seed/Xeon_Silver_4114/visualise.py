@@ -7,7 +7,7 @@ from scipy.stats import ttest_ind, skew, kurtosis
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-CSV_FILE = "pcm_4k_1mill_cas/4000_runs_1mill_reps_cas.csv"
+CSV_FILE = "rand_test_no_tas_4kruns_1_000_000_reps/2/4000_runs_1mill_reps_random_test_including_tas.csv"
 
 # -------------------------------
 # Read data

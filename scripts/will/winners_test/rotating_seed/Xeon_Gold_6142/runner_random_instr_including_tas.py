@@ -16,13 +16,6 @@ CPU_LINE_RE = re.compile(
     r"failures:\s+(\d+)"
 )
 
-# Topology for the Gold cpu
-sock0_smt0 = list(range(0, 32, 2))
-sock1_smt0 = list(range(1, 32, 2))
-sock0_smt1 = list(range(32, 64, 2))
-sock1_smt1 = list(range(33, 64, 2))
-
-TOPO_ORDER = sock0_smt0 + sock1_smt0 + sock0_smt1 + sock1_smt1
 
 X_ARRAY_STR = str(list(range(0,64)))
 

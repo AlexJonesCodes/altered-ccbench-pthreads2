@@ -5,7 +5,7 @@ from collections import defaultdict
 from itertools import combinations
 from scipy.stats import ttest_ind, skew, kurtosis
 
-CSV_FILE = "6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv"
+CSV_FILE = "tas_6400_runs_1.6mill_reps/2/6400_runs_1.6mill_reps_tas.csv"
 
 # -------------------------------
 # Read data
@@ -121,6 +121,7 @@ def make_plots(ordering_name, build_positions_func):
     ax_top.set_xticks(positions)
     ax_top.set_xticklabels(cpu_labels)
     ax_top.set_xlabel("CPU Number")
+    ax.set_ylim(bottom=0)
 
     # Bottom axis = Core centers
     ax.set_xticks(centers)
@@ -145,7 +146,6 @@ def make_plots(ordering_name, build_positions_func):
     ax.set_ylabel("Instructions Executed")
     ax.set_xlabel("Core ID")
     ax.set_title(f"{ordering_name}: {test_type}")
-    ax.set_ylim(bottom=0)
 
     # Top axis = CPU numbers
     ax_top = ax.twiny()
@@ -153,6 +153,7 @@ def make_plots(ordering_name, build_positions_func):
     ax_top.set_xticks(positions)
     ax_top.set_xticklabels(cpu_labels)
     ax_top.set_xlabel("CPU Number")
+    ax.set_ylim(bottom=0)
 
     # Bottom axis = Core centers
     ax.set_xticks(centers)
@@ -246,6 +247,7 @@ def socket_level_plots():
     ax.set_ylabel("Instructions Executed")
     ax.set_title(f"Socket Comparison: {test_type}")
     plt.tight_layout()
+    ax.set_ylim(bottom=0)
     plt.savefig(CSV_FILE + "_socket_barline.png", dpi=300)
     plt.close()
 
@@ -263,6 +265,7 @@ def socket_level_plots():
     ax.set_xlabel("Socket")
     ax.set_ylabel("Instructions Executed")
     ax.set_title(f"Socket Comparison: {test_type}")
+    ax.set_ylim(bottom=0)
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_socket_violin.png", dpi=300)
     plt.close()
@@ -301,6 +304,7 @@ def per_core_total_plots():
     ax.set_xlabel("Core ID")
     ax.set_ylabel("Instructions Executed")
     ax.set_title(f"Per-Core Total Wins: {test_type}")
+    ax.set_ylim(bottom=0)
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_per_core_total_barline.png", dpi=300)
     plt.close()
@@ -319,6 +323,7 @@ def per_core_total_plots():
     ax.set_xlabel("Core ID")
     ax.set_ylabel("Instructions Executed")
     ax.set_title(f"Per-Core Total Wins: {test_type}")
+    ax.set_ylim(bottom=0)
     plt.tight_layout()
     plt.savefig(CSV_FILE + "_per_core_total_violin.png", dpi=300)
     plt.close()
