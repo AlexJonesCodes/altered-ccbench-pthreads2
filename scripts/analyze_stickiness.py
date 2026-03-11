@@ -67,7 +67,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated window sizes for multi-scale analysis.",
     )
     p.add_argument("--trials", type=int, default=1000, help="Monte Carlo permutation trials.")
-    p.add_argument("--mc-max-n", type=int, default=200_000, help="Skip MC for groups exceeding this length.")
+    p.add_argument("--mc-max-n", type=int, default=500_000,
+                   help="Max sequence length for full MC shuffle. Longer sequences use "
+                        "subsampled MC (faster, slightly noisier). Set 0 to always run full MC.")
     p.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility.")
     p.add_argument("--lags", default="1,2,4,8,16", help="Comma-separated lag values for autocorrelation.")
     p.add_argument(
@@ -403,8 +405,7 @@ def mc_permutation_test(
         "repeat_effect_pct": (obs_repeat - exact_mean) * 100 if not math.isnan(exact_mean) else float("nan"),
     }
 
-    if trials <= 0 or n > mc_max_n:
-        mode = "exact_only_n_too_large" if n > mc_max_n else "exact_only_trials_0"
+    if trials <= 0:
         result.update({
             "mc_repeat_mean": exact_mean, "mc_repeat_std": float("nan"),
             "mc_repeat_zscore": float("nan"), "mc_repeat_p_ge": float("nan"),
@@ -414,7 +415,7 @@ def mc_permutation_test(
             "mc_maxrun_ci_lo": float("nan"), "mc_maxrun_ci_hi": float("nan"),
             "mc_meanrun_mean": float("nan"), "mc_meanrun_std": float("nan"),
             "mc_meanrun_zscore": float("nan"),
-            "baseline_mode": mode,
+            "baseline_mode": "exact_only_trials_0",
         })
         return result
 
