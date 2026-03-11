@@ -114,10 +114,10 @@ def read_rows(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
 def write_csv(path: Path, rows: List[Dict[str, object]], fields: Sequence[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         for r in rows:
-            w.writerow(r)
+            w.writerow({k: r.get(k, "") for k in fields})
 
 
 def safe_int(v: str, default: int = 0) -> int:
@@ -405,25 +405,37 @@ def mc_permutation_test(
         "repeat_effect_pct": (obs_repeat - exact_mean) * 100 if not math.isnan(exact_mean) else float("nan"),
     }
 
+    _nan_mc = {
+        "mc_repeat_mean": exact_mean, "mc_repeat_std": float("nan"),
+        "mc_repeat_zscore": float("nan"), "mc_repeat_p_ge": float("nan"),
+        "mc_repeat_ci_lo": float("nan"), "mc_repeat_ci_hi": float("nan"),
+        "mc_maxrun_mean": float("nan"), "mc_maxrun_std": float("nan"),
+        "mc_maxrun_zscore": float("nan"), "mc_maxrun_p_ge": float("nan"),
+        "mc_maxrun_ci_lo": float("nan"), "mc_maxrun_ci_hi": float("nan"),
+        "mc_meanrun_mean": float("nan"), "mc_meanrun_std": float("nan"),
+        "mc_meanrun_zscore": float("nan"),
+    }
+
     if trials <= 0:
-        result.update({
-            "mc_repeat_mean": exact_mean, "mc_repeat_std": float("nan"),
-            "mc_repeat_zscore": float("nan"), "mc_repeat_p_ge": float("nan"),
-            "mc_repeat_ci_lo": float("nan"), "mc_repeat_ci_hi": float("nan"),
-            "mc_maxrun_mean": float("nan"), "mc_maxrun_std": float("nan"),
-            "mc_maxrun_zscore": float("nan"), "mc_maxrun_p_ge": float("nan"),
-            "mc_maxrun_ci_lo": float("nan"), "mc_maxrun_ci_hi": float("nan"),
-            "mc_meanrun_mean": float("nan"), "mc_meanrun_std": float("nan"),
-            "mc_meanrun_zscore": float("nan"),
-            "baseline_mode": "exact_only_trials_0",
-        })
+        result.update(_nan_mc)
+        result["baseline_mode"] = "exact_only_trials_0"
         return result
+
+    # For very long sequences, subsample to keep MC tractable
+    if mc_max_n > 0 and n > mc_max_n:
+        subsample_seq = list(seq)
+        rng.shuffle(subsample_seq)
+        subsample_seq = subsample_seq[:mc_max_n]
+        baseline_mode = "mc_subsampled"
+    else:
+        subsample_seq = list(seq)
+        baseline_mode = "mc_shuffle"
 
     trial_repeats: List[float] = []
     trial_maxruns: List[float] = []
     trial_meanruns: List[float] = []
 
-    work = list(seq)
+    work = list(subsample_seq)
     for _ in range(trials):
         rng.shuffle(work)
         trial_repeats.append(repeat_rate(work))
@@ -432,6 +444,9 @@ def mc_permutation_test(
         trial_meanruns.append(statistics.fmean(rl) if rl else 0.0)
 
     def _stats(observed: float, trial_vals: List[float]) -> Dict[str, float]:
+        if not trial_vals:
+            return {"mean": float("nan"), "std": float("nan"), "zscore": float("nan"),
+                    "p_ge": float("nan"), "ci_lo": float("nan"), "ci_hi": float("nan")}
         mu = statistics.fmean(trial_vals)
         sd = statistics.pstdev(trial_vals) if len(trial_vals) > 1 else 0.0
         z = (observed - mu) / sd if sd > 0 else float("nan")
@@ -457,7 +472,7 @@ def mc_permutation_test(
         "mc_maxrun_ci_lo": max_s["ci_lo"], "mc_maxrun_ci_hi": max_s["ci_hi"],
         "mc_meanrun_mean": mean_s["mean"], "mc_meanrun_std": mean_s["std"],
         "mc_meanrun_zscore": mean_s["zscore"],
-        "baseline_mode": "mc_shuffle",
+        "baseline_mode": baseline_mode,
     })
     return result
 
@@ -640,7 +655,7 @@ def windowed_analysis(
             "window_repeat_zscore": z,
             "window_repeat_p_ge": p_ge,
             "window_dominant_share": obs_dom,
-            "window_dominant_winner": w_counts.most_common(1)[0][0],
+            "window_dominant_winner": w_counts.most_common(1)[0][0] if w_counts else "",
             "window_jains_fairness": obs_jfi,
             "window_unique_winners": len(w_counts),
             "baseline_mode": mode,
@@ -712,14 +727,19 @@ def detect_changepoints(
         left_vals = clean[seg_start:best_split_pos]
         right_vals = clean[best_split_pos:seg_end]
 
+        if not left_vals or not right_vals:
+            break
+
+        left_mean = statistics.fmean(left_vals)
+        right_mean = statistics.fmean(right_vals)
         changepoints.append({
             "cp_position": best_split_pos,
             "cp_score": best_global_score,
-            "left_mean": statistics.fmean(left_vals),
-            "right_mean": statistics.fmean(right_vals),
+            "left_mean": left_mean,
+            "right_mean": right_mean,
             "left_n": len(left_vals),
             "right_n": len(right_vals),
-            "abs_delta": abs(statistics.fmean(left_vals) - statistics.fmean(right_vals)),
+            "abs_delta": abs(left_mean - right_mean),
         })
 
         # Split segment
