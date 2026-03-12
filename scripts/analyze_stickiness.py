@@ -37,9 +37,17 @@ import csv
 import math
 import random
 import statistics
+import sys
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,6 +231,118 @@ def jains_fairness(counts: Counter, n_threads: int) -> float:
     if sum_sq == 0:
         return float("nan")
     return (total * total) / (n_threads * sum_sq)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Numpy-accelerated helpers (used when numpy is available)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _seq_to_int_array(seq: Sequence[str]) -> "Tuple[np.ndarray, Dict[str, int]]":
+    """Map string sequence to integer numpy array for fast operations."""
+    labels: Dict[str, int] = {}
+    n = 0
+    for s in seq:
+        if s not in labels:
+            labels[s] = n
+            n += 1
+    arr = np.array([labels[s] for s in seq], dtype=np.int32)
+    return arr, labels
+
+
+def _np_repeat_rate(arr: "np.ndarray") -> float:
+    """Vectorised repeat rate on integer array."""
+    if len(arr) < 2:
+        return 0.0
+    return float(np.count_nonzero(arr[1:] == arr[:-1]) / (len(arr) - 1))
+
+
+def _np_run_lengths(arr: "np.ndarray") -> "np.ndarray":
+    """Vectorised run lengths on integer array."""
+    if len(arr) == 0:
+        return np.array([], dtype=np.int64)
+    changes = np.where(arr[1:] != arr[:-1])[0] + 1
+    boundaries = np.concatenate(([0], changes, [len(arr)]))
+    return np.diff(boundaries)
+
+
+def _np_mc_permutation(
+    arr: "np.ndarray",
+    trials: int,
+    rng_seed: int,
+) -> "Tuple[np.ndarray, np.ndarray, np.ndarray]":
+    """Run MC permutation trials using numpy shuffle.
+
+    Returns (trial_repeat_rates, trial_max_runs, trial_mean_runs).
+    """
+    np_rng = np.random.RandomState(rng_seed)
+    work = arr.copy()
+    n = len(work)
+    trial_repeats = np.empty(trials, dtype=np.float64)
+    trial_maxruns = np.empty(trials, dtype=np.float64)
+    trial_meanruns = np.empty(trials, dtype=np.float64)
+
+    for t in range(trials):
+        np_rng.shuffle(work)
+        same = np.count_nonzero(work[1:] == work[:-1])
+        trial_repeats[t] = same / (n - 1) if n > 1 else 0.0
+        rl = _np_run_lengths(work)
+        trial_maxruns[t] = float(rl.max()) if len(rl) > 0 else 0.0
+        trial_meanruns[t] = float(rl.mean()) if len(rl) > 0 else 0.0
+
+    return trial_repeats, trial_maxruns, trial_meanruns
+
+
+def _np_window_mc(
+    arr: "np.ndarray",
+    trials: int,
+    rng_seed: int,
+) -> "Tuple[float, float, float]":
+    """MC shuffle for a single window. Returns (mean, std, p_ge_observed)."""
+    np_rng = np.random.RandomState(rng_seed)
+    work = arr.copy()
+    n = len(work)
+    obs_rr = float(np.count_nonzero(work[1:] == work[:-1]) / (n - 1)) if n > 1 else 0.0
+
+    trial_rr = np.empty(trials, dtype=np.float64)
+    for t in range(trials):
+        np_rng.shuffle(work)
+        same = np.count_nonzero(work[1:] == work[:-1])
+        trial_rr[t] = same / (n - 1) if n > 1 else 0.0
+
+    mu = float(trial_rr.mean())
+    sd = float(trial_rr.std())
+    p_ge = float(np.count_nonzero(trial_rr >= obs_rr) / trials)
+    return mu, sd, p_ge
+
+
+def _np_per_thread_mc(
+    arr: "np.ndarray",
+    n_unique: int,
+    trials: int,
+    rng_seed: int,
+) -> "Tuple[Dict[int, list], Dict[int, list]]":
+    """MC shuffle for per-thread metrics. Returns dicts of trial values per thread."""
+    np_rng = np.random.RandomState(rng_seed)
+    work = arr.copy()
+    n = len(work)
+    ntrans = n - 1
+
+    global_trials: Dict[int, list] = defaultdict(list)
+    cond_trials: Dict[int, list] = defaultdict(list)
+
+    for _ in range(trials):
+        np_rng.shuffle(work)
+        prev_eq = work[1:] == work[:-1]  # boolean array
+        # For each unique thread, count same-as-prev and prev occurrences
+        for tid in range(n_unique):
+            mask_prev = work[:-1] == tid  # positions where this thread was previous winner
+            t_prev_count = int(mask_prev.sum())
+            t_same_count = int((prev_eq & mask_prev).sum())
+            global_trials[tid].append(t_same_count / ntrans if ntrans > 0 else 0.0)
+            if t_prev_count > 0:
+                cond_trials[tid].append(t_same_count / t_prev_count)
+
+    return global_trials, cond_trials
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -431,17 +551,26 @@ def mc_permutation_test(
         subsample_seq = list(seq)
         baseline_mode = "mc_shuffle"
 
-    trial_repeats: List[float] = []
-    trial_maxruns: List[float] = []
-    trial_meanruns: List[float] = []
+    # Use numpy-accelerated MC if available
+    if _HAS_NUMPY:
+        arr, _labels = _seq_to_int_array(subsample_seq)
+        rng_seed = rng.randint(0, 2**31 - 1)
+        np_repeats, np_maxruns, np_meanruns = _np_mc_permutation(arr, trials, rng_seed)
+        trial_repeats = np_repeats.tolist()
+        trial_maxruns = np_maxruns.tolist()
+        trial_meanruns = np_meanruns.tolist()
+    else:
+        trial_repeats: List[float] = []
+        trial_maxruns: List[float] = []
+        trial_meanruns: List[float] = []
 
-    work = list(subsample_seq)
-    for _ in range(trials):
-        rng.shuffle(work)
-        trial_repeats.append(repeat_rate(work))
-        rl = run_lengths(work)
-        trial_maxruns.append(float(max(rl)) if rl else 0.0)
-        trial_meanruns.append(statistics.fmean(rl) if rl else 0.0)
+        work = list(subsample_seq)
+        for _ in range(trials):
+            rng.shuffle(work)
+            trial_repeats.append(repeat_rate(work))
+            rl = run_lengths(work)
+            trial_maxruns.append(float(max(rl)) if rl else 0.0)
+            trial_meanruns.append(statistics.fmean(rl) if rl else 0.0)
 
     def _stats(observed: float, trial_vals: List[float]) -> Dict[str, float]:
         if not trial_vals:
@@ -512,19 +641,30 @@ def per_thread_metrics(
     thread_cond_trials: Dict[str, List[float]] = defaultdict(list)
 
     if do_mc:
-        work = list(seq)
-        for _ in range(trials):
-            rng.shuffle(work)
-            t_same: Counter = Counter()
-            t_prev: Counter = Counter()
-            for i in range(1, n):
-                t_prev[work[i - 1]] += 1
-                if work[i] == work[i - 1]:
-                    t_same[work[i]] += 1
-            for t in counts:
-                thread_global_trials[t].append(t_same[t] / ntrans if ntrans else 0)
-                if t_prev[t] > 0:
-                    thread_cond_trials[t].append(t_same[t] / t_prev[t])
+        if _HAS_NUMPY:
+            arr, label_map = _seq_to_int_array(seq)
+            inv_label_map = {v: k for k, v in label_map.items()}
+            rng_seed = rng.randint(0, 2**31 - 1)
+            np_global, np_cond = _np_per_thread_mc(arr, len(label_map), trials, rng_seed)
+            for tid_int, tid_str in inv_label_map.items():
+                if tid_int in np_global:
+                    thread_global_trials[tid_str] = np_global[tid_int]
+                if tid_int in np_cond:
+                    thread_cond_trials[tid_str] = np_cond[tid_int]
+        else:
+            work = list(seq)
+            for _ in range(trials):
+                rng.shuffle(work)
+                t_same: Counter = Counter()
+                t_prev: Counter = Counter()
+                for i in range(1, n):
+                    t_prev[work[i - 1]] += 1
+                    if work[i] == work[i - 1]:
+                        t_same[work[i]] += 1
+                for t in counts:
+                    thread_global_trials[t].append(t_same[t] / ntrans if ntrans else 0)
+                    if t_prev[t] > 0:
+                        thread_cond_trials[t].append(t_same[t] / t_prev[t])
 
     results: List[Dict[str, object]] = []
     all_threads = sorted(counts.keys(), key=lambda x: (safe_int(x, 10**18), x))
@@ -610,6 +750,14 @@ def windowed_analysis(
     rows: List[Dict[str, object]] = []
     zscores: List[float] = []
 
+    # Pre-compute numpy array for slicing into windows
+    _use_np_arr = False
+    _np_full_arr = None
+    _w_label_map: Dict[str, int] = {}
+    if _HAS_NUMPY:
+        _np_full_arr, _w_label_map = _seq_to_int_array(seq)
+        _use_np_arr = True
+
     for widx, start in enumerate(range(0, n - window_size + 1, window_size)):
         wseq = seq[start:start + window_size]
         wn = len(wseq)
@@ -622,15 +770,21 @@ def windowed_analysis(
 
         # MC for this window
         if trials > 0 and wn <= mc_max_n:
-            work = list(wseq)
-            w_trials: List[float] = []
-            for _ in range(trials):
-                rng.shuffle(work)
-                w_trials.append(repeat_rate(work))
-            mu = statistics.fmean(w_trials)
-            sd = statistics.pstdev(w_trials) if len(w_trials) > 1 else 0.0
-            z = (obs_rr - mu) / sd if sd > 0 else float("nan")
-            p_ge = sum(v >= obs_rr for v in w_trials) / len(w_trials)
+            if _HAS_NUMPY:
+                w_arr = np.array([_w_label_map.get(s, 0) for s in wseq], dtype=np.int32) if not _use_np_arr else _np_full_arr[start:start + window_size]
+                rng_seed = rng.randint(0, 2**31 - 1)
+                mu, sd, p_ge = _np_window_mc(w_arr, trials, rng_seed)
+                z = (obs_rr - mu) / sd if sd > 0 else float("nan")
+            else:
+                work = list(wseq)
+                w_trials: List[float] = []
+                for _ in range(trials):
+                    rng.shuffle(work)
+                    w_trials.append(repeat_rate(work))
+                mu = statistics.fmean(w_trials)
+                sd = statistics.pstdev(w_trials) if len(w_trials) > 1 else 0.0
+                z = (obs_rr - mu) / sd if sd > 0 else float("nan")
+                p_ge = sum(v >= obs_rr for v in w_trials) / len(w_trials)
             mode = "mc_shuffle"
         else:
             mu = exact_exp
@@ -821,6 +975,10 @@ def main() -> None:
         grouped[tuple(row.get(c, "") for c in group_cols)].append(row)
 
     rng = random.Random(args.seed)
+    if _HAS_NUMPY:
+        print(f"  Using numpy {np.__version__} for accelerated MC computation")
+    else:
+        print("  WARNING: numpy not available, using pure Python (will be slow)")
 
     group_summary_rows: List[Dict[str, object]] = []
     window_detail_rows: List[Dict[str, object]] = []
@@ -851,8 +1009,8 @@ def main() -> None:
             else:
                 n_threads = len(counts)
 
-        if g_idx % 50 == 0 or g_idx == 1:
-            print(f"  Processing group {g_idx}/{n_groups} (n={n}, threads={n_threads})")
+        t_start = time.monotonic()
+        print(f"  Processing group {g_idx}/{n_groups} (n={n}, threads={n_threads})...", end="", flush=True)
 
         # ── 1. Overall MC permutation test ──────────────────────────────────
         mc = mc_permutation_test(seq, args.trials, args.mc_max_n, rng)
@@ -977,6 +1135,8 @@ def main() -> None:
                 all_pvalues.append(("group", len(group_summary_rows), f"{col}_bh", p_val))
 
         group_summary_rows.append(summary_row)
+        t_elapsed = time.monotonic() - t_start
+        print(f" done ({t_elapsed:.1f}s)", flush=True)
 
     # ── FDR Correction ──────────────────────────────────────────────────────
     print(f"\nApplying Benjamini-Hochberg FDR correction to {len(all_pvalues)} p-values (alpha={args.fdr_alpha})...")
