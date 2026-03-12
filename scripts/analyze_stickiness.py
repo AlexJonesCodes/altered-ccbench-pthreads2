@@ -952,6 +952,10 @@ def main() -> None:
     in_path = Path(args.input)
     out_prefix = Path(args.out_prefix)
 
+    if not _HAS_NUMPY:
+        print("WARNING: numpy is not installed. Install it with: pip install numpy", file=sys.stderr)
+        print("WARNING: Falling back to pure Python — analysis will be ~50x slower.", file=sys.stderr)
+
     lag_values = [int(x) for x in args.lags.split(",") if x.strip()]
     window_sizes = [int(x) for x in args.window_sizes.split(",") if x.strip()]
     if not window_sizes:
@@ -989,6 +993,8 @@ def main() -> None:
     all_pvalues: List[Tuple[str, int, str, float]] = []  # (table, row_idx, col_name, pvalue)
 
     n_groups = len(grouped)
+    t_analysis_start = time.monotonic()
+    print(f"\nAnalysing {n_groups} groups (trials={args.trials}, windows={args.window_sizes})...")
     for g_idx, (key, grows) in enumerate(sorted(grouped.items()), 1):
         grows.sort(key=lambda r: safe_int(r.get(rep_col, "0"), 0))
         seq = [str(r.get(args.winner_col, "")) for r in grows]
@@ -1266,7 +1272,8 @@ def main() -> None:
                         print(f"    This is the hidden unfairness your research targets.")
                         break
 
-    print("\nDone.")
+    t_total = time.monotonic() - t_analysis_start
+    print(f"\nDone in {t_total:.1f}s.")
 
 
 if __name__ == "__main__":
