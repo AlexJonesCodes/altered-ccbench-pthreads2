@@ -643,9 +643,44 @@ def plot_multiscale_heatmap(win_data, out_dir: Path, fmt: str, dpi: int,
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+def resolve_prefix(raw: str) -> Path:
+    """Resolve the analysis prefix, accepting either a directory or file prefix.
+
+    Accepts any of:
+      results/stickiness_study_2/analysis              (directory)
+      results/stickiness_study_2/analysis/stickiness   (file prefix)
+      results/stickiness_study_2/analysis/stickiness_group_summary.csv  (full path)
+    """
+    p = Path(raw)
+    # If it's a directory, look for the standard 'stickiness' prefix inside it
+    if p.is_dir():
+        candidate = p / "stickiness"
+        # Verify at least one expected file exists
+        if candidate.with_name("stickiness_window_detail.csv").exists():
+            return candidate
+        # Try to find *_window_detail.csv in the directory
+        matches = list(p.glob("*_window_detail.csv"))
+        if matches:
+            # Derive prefix from the filename
+            name = matches[0].name  # e.g. stickiness_window_detail.csv
+            prefix_name = name.replace("_window_detail.csv", "")
+            return p / prefix_name
+        # Fall through — user may have a non-standard layout
+        return candidate
+    # If it points at a CSV file, strip the suffix to get the prefix
+    if p.suffix == ".csv":
+        name = p.name
+        for suffix in ("_window_detail", "_group_summary", "_thread_summary",
+                        "_regime_summary"):
+            if name.endswith(suffix + ".csv"):
+                return p.with_name(name.replace(suffix + ".csv", ""))
+        return p.with_suffix("")
+    return p
+
+
 def main() -> None:
     args = parse_args()
-    prefix = Path(args.prefix)
+    prefix = resolve_prefix(args.prefix)
 
     window_path = prefix.with_name(prefix.name + "_window_detail.csv")
     group_path = prefix.with_name(prefix.name + "_group_summary.csv")
