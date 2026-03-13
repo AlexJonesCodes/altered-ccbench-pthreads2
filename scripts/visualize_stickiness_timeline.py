@@ -643,13 +643,49 @@ def plot_multiscale_heatmap(win_data, out_dir: Path, fmt: str, dpi: int,
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+def resolve_prefix(raw: str) -> Path:
+    """Resolve the analysis prefix, accepting either a directory or file prefix.
+
+    Accepts any of:
+      results/stickiness_study_2/analysis              (directory)
+      results/stickiness_study_2/analysis/stickiness   (file prefix)
+      results/stickiness_study_2/analysis/stickiness_group_summary.csv  (full path)
+    """
+    p = Path(raw)
+    # If it's a directory, look for the standard 'stickiness' prefix inside it
+    if p.is_dir():
+        # Try to find *_window_detail.csv in the directory
+        matches = list(p.glob("*_window_detail.csv"))
+        if matches:
+            # Derive prefix from the filename
+            name = matches[0].name  # e.g. stickiness_window_detail.csv
+            prefix_name = name.replace("_window_detail.csv", "")
+            return p / prefix_name
+        # Default: assume standard 'stickiness' prefix
+        return p / "stickiness"
+    # If it points at a CSV file, strip the suffix to get the prefix
+    if p.suffix == ".csv":
+        name = p.name
+        for suffix in ("_window_detail", "_group_summary", "_thread_summary",
+                        "_regime_summary"):
+            if name.endswith(suffix + ".csv"):
+                return p.parent / name.replace(suffix + ".csv", "")
+        return p.with_suffix("")
+    return p
+
+
+def _prefix_path(prefix: Path, suffix: str) -> Path:
+    """Build a sibling path from a prefix: <parent>/<prefix_name><suffix>."""
+    return prefix.parent / (prefix.name + suffix)
+
+
 def main() -> None:
     args = parse_args()
-    prefix = Path(args.prefix)
+    prefix = resolve_prefix(args.prefix)
 
-    window_path = prefix.with_name(prefix.name + "_window_detail.csv")
-    group_path = prefix.with_name(prefix.name + "_group_summary.csv")
-    regime_path = prefix.with_name(prefix.name + "_regime_summary.csv")
+    window_path = _prefix_path(prefix, "_window_detail.csv")
+    group_path = _prefix_path(prefix, "_group_summary.csv")
+    regime_path = _prefix_path(prefix, "_regime_summary.csv")
 
     windows = read_csv(window_path)
     groups = read_csv(group_path)
