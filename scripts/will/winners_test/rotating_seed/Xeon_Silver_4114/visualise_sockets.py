@@ -1,254 +1,308 @@
 import csv
-from collections import defaultdict
-import matplotlib.pyplot as plt
+import os
 import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
-# ----------------------------
-# SETTINGS
-# ----------------------------
+plt.rcParams.update({
+    'font.size': 18,
+    'axes.titlesize': 20,
+    'axes.labelsize': 18,
+    'xtick.labelsize': 16,
+    'ytick.labelsize': 16,
+    'legend.fontsize': 16,
+    'figure.titlesize': 22
+})
 
-RANDOM_MIX_MODE = True   # True = mixed instruction CSV
-
+# -------------------------------
+# INPUT CSV FILES
+# -------------------------------
 CSV_FILES = [
-    "4kruns_1_000_000_reps2/4000_runs_1mill_reps2.csv",
-    "cas_4kruns_1_000_000_reps/4000_runs_1mill_reps_cas.csv",
-    "fai_4kruns_1_000_000_reps/4000_runs_1mill_reps_fai_rep.csv",
-    "load_on_modified_4kruns_1_000_000_reps/load_on_modified_4000_runs_1mill_reps.csv",
-    "swap_4kruns_1_000_000_reps/4000_runs_1mill_reps_swap.csv",
-    "tas_4kruns_1_000_000_reps/1/4000_runs_1mill_reps_tas.csv"
+"4kruns_1_000_000_reps2/4000_runs_1mill_reps2.csv",
+"cas_4kruns_1_000_000_reps/4000_runs_1mill_reps_cas.csv",
+"fai_4kruns_1_000_000_reps/4000_runs_1mill_reps_fai_rep.csv",
+"load_on_modified_4kruns_1_000_000_reps/load_on_modified_4000_runs_1mill_reps.csv",
+"swap_4kruns_1_000_000_reps/4000_runs_1mill_reps_swap.csv",
+"tas_4kruns_1_000_000_reps/1/4000_runs_1mill_reps_tas.csv",
+
+"../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
+"../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/load_on_modified_6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_load_on_modified.csv",
+"../Xeon_Gold_6142/swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/6400_runs_1.6mill_reps_tas.csv"
 ]
 
 '''
-    "../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
-    "../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
-    "../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
-    "../Xeon_Gold_6142/load_on_modified_6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_load_on_modified.csv",
-    "../Xeon_Gold_6142/swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv",
-    "../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/6400_runs_1.6mill_reps_tas.csv"
+"../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
+"../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/load_on_modified_6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_load_on_modified.csv",
+"../Xeon_Gold_6142/swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/6400_runs_1.6mill_reps_tas.csv"
 '''
 
-is_gold_list = [
-    False
-]
+NUM_SILVER = 6
+NUM_TOTAL = len(CSV_FILES)
+is_gold_list = [False]*NUM_SILVER + [True]*(NUM_TOTAL - NUM_SILVER)
+
+OUTPUT_DIR = "socket_plots/silver_vs_gold/"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 LABEL_MAP = {
-    "STORE_ON_MODIFIED": "STORE",
-    "LOAD_ON_MODIFIED": "LOAD"
+"STORE_ON_MODIFIED": "STORE",
+"LOAD_FROM_MODIFIED": "LOAD"
 }
 
-instruction_order = [
-    "TAS",
-    "SWAP",
-    "STORE_ON_MODIFIED",
-    "LOAD_FROM_MODIFIED",
-    "CAS",
-    "FAI"
-]
-
-# ----------------------------
-# SOCKET MAPPING
-# ----------------------------
-
+# -------------------------------
+# Socket mapping per test
+# -------------------------------
 def get_socket_mapping(is_gold, total_cpus):
 
     if is_gold:
         return {
-            0: list(range(0,10)) + list(range(20,30)),
-            1: list(range(10,20)) + list(range(30,40))
+            0: [cpu for cpu in range(total_cpus) if cpu % 2 == 0],
+            1: [cpu for cpu in range(total_cpus) if cpu % 2 == 1],
         }
+
     else:
-        half = total_cpus // 2
         return {
-            0: list(range(0, half)),
-            1: list(range(half, total_cpus))
+            0: list(range(0,10)) + list(range(20,30)),
+            1: list(range(10,20)) + list(range(30,40)),
         }
 
-# ----------------------------
-# LOAD CSV
-# ----------------------------
+# -------------------------------
+# Color helper
+# -------------------------------
+def cpu_color_per_test(is_gold, socket):
 
-def load_csv(csv_file):
+    if is_gold:
+        return "#d4af37" if socket == 0 else "#b8962e"
+    else:
+        return "#d9d9d9" if socket == 0 else "#a6a6a6"
+
+# -------------------------------
+# Load CSV
+# -------------------------------
+def load_test(csv_file):
 
     core_winners = defaultdict(lambda: defaultdict(int))
-    core_instr = defaultdict(dict)
+    test_type = None
 
-    with open(csv_file) as f:
+    with open(csv_file, newline="") as f:
         reader = csv.DictReader(f)
 
         for row in reader:
             run = int(row["run"])
             cpu = int(row["cpu"])
             wins = int(row["wins"])
-            instr = row["test_type"]
+            test_type = row["test_type"]
 
             core_winners[run][cpu] += wins
-            core_instr[run][cpu] = instr
 
-    return core_winners, core_instr
+    return core_winners, test_type
 
-# ----------------------------
-# FAIRNESS CALCULATION
-# ----------------------------
-
+# -------------------------------
+# Helper: total executions per run
+# -------------------------------
 def total_executions_per_run(core_winners):
 
     totals = {}
 
-    for run in core_winners:
-        totals[run] = sum(core_winners[run].values())
+    for run, cpu_dict in core_winners.items():
+        totals[run] = sum(cpu_dict.values())
 
     return totals
 
-
-def compute_socket_totals(core_winners, SOCKETS):
+# -------------------------------
+# Compute socket data
+# -------------------------------
+def compute_socket_data(core_winners, SOCKETS, mode="totals"):
 
     socket_data = defaultdict(list)
     totals_per_run = total_executions_per_run(core_winners)
 
     for run in core_winners:
 
-        total_cpus = sum(len(v) for v in SOCKETS.values())
-        fair = totals_per_run[run] / total_cpus
+        total_cpus = sum(map(len, SOCKETS.values()))
+        fair_share = totals_per_run[run] / total_cpus
 
         for socket, cpus in SOCKETS.items():
 
-            total = sum(core_winners[run][cpu] for cpu in cpus)
+            socket_sum = sum(core_winners[run].get(cpu,0) for cpu in cpus)
 
-            socket_data[socket].append(total / (fair * len(cpus)))
+            if mode == "totals":
+                socket_data[socket].append(socket_sum / (fair_share * len(cpus)))
+            else:
+                for cpu in cpus:
+                    wins = core_winners[run].get(cpu, 0)
+                    socket_data[socket].append(wins / fair_share)
 
     return socket_data
 
+# -------------------------------
+# Axis helpers
+# -------------------------------
+def format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title):
 
-def compute_socket_instruction(core_winners, core_instr, SOCKETS):
+    ax.set_xticks(positions)
+    ax.set_xticklabels(socket_labels)
+    ax.set_xlabel("Socket")
+    ax.set_ylabel(f"{ylabel} (Fair = {fair_value_real})")
+    ax.set_ylim(bottom=0)
+    ax.set_yticks(np.arange(0, ax.get_ylim()[1] + 0.1, 0.1))
+    ax.set_title(title)
 
-    socket_instr = defaultdict(list)
-    totals_per_run = total_executions_per_run(core_winners)
+def add_top_axis(ax, positions, labels):
 
-    for run in core_winners:
+    ax_top = ax.twiny()
+    ax_top.set_xlim(ax.get_xlim())
+    ax_top.set_xticks(positions)
+    ax_top.set_xticklabels(labels)
+    ax_top.set_xlabel("Instruction Type")
 
-        total_cpus = sum(len(v) for v in SOCKETS.values())
-        fair = totals_per_run[run] / total_cpus
-
-        for socket, cpus in SOCKETS.items():
-
-            for cpu in cpus:
-
-                instr = core_instr[run][cpu]
-                wins = core_winners[run][cpu]
-
-                socket_instr[(socket, instr)].append(wins / fair)
-
-    return socket_instr
-
-# ----------------------------
-# BUILD TEST DATA
-# ----------------------------
-
+# -------------------------------
+# Load all tests
+# -------------------------------
 tests = []
 
 for csv_file, is_gold in zip(CSV_FILES, is_gold_list):
 
-    core_winners, core_instr = load_csv(csv_file)
+    core_winners, test_type = load_test(csv_file)
 
     total_cpus = max(core_winners[next(iter(core_winners))].keys()) + 1
+
     SOCKETS = get_socket_mapping(is_gold, total_cpus)
 
-    if RANDOM_MIX_MODE:
+    tests.append({
+        "type": test_type,
+        "totals": compute_socket_data(core_winners, SOCKETS, "totals"),
+        "individual": compute_socket_data(core_winners, SOCKETS, "individual")
+    })
 
-        mixed = compute_socket_instruction(core_winners, core_instr, SOCKETS)
+def make_plots(dataset, ylabel, title, filename):
 
-        tests.append({"mixed": mixed})
-
-    else:
-
-        totals = compute_socket_totals(core_winners, SOCKETS)
-
-        # determine instruction type
-        first_run = next(iter(core_instr))
-        test_type = list(core_instr[first_run].values())[0]
-
-        tests.append({
-            "type": test_type,
-            "totals": totals
-        })
-
-# ----------------------------
-# PLOTTING
-# ----------------------------
-
-def make_plot():
-
-    fig, ax = plt.subplots()
-
-    data = []
+    data_for_plot = []
     positions = []
-
     socket_labels = []
-    instr_labels = []
+    test_labels = []
 
     pos = 1
 
-    if RANDOM_MIX_MODE:
+    # -------------------------------
+    # Compute fair value per CPU
+    # -------------------------------
+    with open(CSV_FILES[0], newline="") as f:
 
-        mixed = tests[0]["mixed"]
+        reader = csv.DictReader(f)
 
-        for socket in [0,1]:
-            for instr in instruction_order:
+        first_run_rows = [row for row in reader if int(row["run"]) == 1]
 
-                key = (socket, instr)
+        total_executions = sum(int(row["wins"]) for row in first_run_rows)
 
-                if key not in mixed:
-                    continue
+        total_cpus = len(first_run_rows)
 
-                data.append(mixed[key])
-                positions.append(pos)
-
-                socket_labels.append(str(socket))
-                instr_labels.append(LABEL_MAP.get(instr, instr))
-
-                pos += 1
-
+    if dataset == "totals":
+        fair_value_real = total_executions / 2
     else:
+        fair_value_real = total_executions / total_cpus
 
-        for test in tests:
+    for test_idx, test in enumerate(tests):
+        for socket in [0,1]:
 
-            totals = test["totals"]
+            data_for_plot.append(test[dataset][socket])
+            positions.append(pos)
+            socket_labels.append(str(socket))
+            test_labels.append(LABEL_MAP.get(test["type"], test["type"]))
 
-            for socket in [0,1]:
+            pos += 1
 
-                data.append(totals[socket])
-                positions.append(pos)
+    if not data_for_plot:
+        print(f"Warning: no data to plot for {filename}")
+        return
 
-                socket_labels.append(str(socket))
-                instr_labels.append(LABEL_MAP.get(test["type"], test["type"]))
+    # -------------------------------
+    # BAR plot
+    # -------------------------------
+    fig, ax = plt.subplots(figsize=(14,7))
 
-                pos += 1
+    means = [np.mean(d) for d in data_for_plot]
+    medians = [np.median(d) for d in data_for_plot]
 
-    vp = ax.violinplot(data, positions=positions, showmeans=True)
+    bars = ax.bar(positions, means, edgecolor="black")
 
-    # x axis
-    ax.set_xticks(positions)
-    ax.set_xticklabels(instr_labels, rotation=45)
+    for i, bar in enumerate(bars):
 
-    # secondary x axis for sockets
-    ax2 = ax.twiny()
-    ax2.set_xlim(ax.get_xlim())
-    ax2.set_xticks(positions)
-    ax2.set_xticklabels(socket_labels)
+        test_idx = i // 2
+        socket = int(socket_labels[i])
 
-    ax2.set_xlabel("Socket")
+        bar.set_facecolor(cpu_color_per_test(is_gold_list[test_idx], socket))
 
-    # y axis
-    ax.set_ylabel("Normalized Executions")
-    ax.set_ylim(bottom=0)
+    ax.plot(positions, medians, marker="o", color="deepskyblue")
 
-    ax.legend(loc="lower right")
+    ax.axhline(1.0, color='gray', linestyle='--', label='Fair Value')
+
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Socket 0"),
+        Patch(facecolor="#a6a6a6", edgecolor="black", label="Socket 1"),
+        Line2D([0],[0],color="deepskyblue",marker="o",label="Median"),
+        Line2D([0],[0],color='gray',linestyle='--',label='Fair Value')
+    ]
+
+    format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title)
+
+    ax.legend(handles=legend_handles, loc='lower right')
+
+    add_top_axis(ax, positions, test_labels)
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(os.path.join(OUTPUT_DIR, filename + "_bar.png"), dpi=300)
+    plt.close()
 
-# ----------------------------
-# RUN
-# ----------------------------
+    # -------------------------------
+    # VIOLIN plot
+    # -------------------------------
+    fig, ax = plt.subplots(figsize=(14,7))
 
-make_plot()
+    vp = ax.violinplot(data_for_plot, positions=positions, showmedians=True, bw_method=0.2)
+
+    for i, body in enumerate(vp["bodies"]):
+
+        test_idx = i // 2
+        socket = int(socket_labels[i])
+
+        body.set_facecolor(cpu_color_per_test(is_gold_list[test_idx], socket))
+        body.set_edgecolor("black")
+        body.set_alpha(0.6)
+
+    for i, d in enumerate(data_for_plot):
+        ax.hlines(np.mean(d), positions[i]-0.3, positions[i]+0.3,
+                  colors="red", linestyles="dashed", linewidth=2)
+
+    ax.axhline(1.0, color='gray', linestyle='--', label='Fair Share')
+
+    legend_handles = [
+        Line2D([0],[0],color="black",lw=2,label="Median"),
+        Line2D([0],[0],color="red",lw=2,linestyle="--",label="Mean"),
+        Line2D([0],[0],color='gray',linestyle='--',label='Fair Share')
+    ]
+
+    format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title)
+
+    ax.legend(handles=legend_handles, loc='lower right')
+
+    add_top_axis(ax, positions, test_labels)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, filename + "_violin.png"), dpi=300)
+    plt.close()
+
+# -------------------------------
+# Generate plots
+# -------------------------------
+make_plots("totals", "Normalized Executions", "Socket Total Executions", "socket_total")
+make_plots("individual", "Normalized Executions per CPU", "Typical Executions per CPU by Socket", "socket_individual")
+
+print("Plots generated successfully.")

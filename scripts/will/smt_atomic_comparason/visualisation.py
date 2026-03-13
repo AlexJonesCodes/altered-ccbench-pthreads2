@@ -1,10 +1,11 @@
 import csv
+from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 
-BASE_DIR = "./r53600/"
+BASE_DIR = "./2660v2/20/"
 
 CSV_FILE = BASE_DIR + "ccbench_results.csv"
 
@@ -215,4 +216,60 @@ for core, core_data in per_core_data.items():
             instruction_max[inst]
         )
 
-print("All violin plots generated with consistent Y axes.")
+
+# -------------------------------
+# Heatmap generation
+# -------------------------------
+
+import matplotlib.pyplot as plt
+
+heatmap = np.zeros((len(TESTS), len(TESTS)))
+
+for yi, introduced in enumerate(TESTS):
+    for xi, focus in enumerate(TESTS):
+
+        vals = global_data[(focus, introduced)]
+
+        if vals:
+            heatmap[yi, xi] = np.median(vals)
+        else:
+            heatmap[yi, xi] = np.nan
+
+fig, ax = plt.subplots(figsize=(10,8))
+
+grey_white = LinearSegmentedColormap.from_list(
+    "grey_white",
+    ["#494949", "#ffffff"]
+)
+
+im = ax.imshow(heatmap, cmap=grey_white)
+# axis labels
+ax.set_xticks(range(len(TESTS)))
+ax.set_yticks(range(len(TESTS)))
+
+ax.set_xticklabels([TEST_NAMES[t] for t in TESTS])
+ax.set_yticklabels([TEST_NAMES[t] for t in TESTS])
+ax.invert_yaxis()
+
+ax.set_xlabel("Focus Instruction (latency measured)")
+ax.set_ylabel("Introduced Instruction")
+
+ax.set_title("Instruction Interference Heatmap (Median Latency)")
+
+# annotate cells
+for y in range(len(TESTS)):
+    for x in range(len(TESTS)):
+        val = heatmap[y,x]
+        if not np.isnan(val):
+            ax.text(x, y, f"{val:.1f}",
+                    ha="center",
+                    va="center",
+                    color="black")
+
+fig.colorbar(im, ax=ax, label="Latency (cycles)")
+
+plt.tight_layout()
+plt.savefig(OUTDIR / "instruction_interference_heatmap.png", dpi=300)
+plt.close()
+
+print("All violin plots generated")
