@@ -4,20 +4,22 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 
-CSV_FILE = "./r53600/ccbench_results.csv"
+BASE_DIR = "./r53600/"
 
-TESTS = [0,7,12,13,14,15]
+CSV_FILE = BASE_DIR + "ccbench_results.csv"
+
+TESTS = [0,7,13,14,15,34]
 
 TEST_NAMES = {
     0: "STORE",
     7: "LOAD",
-    12: "CAS",
     13: "FAI",
     14: "TAS",
-    15: "SWAP"
+    15: "SWAP",
+    34: "CAS"
 }
 
-OUTDIR = Path("./r53600/violin_plots")
+OUTDIR = Path(BASE_DIR + "violin_plots")
 CORE_DIR = OUTDIR / "per_core"
 
 OUTDIR.mkdir(exist_ok=True)

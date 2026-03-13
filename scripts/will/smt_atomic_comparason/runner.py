@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import subprocess
 import csv
 import re
@@ -11,9 +9,9 @@ import re
 CCBENCH = "../../../ccbench"
 OUTPUT_CSV = "ccbench_results.csv"
 
-REPEATS = 30
+REPEATS = 1
 
-TESTS = [0, 7, 12, 13, 14, 15]
+TESTS = [0, 7, 13, 14, 15, 34]
 
 
 # --------------------------------------------------
