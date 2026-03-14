@@ -20,6 +20,17 @@ plt.rcParams.update({
 # INPUT CSV FILES
 # -------------------------------
 CSV_FILES = [
+
+"../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
+"../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/load_on_modified_6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_load_on_modified.csv",
+"../Xeon_Gold_6142/swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv",
+"../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/1/6400_runs_1.6mill_reps_tas.csv"
+]
+
+'''
+
 "4kruns_1_000_000_reps2/4000_runs_1mill_reps2.csv",
 "cas_4kruns_1_000_000_reps/4000_runs_1mill_reps_cas.csv",
 "fai_4kruns_1_000_000_reps/4000_runs_1mill_reps_fai_rep.csv",
@@ -27,28 +38,13 @@ CSV_FILES = [
 "swap_4kruns_1_000_000_reps/4000_runs_1mill_reps_swap.csv",
 "tas_4kruns_1_000_000_reps/1/4000_runs_1mill_reps_tas.csv",
 
-"../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
-"../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
-"../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
-"../Xeon_Gold_6142/load_on_modified_6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_load_on_modified.csv",
-"../Xeon_Gold_6142/swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv",
-"../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/6400_runs_1.6mill_reps_tas.csv"
-]
-
-'''
-"../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
-"../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
-"../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
-"../Xeon_Gold_6142/load_on_modified_6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_load_on_modified.csv",
-"../Xeon_Gold_6142/swap_6400_runs_1.6mill_reps_repeat/swap_6400_runs_1.6mill_reps.csv",
-"../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/6400_runs_1.6mill_reps_tas.csv"
 '''
 
-NUM_SILVER = 6
+NUM_SILVER = 0
 NUM_TOTAL = len(CSV_FILES)
 is_gold_list = [False]*NUM_SILVER + [True]*(NUM_TOTAL - NUM_SILVER)
 
-OUTPUT_DIR = "socket_plots/silver_vs_gold/"
+OUTPUT_DIR = "socket_plots/all_gold/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 LABEL_MAP = {
@@ -149,19 +145,35 @@ def format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title):
 
     ax.set_xticks(positions)
     ax.set_xticklabels(socket_labels)
-    ax.set_xlabel("Socket")
+    ax.set_xlabel("Socket and Operation", labelpad=40)
     ax.set_ylabel(f"{ylabel} (Fair = {fair_value_real})")
     ax.set_ylim(bottom=0)
     ax.set_yticks(np.arange(0, ax.get_ylim()[1] + 0.1, 0.1))
     ax.set_title(title)
 
-def add_top_axis(ax, positions, labels):
+def add_test_separators(ax, positions):
 
-    ax_top = ax.twiny()
-    ax_top.set_xlim(ax.get_xlim())
-    ax_top.set_xticks(positions)
-    ax_top.set_xticklabels(labels)
-    ax_top.set_xlabel("Instruction Type")
+    for i in range(1, len(positions)-1, 2):
+
+        boundary = (positions[i] + positions[i+1]) / 2
+
+        ax.axvline(boundary, color="black", linewidth=1, alpha=0.4)
+
+def add_group_labels(ax, positions, labels):
+
+    for i in range(0, len(positions), 2):
+
+        mid = (positions[i] + positions[i+1]) / 2
+
+        ax.text(
+            mid,
+            -0.10,
+            labels[i],
+            ha='center',
+            va='top',
+            transform=ax.get_xaxis_transform(),
+            fontsize=16
+        )
 
 # -------------------------------
 # Load all tests
@@ -253,9 +265,10 @@ def make_plots(dataset, ylabel, title, filename):
 
     format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title)
 
-    ax.legend(handles=legend_handles, loc='lower right')
+    add_group_labels(ax, positions, test_labels)
+    add_test_separators(ax, positions)
 
-    add_top_axis(ax, positions, test_labels)
+    ax.legend(handles=legend_handles, loc='lower right')
 
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, filename + "_bar.png"), dpi=300)
@@ -291,9 +304,10 @@ def make_plots(dataset, ylabel, title, filename):
 
     format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title)
 
-    ax.legend(handles=legend_handles, loc='lower right')
+    add_group_labels(ax, positions, test_labels)
+    add_test_separators(ax, positions)
 
-    add_top_axis(ax, positions, test_labels)
+    ax.legend(handles=legend_handles, loc='lower right')
 
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, filename + "_violin.png"), dpi=300)

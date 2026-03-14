@@ -5,9 +5,15 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 
-BASE_DIR = "./2660v2/20/"
+BASE_DIR = "./silver_4114/"
+# BASE_DIR = "./gold_6142/"
+# BASE_DIR = "./E52450/20/"
 
 CSV_FILE = BASE_DIR + "ccbench_results.csv"
+
+CHIP_NAME = "Xeon Silver 4114: "
+# CHIP_NAME = "Xeon Gold 6142: "
+# CHIP_NAME = "Xeon E5-2450: "
 
 TESTS = [0,7,13,14,15,34]
 
@@ -239,7 +245,7 @@ fig, ax = plt.subplots(figsize=(10,8))
 
 grey_white = LinearSegmentedColormap.from_list(
     "grey_white",
-    ["#494949", "#ffffff"]
+    ["#005499", "#ffffff"]
 )
 
 im = ax.imshow(heatmap, cmap=grey_white)
@@ -254,7 +260,7 @@ ax.invert_yaxis()
 ax.set_xlabel("Focus Instruction (latency measured)")
 ax.set_ylabel("Introduced Instruction")
 
-ax.set_title("Instruction Interference Heatmap (Median Latency)")
+ax.set_title(CHIP_NAME + "Latency Introduced by Operations)")
 
 # annotate cells
 for y in range(len(TESTS)):
