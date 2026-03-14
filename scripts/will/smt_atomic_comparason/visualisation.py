@@ -5,13 +5,15 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 
-BASE_DIR = "./silver_4114/"
+BASE_DIR = "./r53600/"
+# BASE_DIR = "./silver_4114/"
 # BASE_DIR = "./gold_6142/"
 # BASE_DIR = "./E52450/20/"
 
 CSV_FILE = BASE_DIR + "ccbench_results.csv"
 
-CHIP_NAME = "Xeon Silver 4114: "
+CHIP_NAME = "Ryzen 5 3600: "
+# CHIP_NAME = "Xeon Silver 4114: "
 # CHIP_NAME = "Xeon Gold 6142: "
 # CHIP_NAME = "Xeon E5-2450: "
 
@@ -51,6 +53,10 @@ plt.rcParams.update({
 global_data = defaultdict(list)
 per_core_data = defaultdict(lambda: defaultdict(list))
 
+# baseline data (no contention)
+baseline_global = defaultdict(list)
+baseline_per_core = defaultdict(lambda: defaultdict(list))
+
 # -------------------------------
 # Read CSV
 # -------------------------------
@@ -70,6 +76,13 @@ with open(CSV_FILE) as f:
         lat1 = float(r["core0_avg_cycles"])
         lat2 = float(r["core1_avg_cycles"])
 
+        # baseline (single CPU runs)
+        if cpu2 == -1 and t2 == -1:
+
+            baseline_global[t1].append(lat1)
+            baseline_per_core[(cpu1)][t1].append(lat1)
+            continue
+
         # store latency for each instruction perspective
         global_data[(t1,t2)].append(lat1)
         global_data[(t2,t1)].append(lat2)
@@ -87,6 +100,12 @@ instruction_max = defaultdict(float)
 
 # check global data
 for (inst, other), vals in global_data.items():
+
+    if vals:
+        instruction_max[inst] = max(instruction_max[inst], max(vals))
+
+# check baseline
+for inst, vals in baseline_global.items():
 
     if vals:
         instruction_max[inst] = max(instruction_max[inst], max(vals))
@@ -111,6 +130,10 @@ def build_dataset(source, primary):
 
     datasets = []
     labels = []
+
+    # None baseline first
+    datasets.append(baseline_global[primary])
+    labels.append("None")
 
     # self first
     datasets.append(source[(primary,primary)])
@@ -229,9 +252,20 @@ for core, core_data in per_core_data.items():
 
 import matplotlib.pyplot as plt
 
-heatmap = np.zeros((len(TESTS), len(TESTS)))
+heatmap = np.zeros((len(TESTS)+1, len(TESTS)))
 
-for yi, introduced in enumerate(TESTS):
+# baseline row
+for xi, focus in enumerate(TESTS):
+
+    vals = baseline_global[focus]
+
+    if vals:
+        heatmap[0, xi] = np.median(vals)
+    else:
+        heatmap[0, xi] = np.nan
+
+# normal rows
+for yi, introduced in enumerate(TESTS, start=1):
     for xi, focus in enumerate(TESTS):
 
         vals = global_data[(focus, introduced)]
@@ -249,21 +283,23 @@ grey_white = LinearSegmentedColormap.from_list(
 )
 
 im = ax.imshow(heatmap, cmap=grey_white)
+
 # axis labels
 ax.set_xticks(range(len(TESTS)))
-ax.set_yticks(range(len(TESTS)))
+ax.set_yticks(range(len(TESTS)+1))
 
 ax.set_xticklabels([TEST_NAMES[t] for t in TESTS])
-ax.set_yticklabels([TEST_NAMES[t] for t in TESTS])
+ax.set_yticklabels(["None"] + [TEST_NAMES[t] for t in TESTS])
+
 ax.invert_yaxis()
 
 ax.set_xlabel("Focus Instruction (latency measured)")
 ax.set_ylabel("Introduced Instruction")
 
-ax.set_title(CHIP_NAME + "Latency Introduced by Operations)")
+ax.set_title(CHIP_NAME + "Latency for Operations Under Contention")
 
 # annotate cells
-for y in range(len(TESTS)):
+for y in range(len(TESTS)+1):
     for x in range(len(TESTS)):
         val = heatmap[y,x]
         if not np.isnan(val):

@@ -9,7 +9,7 @@ import re
 CCBENCH = "../../../ccbench"
 OUTPUT_CSV = "ccbench_results.csv"
 
-REPEATS = 20
+REPEATS = 1
 
 TESTS = [0, 7, 13, 14, 15, 34]
 
@@ -49,6 +49,29 @@ def detect_cpu_pairs():
 
 
 # --------------------------------------------------
+# Get full CPU list
+# --------------------------------------------------
+
+def detect_all_cpus():
+
+    output = subprocess.check_output(
+        ["lscpu", "-p=CPU"],
+        text=True
+    )
+
+    cpus = []
+
+    for line in output.splitlines():
+
+        if line.startswith("#"):
+            continue
+
+        cpus.append(int(line.strip()))
+
+    return sorted(cpus)
+
+
+# --------------------------------------------------
 # Generate full 6x6 test matrix
 # --------------------------------------------------
 
@@ -74,7 +97,12 @@ summary_regex = re.compile(
 )
 
 
-def parse_output(output):
+single_regex = re.compile(
+    r"Core number 0.*avg\s+([0-9.]+)"
+)
+
+
+def parse_output_pair(output):
 
     match = summary_regex.search(output)
 
@@ -84,11 +112,21 @@ def parse_output(output):
     return float(match.group(1)), float(match.group(2))
 
 
+def parse_output_single(output):
+
+    match = single_regex.search(output)
+
+    if not match:
+        return None
+
+    return float(match.group(1))
+
+
 # --------------------------------------------------
-# Run one benchmark
+# Run pair benchmark
 # --------------------------------------------------
 
-def run_test(cpu1, cpu2, test1, test2):
+def run_pair_test(cpu1, cpu2, test1, test2):
 
     cmd = [
         CCBENCH,
@@ -106,7 +144,32 @@ def run_test(cpu1, cpu2, test1, test2):
         text=True
     )
 
-    return parse_output(proc.stdout)
+    return parse_output_pair(proc.stdout)
+
+
+# --------------------------------------------------
+# Run single benchmark
+# --------------------------------------------------
+
+def run_single_test(cpu, test):
+
+    cmd = [
+        CCBENCH,
+        "-x", f"[{cpu}]",
+        "-t", f"[{test}]",
+        "-b", str(cpu)
+    ]
+
+    print("Running:", " ".join(cmd))
+
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True
+    )
+
+    return parse_output_single(proc.stdout)
 
 
 # --------------------------------------------------
@@ -116,6 +179,7 @@ def run_test(cpu1, cpu2, test1, test2):
 def main():
 
     cpu_pairs = detect_cpu_pairs()
+    all_cpus = detect_all_cpus()
 
     print("Detected SMT pairs:")
     for p in cpu_pairs:
@@ -141,11 +205,15 @@ def main():
 
             print(f"\n===== Repeat {repeat} =====\n")
 
+            # ----------------------------------
+            # Dual-core tests (existing)
+            # ----------------------------------
+
             for cpu1, cpu2 in cpu_pairs:
 
                 for test1, test2 in test_matrix:
 
-                    c0, c1 = run_test(cpu1, cpu2, test1, test2)
+                    c0, c1 = run_pair_test(cpu1, cpu2, test1, test2)
 
                     if c0 is None:
                         print("Failed to parse output")
@@ -159,6 +227,32 @@ def main():
                         test2,
                         c0,
                         c1
+                    ])
+
+                    f.flush()
+
+            # ----------------------------------
+            # Single-core baseline tests (new)
+            # ----------------------------------
+
+            for cpu in all_cpus:
+
+                for test in TESTS:
+
+                    c0 = run_single_test(cpu, test)
+
+                    if c0 is None:
+                        print("Failed to parse output")
+                        continue
+
+                    writer.writerow([
+                        repeat,
+                        cpu,
+                        -1,
+                        test,
+                        -1,
+                        c0,
+                        -1
                     ])
 
                     f.flush()
