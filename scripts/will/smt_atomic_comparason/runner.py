@@ -9,9 +9,9 @@ import re
 CCBENCH = "../../../ccbench"
 OUTPUT_CSV = "ccbench_results.csv"
 
-REPEATS = 1
+REPEATS = 4
 
-TESTS = [0, 7, 13, 14, 15, 34]
+TESTS = [0, 7, 12, 13, 14, 15, 34]
 
 
 # --------------------------------------------------

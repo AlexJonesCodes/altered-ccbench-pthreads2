@@ -5,14 +5,16 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 
-BASE_DIR = "./r53600/"
+# BASE_DIR = "./r53600/"
+BASE_DIR = "./E5530/1/"
 # BASE_DIR = "./silver_4114/"
 # BASE_DIR = "./gold_6142/"
 # BASE_DIR = "./E52450/20/"
 
 CSV_FILE = BASE_DIR + "ccbench_results.csv"
 
-CHIP_NAME = "Ryzen 5 3600: "
+#CHIP_NAME = "Ryzen 5 3600: "
+CHIP_NAME = "Xeon E5530: "
 # CHIP_NAME = "Xeon Silver 4114: "
 # CHIP_NAME = "Xeon Gold 6142: "
 # CHIP_NAME = "Xeon E5-2450: "
