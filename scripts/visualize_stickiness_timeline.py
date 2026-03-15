@@ -71,6 +71,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-groups", type=int, default=20,
                    help="Maximum number of groups to plot individually "
                         "(prevents enormous multi-panel figures)")
+    p.add_argument("--per-group", action="store_true",
+                   help="Generate separate plot files for each group instead "
+                        "of combining all groups into one figure")
     return p.parse_args()
 
 
@@ -120,6 +123,12 @@ def group_label(key: Tuple[str, ...]) -> str:
 def short_group_label(key: Tuple[str, ...]) -> str:
     op, _csid, tc, _sc = key
     return f"{op} {tc}T"
+
+
+def group_filename(key: Tuple[str, ...]) -> str:
+    """Filesystem-safe string for use in per-group filenames."""
+    op, csid, tc, sc = key
+    return f"{op}_cs{csid}_t{tc}_seed{sc}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -640,6 +649,186 @@ def plot_multiscale_heatmap(win_data, out_dir: Path, fmt: str, dpi: int,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Per-group plotting (one file per group)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _plot_single_zscore(gk, ws_dict, regime_data, out_dir: Path, fmt: str, dpi: int):
+    """Single-group z-score timeline."""
+    fig, ax = plt.subplots(figsize=(14, 4))
+    window_sizes = sorted(ws_dict.keys())
+    for ws in window_sizes:
+        rows = ws_dict[ws]
+        x = [safe_int(r.get("window_index", "0")) for r in rows]
+        z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
+        colour = ws_colour(ws)
+        ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8, label=f"w={ws}")
+        ax.fill_between(x, 0, z, color=colour, alpha=0.08)
+    ax.axhline(0, color="grey", linewidth=0.6, linestyle="-", alpha=0.4)
+    ax.axhline(2, color="red", linewidth=0.7, linestyle=":", alpha=0.5)
+    ax.axhline(-2, color="blue", linewidth=0.7, linestyle=":", alpha=0.5)
+    if gk in regime_data:
+        for ws in window_sizes:
+            for cp_pos, cp_score, lm, rm in regime_data.get(gk, {}).get(ws, []):
+                ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
+                           linestyle="--", alpha=0.6)
+    ax.set_ylabel("Z-score")
+    ax.set_xlabel("Window Index")
+    ax.set_title(group_label(gk), fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8, loc="upper right", ncol=len(window_sizes))
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    out = out_dir / f"zscore_{group_filename(gk)}.{fmt}"
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _plot_single_repeat_rate(gk, ws_dict, out_dir: Path, fmt: str, dpi: int):
+    """Single-group repeat rate timeline."""
+    fig, ax = plt.subplots(figsize=(14, 4))
+    ws = min(ws_dict.keys())
+    rows = ws_dict[ws]
+    x = [safe_int(r.get("window_index", "0")) for r in rows]
+    obs = [safe_float(r.get("window_repeat_rate", "nan")) for r in rows]
+    exp = [safe_float(r.get("window_expected_repeat", "nan")) for r in rows]
+    ax.plot(x, obs, "-", color="#E91E63", linewidth=1.2, alpha=0.85, label="Observed")
+    ax.plot(x, exp, "--", color="#607D8B", linewidth=1.0, alpha=0.7, label="Expected")
+    ax.fill_between(x, exp, obs,
+                    where=[o > e for o, e in zip(obs, exp)],
+                    color="red", alpha=0.12, interpolate=True, label="Excess (sticky)")
+    ax.fill_between(x, exp, obs,
+                    where=[o < e for o, e in zip(obs, exp)],
+                    color="blue", alpha=0.12, interpolate=True, label="Deficit (anti-sticky)")
+    ax.set_ylabel("Repeat Rate")
+    ax.set_xlabel("Window Index")
+    ax.set_title(f"{group_label(gk)}  [window={ws}]", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    out = out_dir / f"repeat_rate_{group_filename(gk)}.{fmt}"
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _plot_single_fairness(gk, ws_dict, out_dir: Path, fmt: str, dpi: int):
+    """Single-group fairness timeline."""
+    fig, ax = plt.subplots(figsize=(14, 4))
+    for ws in sorted(ws_dict.keys()):
+        rows = ws_dict[ws]
+        x = [safe_int(r.get("window_index", "0")) for r in rows]
+        jfi = [safe_float(r.get("window_jains_fairness", "nan")) for r in rows]
+        ax.plot(x, jfi, "-", color=ws_colour(ws), linewidth=1.1, alpha=0.8,
+                label=f"w={ws}")
+    ax.set_ylabel("Jain's Fairness")
+    ax.set_xlabel("Window Index")
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_title(group_label(gk), fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8, loc="lower right")
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    out = out_dir / f"fairness_{group_filename(gk)}.{fmt}"
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _plot_single_ribbon(gk, ws_dict, out_dir: Path, fmt: str, dpi: int):
+    """Single-group dominant winner ribbon."""
+    fig, ax = plt.subplots(figsize=(14, 3))
+    ws = min(ws_dict.keys())
+    rows = ws_dict[ws]
+    winners = [r.get("window_dominant_winner", "") for r in rows]
+    unique_winners = sorted(set(winners))
+    n_winners = len(unique_winners)
+    colours = make_thread_cmap(n_winners)
+    colour_map = {w: colours[i] for i, w in enumerate(unique_winners)}
+    x = [safe_int(r.get("window_index", "0")) for r in rows]
+    dom_share = [safe_float(r.get("window_dominant_share", "nan")) for r in rows]
+    for xi, w in zip(x, winners):
+        ax.bar(xi, 1, width=1.0, color=colour_map.get(w, "grey"),
+               alpha=0.85, edgecolor="none")
+    ax2 = ax.twinx()
+    ax2.plot(x, dom_share, "-", color="black", linewidth=0.8, alpha=0.6)
+    ax2.set_ylabel("Dom. Share", fontsize=8, color="black")
+    ax2.set_ylim(0, 1.05)
+    ax.set_yticks([])
+    ax.set_xlabel("Window Index")
+    ax.set_title(f"{group_label(gk)}  [window={ws}]", fontsize=11, fontweight="bold")
+    if n_winners <= 12:
+        patches = [Patch(facecolor=colour_map[w], label=f"T{w}") for w in unique_winners]
+        ax.legend(handles=patches, fontsize=7, ncol=min(n_winners, 6),
+                  loc="upper right", framealpha=0.7)
+    fig.tight_layout()
+    out = out_dir / f"ribbon_{group_filename(gk)}.{fmt}"
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _plot_single_heatmap(gk, ws_dict, out_dir: Path, fmt: str, dpi: int):
+    """Single-group multi-scale heatmap."""
+    window_sizes = sorted(ws_dict.keys())
+    if not window_sizes:
+        return None
+    fig, ax = plt.subplots(figsize=(14, max(3, 0.8 * len(window_sizes) + 1)))
+    cmap = plt.cm.RdBu_r
+    vmax = 6.0
+    n_bins = 100
+    heatmap = np.full((len(window_sizes), n_bins), float("nan"))
+    for row_i, ws in enumerate(window_sizes):
+        rows = ws_dict[ws]
+        n_windows = len(rows)
+        if n_windows == 0:
+            continue
+        for r in rows:
+            wi = safe_int(r.get("window_index", "0"))
+            z = safe_float(r.get("window_repeat_zscore", "nan"))
+            bin_idx = min(int(wi / n_windows * n_bins), n_bins - 1)
+            if math.isnan(heatmap[row_i, bin_idx]):
+                heatmap[row_i, bin_idx] = z
+            else:
+                heatmap[row_i, bin_idx] = (heatmap[row_i, bin_idx] + z) / 2
+    im = ax.imshow(heatmap, aspect="auto", cmap=cmap, vmin=-vmax, vmax=vmax,
+                   origin="lower", extent=[0, 100, -0.5, len(window_sizes) - 0.5])
+    ax.set_yticks(range(len(window_sizes)))
+    ax.set_yticklabels([str(ws) for ws in window_sizes], fontsize=8)
+    ax.set_ylabel("Window Size")
+    ax.set_xlabel("Sequence Position (% through run)")
+    ax.set_title(group_label(gk), fontsize=11, fontweight="bold")
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Z-Score", pad=0.02)
+    fig.tight_layout()
+    out = out_dir / f"heatmap_{group_filename(gk)}.{fmt}"
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def plot_all_per_group(win_data, regime_data, out_dir: Path, fmt: str, dpi: int):
+    """Generate all plot types as separate files for each group."""
+    groups = sorted(win_data.keys(), key=lambda k: group_label(k))
+    total = len(groups)
+    count = 0
+    for i, gk in enumerate(groups, 1):
+        ws_dict = win_data[gk]
+        gdir = out_dir / group_filename(gk)
+        gdir.mkdir(parents=True, exist_ok=True)
+
+        _plot_single_zscore(gk, ws_dict, regime_data, gdir, fmt, dpi)
+        _plot_single_repeat_rate(gk, ws_dict, gdir, fmt, dpi)
+        _plot_single_fairness(gk, ws_dict, gdir, fmt, dpi)
+        _plot_single_ribbon(gk, ws_dict, gdir, fmt, dpi)
+        _plot_single_heatmap(gk, ws_dict, gdir, fmt, dpi)
+        count += 5
+
+        if i % 10 == 0 or i == total:
+            print(f"  [{i}/{total}] groups done ...")
+
+    print(f"  Wrote {count} per-group plots into {out_dir}/")
+    return count
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -709,26 +898,35 @@ def main() -> None:
     print(f"Loaded {n_windows} window rows across {n_groups} groups from {window_path}")
     print(f"Generating timeline plots -> {out_dir}/\n")
 
-    # Timeline plots (per-group panels)
-    plot_zscore_timeline(win_data, regime_data, out_dir, args.format, args.dpi,
-                         args.max_groups)
-    plot_repeat_rate_timeline(win_data, out_dir, args.format, args.dpi,
-                              args.max_groups)
-    plot_fairness_timeline(win_data, out_dir, args.format, args.dpi,
-                           args.max_groups)
-    plot_dominant_winner_ribbon(win_data, out_dir, args.format, args.dpi,
+    if args.per_group:
+        # Per-group mode: one directory per group, each with its own set of plots
+        n_plots = plot_all_per_group(win_data, regime_data, out_dir,
+                                     args.format, args.dpi)
+        # Also generate the aggregated distribution plots
+        plot_zscore_distributions(win_data, out_dir, args.format, args.dpi)
+        plot_repeat_excess_distributions(win_data, out_dir, args.format, args.dpi)
+        print(f"\nDone. {n_plots + 2} plots written to {out_dir}/")
+    else:
+        # Combined mode: all groups as subplots in shared figures
+        plot_zscore_timeline(win_data, regime_data, out_dir, args.format, args.dpi,
+                             args.max_groups)
+        plot_repeat_rate_timeline(win_data, out_dir, args.format, args.dpi,
+                                  args.max_groups)
+        plot_fairness_timeline(win_data, out_dir, args.format, args.dpi,
+                               args.max_groups)
+        plot_dominant_winner_ribbon(win_data, out_dir, args.format, args.dpi,
+                                    args.max_groups)
+
+        # Distribution plots (aggregated across groups)
+        plot_zscore_distributions(win_data, out_dir, args.format, args.dpi)
+        plot_repeat_excess_distributions(win_data, out_dir, args.format, args.dpi)
+
+        # Multi-scale heatmap
+        plot_multiscale_heatmap(win_data, out_dir, args.format, args.dpi,
                                 args.max_groups)
 
-    # Distribution plots (aggregated across groups)
-    plot_zscore_distributions(win_data, out_dir, args.format, args.dpi)
-    plot_repeat_excess_distributions(win_data, out_dir, args.format, args.dpi)
-
-    # Multi-scale heatmap
-    plot_multiscale_heatmap(win_data, out_dir, args.format, args.dpi,
-                            args.max_groups)
-
-    n_plots = len(list(out_dir.glob(f"*.{args.format}")))
-    print(f"\nDone. {n_plots} plots written to {out_dir}/")
+        n_plots = len(list(out_dir.glob(f"*.{args.format}")))
+        print(f"\nDone. {n_plots} plots written to {out_dir}/")
 
 
 if __name__ == "__main__":
