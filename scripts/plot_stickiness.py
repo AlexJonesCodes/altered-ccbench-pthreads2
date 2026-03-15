@@ -47,6 +47,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
                    help="Output image format")
     p.add_argument("--dpi", type=int, default=150)
+    p.add_argument("--split-by", default=None,
+                   choices=["core_set_id", "op", "thread_count"],
+                   help="Generate separate plot sets for each unique value "
+                        "of this column (e.g. --split-by core_set_id)")
     return p.parse_args()
 
 
@@ -544,12 +548,44 @@ def plot_summary_dashboard(groups: List[Dict[str, str]], out_dir: Path,
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+def resolve_prefix(raw: str) -> Path:
+    """Resolve the analysis prefix, accepting a directory, file prefix, or CSV path."""
+    p = Path(raw)
+    if p.is_dir():
+        matches = list(p.glob("*_group_summary.csv"))
+        if matches:
+            name = matches[0].name
+            prefix_name = name.replace("_group_summary.csv", "")
+            return p / prefix_name
+        return p / "stickiness"
+    if p.suffix == ".csv":
+        name = p.name
+        for suffix in ("_group_summary", "_thread_summary", "_window_detail",
+                        "_regime_summary"):
+            if name.endswith(suffix + ".csv"):
+                return p.parent / name.replace(suffix + ".csv", "")
+        return p.with_suffix("")
+    return p
+
+
+def _generate_all_plots(groups, threads, out_dir, fmt, dpi):
+    """Run all 8 plot functions into out_dir."""
+    plot_heatmaps(groups, out_dir, fmt, dpi)
+    plot_stickiness_profile(groups, out_dir, fmt, dpi)
+    plot_window_zscores_by_scale(groups, out_dir, fmt, dpi)
+    plot_frac_sticky_by_scale(groups, out_dir, fmt, dpi)
+    plot_lag_profiles(groups, out_dir, fmt, dpi)
+    plot_summary_dashboard(groups, out_dir, fmt, dpi)
+    if threads:
+        plot_seed_core_advantage(threads, groups, out_dir, fmt, dpi)
+
+
 def main() -> None:
     args = parse_args()
-    prefix = Path(args.prefix)
+    prefix = resolve_prefix(args.prefix)
 
-    group_path = prefix.with_name(prefix.name + "_group_summary.csv")
-    thread_path = prefix.with_name(prefix.name + "_thread_summary.csv")
+    group_path = prefix.parent / (prefix.name + "_group_summary.csv")
+    thread_path = prefix.parent / (prefix.name + "_thread_summary.csv")
 
     groups = read_csv(group_path)
     threads = read_csv(thread_path)
@@ -563,17 +599,28 @@ def main() -> None:
 
     print(f"Generating plots from {group_path} -> {out_dir}/")
 
-    plot_heatmaps(groups, out_dir, args.format, args.dpi)
-    plot_stickiness_profile(groups, out_dir, args.format, args.dpi)
-    plot_window_zscores_by_scale(groups, out_dir, args.format, args.dpi)
-    plot_frac_sticky_by_scale(groups, out_dir, args.format, args.dpi)
-    plot_lag_profiles(groups, out_dir, args.format, args.dpi)
-    plot_summary_dashboard(groups, out_dir, args.format, args.dpi)
+    if args.split_by:
+        col = args.split_by
+        split_values = sorted(set(r.get(col, "") for r in groups if r.get(col, "")))
+        print(f"Splitting by {col}: {split_values}\n")
 
-    if threads:
-        plot_seed_core_advantage(threads, groups, out_dir, args.format, args.dpi)
+        for sv in split_values:
+            sub_groups = [r for r in groups if r.get(col, "") == sv]
+            sub_threads = [r for r in threads if r.get(col, "") == sv]
 
-    print(f"\nDone. {len(list(out_dir.glob(f'*.{args.format}')))} plots written to {out_dir}/")
+            sub_dir = out_dir / f"{col}_{sv}"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+
+            print(f"--- {col}={sv} ({len(sub_groups)} groups) -> {sub_dir}/")
+            _generate_all_plots(sub_groups, sub_threads, sub_dir, args.format, args.dpi)
+
+        total = sum(len(list((out_dir / f"{col}_{sv}").glob(f"*.{args.format}")))
+                    for sv in split_values)
+        print(f"\nDone. {total} plots across {len(split_values)} "
+              f"{col} splits written to {out_dir}/")
+    else:
+        _generate_all_plots(groups, threads, out_dir, args.format, args.dpi)
+        print(f"\nDone. {len(list(out_dir.glob(f'*.{args.format}')))} plots written to {out_dir}/")
 
 
 if __name__ == "__main__":
