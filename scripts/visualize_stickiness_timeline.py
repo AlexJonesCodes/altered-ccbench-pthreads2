@@ -74,6 +74,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--per-group", action="store_true",
                    help="Generate separate plot files for each group instead "
                         "of combining all groups into one figure")
+    p.add_argument("--split-by", default=None,
+                   choices=["core_set_id", "op", "thread_count"],
+                   help="Generate the 7 combined plots separately for each "
+                        "unique value of this column (e.g. --split-by core_set_id "
+                        "produces one set of plots per core set)")
     return p.parse_args()
 
 
@@ -898,7 +903,49 @@ def main() -> None:
     print(f"Loaded {n_windows} window rows across {n_groups} groups from {window_path}")
     print(f"Generating timeline plots -> {out_dir}/\n")
 
-    if args.per_group:
+    if args.split_by:
+        # Split mode: generate the 7 combined plots for each unique value
+        # of the chosen column
+        col = args.split_by
+        col_idx = GROUP_COLS.index(col)  # position in group key tuple
+
+        # Partition win_data and regime_data by the split column value
+        split_values = sorted(set(gk[col_idx] for gk in win_data.keys()))
+        print(f"Splitting by {col}: {split_values}\n")
+
+        total_plots = 0
+        for sv in split_values:
+            sub_win = {gk: ws_dict for gk, ws_dict in win_data.items()
+                       if gk[col_idx] == sv}
+            sub_regime = {gk: ws_dict for gk, ws_dict in regime_data.items()
+                          if gk[col_idx] == sv}
+
+            sub_dir = out_dir / f"{col}_{sv}"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+
+            n_sub = len(sub_win)
+            print(f"--- {col}={sv} ({n_sub} groups) -> {sub_dir}/")
+
+            plot_zscore_timeline(sub_win, sub_regime, sub_dir, args.format,
+                                 args.dpi, args.max_groups)
+            plot_repeat_rate_timeline(sub_win, sub_dir, args.format, args.dpi,
+                                      args.max_groups)
+            plot_fairness_timeline(sub_win, sub_dir, args.format, args.dpi,
+                                   args.max_groups)
+            plot_dominant_winner_ribbon(sub_win, sub_dir, args.format, args.dpi,
+                                        args.max_groups)
+            plot_zscore_distributions(sub_win, sub_dir, args.format, args.dpi)
+            plot_repeat_excess_distributions(sub_win, sub_dir, args.format, args.dpi)
+            plot_multiscale_heatmap(sub_win, sub_dir, args.format,
+                                    args.dpi, args.max_groups)
+
+            n_sub_plots = len(list(sub_dir.glob(f"*.{args.format}")))
+            total_plots += n_sub_plots
+
+        print(f"\nDone. {total_plots} plots across {len(split_values)} "
+              f"{col} splits written to {out_dir}/")
+
+    elif args.per_group:
         # Per-group mode: one directory per group, each with its own set of plots
         n_plots = plot_all_per_group(win_data, regime_data, out_dir,
                                      args.format, args.dpi)
