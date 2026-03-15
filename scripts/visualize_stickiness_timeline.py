@@ -707,28 +707,47 @@ def main() -> None:
     n_groups = len(win_data)
     n_windows = len(windows)
     print(f"Loaded {n_windows} window rows across {n_groups} groups from {window_path}")
-    print(f"Generating timeline plots -> {out_dir}/\n")
 
-    # Timeline plots (per-group panels)
-    plot_zscore_timeline(win_data, regime_data, out_dir, args.format, args.dpi,
-                         args.max_groups)
-    plot_repeat_rate_timeline(win_data, out_dir, args.format, args.dpi,
-                              args.max_groups)
-    plot_fairness_timeline(win_data, out_dir, args.format, args.dpi,
-                           args.max_groups)
-    plot_dominant_winner_ribbon(win_data, out_dir, args.format, args.dpi,
+    # Partition data by core_set_id (index 1 in group key) so each core set
+    # gets its own set of plots instead of being smushed together.
+    core_set_ids = sorted(set(gk[1] for gk in win_data.keys()))
+    print(f"Found {len(core_set_ids)} core set(s): {', '.join(core_set_ids)}")
+    print(f"Generating per-core-set timeline plots -> {out_dir}/\n")
+
+    total_plots = 0
+    for csid in core_set_ids:
+        cs_win = {gk: v for gk, v in win_data.items() if gk[1] == csid}
+        cs_reg = {gk: v for gk, v in regime_data.items() if gk[1] == csid}
+
+        if len(core_set_ids) > 1:
+            cs_dir = out_dir / f"core_set_{csid}"
+            cs_dir.mkdir(parents=True, exist_ok=True)
+            print(f"── Core set {csid} ({len(cs_win)} groups) -> {cs_dir}/")
+        else:
+            cs_dir = out_dir
+            print(f"── Core set {csid} ({len(cs_win)} groups)")
+
+        # Timeline plots (per-group panels)
+        plot_zscore_timeline(cs_win, cs_reg, cs_dir, args.format, args.dpi,
+                             args.max_groups)
+        plot_repeat_rate_timeline(cs_win, cs_dir, args.format, args.dpi,
+                                  args.max_groups)
+        plot_fairness_timeline(cs_win, cs_dir, args.format, args.dpi,
+                               args.max_groups)
+        plot_dominant_winner_ribbon(cs_win, cs_dir, args.format, args.dpi,
+                                    args.max_groups)
+
+        # Distribution plots
+        plot_zscore_distributions(cs_win, cs_dir, args.format, args.dpi)
+        plot_repeat_excess_distributions(cs_win, cs_dir, args.format, args.dpi)
+
+        # Multi-scale heatmap
+        plot_multiscale_heatmap(cs_win, cs_dir, args.format, args.dpi,
                                 args.max_groups)
 
-    # Distribution plots (aggregated across groups)
-    plot_zscore_distributions(win_data, out_dir, args.format, args.dpi)
-    plot_repeat_excess_distributions(win_data, out_dir, args.format, args.dpi)
+        total_plots += len(list(cs_dir.glob(f"*.{args.format}")))
 
-    # Multi-scale heatmap
-    plot_multiscale_heatmap(win_data, out_dir, args.format, args.dpi,
-                            args.max_groups)
-
-    n_plots = len(list(out_dir.glob(f"*.{args.format}")))
-    print(f"\nDone. {n_plots} plots written to {out_dir}/")
+    print(f"\nDone. {total_plots} plots written to {out_dir}/")
 
 
 if __name__ == "__main__":
