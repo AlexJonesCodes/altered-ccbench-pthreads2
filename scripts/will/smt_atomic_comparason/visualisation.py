@@ -6,18 +6,27 @@ from collections import defaultdict
 from pathlib import Path
 
 # BASE_DIR = "./r53600/"
-# BASE_DIR = "./E5530/"
 # BASE_DIR = "./silver_4114/"
 # BASE_DIR = "./gold_6142/"
-BASE_DIR = "./E52450/"
+# BASE_DIR = "./E52450/"
+# BASE_DIR = "./2660v2/"
+# BASE_DIR = "./E52630/"
+# BASE_DIR = "./E52683v3/"
+# BASE_DIR = "./E52660v3/"
+BASE_DIR = "./E52680v3/"
+
 
 CSV_FILE = BASE_DIR + "ccbench_results.csv"
 
 # CHIP_NAME = "Ryzen 5 3600: "
-# CHIP_NAME = "Xeon E5530: "
 # CHIP_NAME = "Xeon Silver 4114: "
 # CHIP_NAME = "Xeon Gold 6142: "
-CHIP_NAME = "Xeon E5-2450: "
+# CHIP_NAME = "Xeon E5-2450: "
+# CHIP_NAME = "Xeon E5-2660 v2: "
+# CHIP_NAME = "Xeon E5-2630: "
+# CHIP_NAME = "Xeon E5-2683 v3: "
+# CHIP_NAME = "Xeon E5-2660 v3: "
+CHIP_NAME = "Xeon E5-2680 v3: "
 
 # TESTS = [0,7,13,14,15,34]
 TESTS = [0,7,12,13,14,15]

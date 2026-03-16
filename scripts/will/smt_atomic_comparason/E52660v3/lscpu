@@ -1,0 +1,85 @@
+CPU NODE SOCKET CORE L1d:L1i:L2:L3 ONLINE    MAXMHZ    MINMHZ      MHZ
+  0    0      0    0 0:0:0:0          yes 3300.0000 1200.0000 1200.000
+  1    0      0    1 1:1:1:0          yes 3300.0000 1200.0000 1200.000
+  2    0      0    2 2:2:2:0          yes 3300.0000 1200.0000 1200.000
+  3    0      0    3 3:3:3:0          yes 3300.0000 1200.0000 1200.000
+  4    0      0    4 4:4:4:0          yes 3300.0000 1200.0000 1200.000
+  5    0      0    5 8:8:8:0          yes 3300.0000 1200.0000 1200.000
+  6    0      0    6 9:9:9:0          yes 3300.0000 1200.0000 1200.000
+  7    0      0    7 10:10:10:0       yes 3300.0000 1200.0000 1200.000
+  8    0      0    8 11:11:11:0       yes 3300.0000 1200.0000 1200.000
+  9    0      0    9 12:12:12:0       yes 3300.0000 1200.0000 1200.000
+ 10    1      1   10 16:16:16:1       yes 3300.0000 1200.0000 1200.000
+ 11    1      1   11 17:17:17:1       yes 3300.0000 1200.0000 1200.000
+ 12    1      1   12 18:18:18:1       yes 3300.0000 1200.0000 1200.000
+ 13    1      1   13 19:19:19:1       yes 3300.0000 1200.0000 1200.000
+ 14    1      1   14 20:20:20:1       yes 3300.0000 1200.0000 1200.000
+ 15    1      1   15 24:24:24:1       yes 3300.0000 1200.0000 1200.000
+ 16    1      1   16 25:25:25:1       yes 3300.0000 1200.0000 1200.000
+ 17    1      1   17 26:26:26:1       yes 3300.0000 1200.0000 1200.000
+ 18    1      1   18 27:27:27:1       yes 3300.0000 1200.0000 1200.000
+ 19    1      1   19 28:28:28:1       yes 3300.0000 1200.0000 1200.000
+ 20    0      0    0 0:0:0:0          yes 3300.0000 1200.0000 1200.000
+ 21    0      0    1 1:1:1:0          yes 3300.0000 1200.0000 1200.000
+ 22    0      0    2 2:2:2:0          yes 3300.0000 1200.0000 1200.000
+ 23    0      0    3 3:3:3:0          yes 3300.0000 1200.0000 1200.000
+ 24    0      0    4 4:4:4:0          yes 3300.0000 1200.0000 1200.000
+ 25    0      0    5 8:8:8:0          yes 3300.0000 1200.0000 1200.000
+ 26    0      0    6 9:9:9:0          yes 3300.0000 1200.0000 1200.000
+ 27    0      0    7 10:10:10:0       yes 3300.0000 1200.0000 1200.000
+ 28    0      0    8 11:11:11:0       yes 3300.0000 1200.0000 1987.748
+ 29    0      0    9 12:12:12:0       yes 3300.0000 1200.0000 1200.000
+ 30    1      1   10 16:16:16:1       yes 3300.0000 1200.0000 1200.000
+ 31    1      1   11 17:17:17:1       yes 3300.0000 1200.0000 1200.000
+ 32    1      1   12 18:18:18:1       yes 3300.0000 1200.0000 1200.000
+ 33    1      1   13 19:19:19:1       yes 3300.0000 1200.0000 1200.000
+ 34    1      1   14 20:20:20:1       yes 3300.0000 1200.0000 1200.000
+ 35    1      1   15 24:24:24:1       yes 3300.0000 1200.0000 1200.000
+ 36    1      1   16 25:25:25:1       yes 3300.0000 1200.0000 1200.000
+ 37    1      1   17 26:26:26:1       yes 3300.0000 1200.0000 1200.000
+ 38    1      1   18 27:27:27:1       yes 3300.0000 1200.0000 1200.000
+ 39    1      1   19 28:28:28:1       yes 3300.0000 1200.0000 1200.000
+
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           46 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  40
+On-line CPU(s) list:                     0-39
+Vendor ID:                               GenuineIntel
+Model name:                              Intel(R) Xeon(R) CPU E5-2660 v3 @ 2.60GHz
+CPU family:                              6
+Model:                                   63
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               2
+Stepping:                                2
+CPU max MHz:                             3300.0000
+CPU min MHz:                             1200.0000
+BogoMIPS:                                5187.37
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid dca sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm cpuid_fault epb invpcid_single pti intel_ppin ssbd ibrs ibpb stibp tpr_shadow vnmi flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm xsaveopt cqm_llc cqm_occup_llc dtherm ida arat pln pts md_clear flush_l1d ibpb_exit_to_user
+Virtualization:                          VT-x
+L1d cache:                               640 KiB (20 instances)
+L1i cache:                               640 KiB (20 instances)
+L2 cache:                                5 MiB (20 instances)
+L3 cache:                                50 MiB (2 instances)
+NUMA node(s):                            2
+NUMA node0 CPU(s):                       0-9,20-29
+NUMA node1 CPU(s):                       10-19,30-39
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             KVM: Mitigation: VMX disabled
+Vulnerability L1tf:                      Mitigation; PTE Inversion; VMX conditional cache flushes, SMT vulnerable
+Vulnerability Mds:                       Mitigation; Clear CPU buffers; SMT vulnerable
+Vulnerability Meltdown:                  Mitigation; PTI
+Vulnerability Mmio stale data:           Mitigation; Clear CPU buffers; SMT vulnerable
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Not affected
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl and seccomp
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; IBRS_FW; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Mitigation; IBPB before exit to userspace
