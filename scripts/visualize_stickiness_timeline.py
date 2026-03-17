@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
                    help="Output image format")
     p.add_argument("--dpi", type=int, default=150)
-    p.add_argument("--max-groups", type=int, default=20,
+    p.add_argument("--max-groups", type=int, default=200,
                    help="Maximum number of groups to plot individually "
                         "(prevents enormous multi-panel figures)")
     return p.parse_args()
@@ -221,17 +221,16 @@ def plot_zscore_timeline(win_data, regime_data, out_dir: Path, fmt: str,
     for idx, gk in enumerate(groups):
         ax = axes[idx, 0]
         ws_dict = win_data[gk]
-        window_sizes = sorted(ws_dict.keys())
-
-        for ws in window_sizes:
-            rows = ws_dict[ws]
-            x = [safe_int(r.get("window_index", "0")) for r in rows]
-            z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
-            colour = ws_colour(ws)
-            ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8,
-                    label=f"w={ws}")
-            # Light fill between to show magnitude
-            ax.fill_between(x, 0, z, color=colour, alpha=0.08)
+        # Use only smallest window size for highest temporal resolution
+        ws = min(ws_dict.keys())
+        rows = ws_dict[ws]
+        x = [safe_int(r.get("window_index", "0")) for r in rows]
+        z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
+        colour = ws_colour(ws)
+        ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8,
+                label=f"w={ws}")
+        # Light fill between to show magnitude
+        ax.fill_between(x, 0, z, color=colour, alpha=0.08)
 
         # Significance thresholds
         ax.axhline(0, color="grey", linewidth=0.6, linestyle="-", alpha=0.4)
@@ -240,15 +239,14 @@ def plot_zscore_timeline(win_data, regime_data, out_dir: Path, fmt: str,
 
         # Overlay change-points if available
         if gk in regime_data:
-            for ws in window_sizes:
-                cps = regime_data.get(gk, {}).get(ws, [])
-                for cp_pos, cp_score, lm, rm in cps:
-                    ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
-                               linestyle="--", alpha=0.6)
+            cps = regime_data.get(gk, {}).get(ws, [])
+            for cp_pos, cp_score, lm, rm in cps:
+                ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
+                           linestyle="--", alpha=0.6)
 
         ax.set_ylabel("Z-score")
         ax.set_title(group_label(gk), fontsize=10, fontweight="bold")
-        ax.legend(fontsize=7, loc="upper right", ncol=len(window_sizes))
+        ax.legend(fontsize=7, loc="upper right")
         ax.grid(True, alpha=0.2)
 
     axes[-1, 0].set_xlabel("Window Index")
@@ -335,12 +333,13 @@ def plot_fairness_timeline(win_data, out_dir: Path, fmt: str, dpi: int,
         ax = axes[idx, 0]
         ws_dict = win_data[gk]
 
-        for ws in sorted(ws_dict.keys()):
-            rows = ws_dict[ws]
-            x = [safe_int(r.get("window_index", "0")) for r in rows]
-            jfi = [safe_float(r.get("window_jains_fairness", "nan")) for r in rows]
-            ax.plot(x, jfi, "-", color=ws_colour(ws), linewidth=1.1,
-                    alpha=0.8, label=f"w={ws}")
+        # Use only smallest window size for highest temporal resolution
+        ws = min(ws_dict.keys())
+        rows = ws_dict[ws]
+        x = [safe_int(r.get("window_index", "0")) for r in rows]
+        jfi = [safe_float(r.get("window_jains_fairness", "nan")) for r in rows]
+        ax.plot(x, jfi, "-", color=ws_colour(ws), linewidth=1.1,
+                alpha=0.8, label=f"w={ws}")
 
         ax.set_ylabel("Jain's Fairness")
         ax.set_ylim(-0.05, 1.05)
@@ -628,11 +627,12 @@ def plot_multiscale_heatmap(win_data, out_dir: Path, fmt: str, dpi: int,
         ax.set_title(group_label(gk), fontsize=10, fontweight="bold")
 
     axes[-1, 0].set_xlabel("Sequence Position (% through run)")
-    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.6, label="Z-Score",
-                 pad=0.02)
     fig.suptitle("Multi-Scale Stickiness Heatmap", fontsize=13,
                  fontweight="bold", y=1.0)
     fig.tight_layout()
+    # Add colorbar after tight_layout to avoid overlapping data
+    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.6, label="Z-Score",
+                 pad=0.04)
     out = out_dir / f"multiscale_heatmap.{fmt}"
     fig.savefig(out, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
