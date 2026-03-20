@@ -41,6 +41,28 @@ This uses the new `--backoff-array` option (e.g., `-A "[1,2,4,8]"`) to supply
 per-thread backoff caps. The array length must match the total thread count.
 
 
+## Seed rotation protocol
+
+The seed core (`-b`) determines which thread holds the cache line in modified
+state at the start of each repetition. By default, the seed rotation script
+(`scripts/run_seed_rotation_wins.sh`) cycles the seed across every core in the
+contending set, producing one complete run per seed position.
+
+Rotating the seed matters because initial cache-line placement can bias results.
+The thread whose core already holds the line in modified state may enjoy a
+latency advantage over the others, skewing win counts, fairness metrics, or
+latency distributions in ways that look like a real architectural effect but are
+actually an artifact of the starting condition. By repeating the experiment with
+each core as the seed, you can separate effects that track the seed (and
+therefore reflect cache-line ownership) from effects that are stable across seed
+positions (and therefore reflect interconnect topology, protocol arbitration, or
+other structural properties of the machine).
+
+The dedicated collection script extracts per-thread win counts and Jain fairness
+index (both including and excluding the seed thread) for each seed position,
+enabling direct comparison of the seed thread's win share against the baseline
+average.
+
 ## Adversary test: attackers on separate addresses
 
 To test whether unfairness/slowdown still appears when attackers do **not**
