@@ -39,6 +39,9 @@ Options:
   --auto-cores               Auto-detect: split available physical cores in half
                              (first half = victim, second half = attacker)
   --auto-cores-max N         Max cores per group when using --auto-cores (default: 8)
+  --auto-cores-mode MODE     Auto core placement strategy:
+                             split (legacy), same_socket_st, same_socket_ht,
+                             cross_socket_st (default)
 
   --victim-test NAME|ID      Victim primitive (default: CAS)
   --attacker-test NAME|ID    Attacker primitive for RMW phase (default: FAI)
@@ -100,6 +103,7 @@ victim_cores=""
 attacker_cores=""
 auto_cores=0
 auto_cores_max=8
+auto_cores_mode="cross_socket_st"
 
 victim_test="CAS"
 attacker_test="FAI"
@@ -134,6 +138,7 @@ while [[ $# -gt 0 ]]; do
     --attacker-cores)        attacker_cores="$2"; shift 2 ;;
     --auto-cores)            auto_cores=1; shift ;;
     --auto-cores-max)        auto_cores_max="$2"; shift 2 ;;
+    --auto-cores-mode)       auto_cores_mode="$2"; shift 2 ;;
     --victim-test)           victim_test="$2"; shift 2 ;;
     --attacker-test)         attacker_test="$2"; shift 2 ;;
     --control-test)          control_test="$2"; shift 2 ;;
@@ -263,40 +268,196 @@ detect_physical_cores() {
   printf '%s\n' "${phys_cores[@]}"
 }
 
+expand_cpu_list() {
+  # Expand Linux CPU list syntax like "0-3,8,10-11" into one CPU id per line.
+  local spec="$1"
+  local part a b i
+  IFS=',' read -r -a _parts <<<"$spec"
+  for part in "${_parts[@]}"; do
+    if [[ "$part" == *-* ]]; then
+      IFS='-' read -r a b <<<"$part"
+      for ((i = a; i <= b; i++)); do
+        printf '%s\n' "$i"
+      done
+    elif [[ -n "$part" ]]; then
+      printf '%s\n' "$part"
+    fi
+  done
+}
+
 if [[ "$auto_cores" -eq 1 ]]; then
   if [[ -n "$victim_cores" || -n "$attacker_cores" ]]; then
     log_warn "--auto-cores overrides --victim-cores and --attacker-cores"
   fi
 
-  mapfile -t all_phys_cores < <(detect_physical_cores)
-  total_phys=${#all_phys_cores[@]}
+  local_mode="$auto_cores_mode"
+  case "$local_mode" in
+    split|same_socket_st|same_socket_ht|cross_socket_st) ;;
+    *)
+      log_err "Invalid --auto-cores-mode: $local_mode"
+      log_info "Valid modes: split, same_socket_st, same_socket_ht, cross_socket_st"
+      exit 1
+      ;;
+  esac
 
-  if [[ "$total_phys" -lt 4 ]]; then
-    log_err "Only $total_phys physical cores detected; need at least 4 (2 victim + 2 attacker)."
-    exit 1
+  if [[ "$local_mode" == "split" ]]; then
+    mapfile -t all_phys_cores < <(detect_physical_cores)
+    total_phys=${#all_phys_cores[@]}
+
+    if [[ "$total_phys" -lt 4 ]]; then
+      log_err "Only $total_phys physical cores detected; need at least 4 (2 victim + 2 attacker)."
+      exit 1
+    fi
+
+    half=$(( total_phys / 2 ))
+    victim_count=$(( half > auto_cores_max ? auto_cores_max : half ))
+    attacker_count=$(( (total_phys - half) > auto_cores_max ? auto_cores_max : (total_phys - half) ))
+
+    victim_cores=""
+    for ((i = 0; i < victim_count; i++)); do
+      [[ -n "$victim_cores" ]] && victim_cores+=","
+      victim_cores+="${all_phys_cores[$i]}"
+    done
+
+    attacker_cores=""
+    for ((i = half; i < half + attacker_count; i++)); do
+      [[ -n "$attacker_cores" ]] && attacker_cores+=","
+      attacker_cores+="${all_phys_cores[$i]}"
+    done
+
+    log_info "Auto-detected $total_phys physical cores"
+    log_info "  Mode: split (legacy)"
+    log_info "  Victim cores ($victim_count):   $victim_cores"
+    log_info "  Attacker cores ($attacker_count): $attacker_cores"
+  else
+    declare -A socket_phys_csv=()
+    declare -A socket_core_seen=()
+    declare -A socket_ht_victim_csv=()
+    declare -A socket_ht_attacker_csv=()
+    declare -A socket_ht_core_seen=()
+    declare -A socket_phys_count=()
+    declare -A socket_ht_count=()
+
+    shopt -s nullglob
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*/topology; do
+      cpu="${cpu_dir%/topology}"
+      cpu="${cpu##*/cpu}"
+      online_path="/sys/devices/system/cpu/cpu${cpu}/online"
+      if [[ -f "$online_path" ]] && [[ "$(cat "$online_path")" != "1" ]]; then
+        continue
+      fi
+
+      socket_id=$(cat "$cpu_dir/physical_package_id" 2>/dev/null || echo "0")
+      core_id=$(cat "$cpu_dir/core_id" 2>/dev/null || echo "$cpu")
+      core_key="${socket_id}_${core_id}"
+
+      if [[ -z "${socket_core_seen[$core_key]:-}" ]]; then
+        socket_core_seen["$core_key"]=1
+        if [[ -n "${socket_phys_csv[$socket_id]:-}" ]]; then
+          socket_phys_csv["$socket_id"]+=","
+        fi
+        socket_phys_csv["$socket_id"]+="$cpu"
+        socket_phys_count["$socket_id"]=$(( ${socket_phys_count["$socket_id"]:-0} + 1 ))
+      fi
+
+      if [[ -z "${socket_ht_core_seen[$core_key]:-}" ]]; then
+        sib_file="$cpu_dir/thread_siblings_list"
+        if [[ -f "$sib_file" ]]; then
+          mapfile -t sibs < <(expand_cpu_list "$(cat "$sib_file")" | sort -n)
+          if [[ "${#sibs[@]}" -ge 2 ]]; then
+            socket_ht_core_seen["$core_key"]=1
+            vcpu="${sibs[0]}"
+            acpu="${sibs[1]}"
+            if [[ -n "${socket_ht_victim_csv[$socket_id]:-}" ]]; then
+              socket_ht_victim_csv["$socket_id"]+=","
+              socket_ht_attacker_csv["$socket_id"]+=","
+            fi
+            socket_ht_victim_csv["$socket_id"]+="$vcpu"
+            socket_ht_attacker_csv["$socket_id"]+="$acpu"
+            socket_ht_count["$socket_id"]=$(( ${socket_ht_count["$socket_id"]:-0} + 1 ))
+          fi
+        fi
+      fi
+    done
+    shopt -u nullglob
+
+    if [[ "${#socket_phys_count[@]}" -eq 0 ]]; then
+      log_err "Failed to detect CPU topology for --auto-cores."
+      exit 1
+    fi
+
+    mapfile -t sockets_by_phys < <(
+      for sid in "${!socket_phys_count[@]}"; do
+        printf '%s %s\n' "${socket_phys_count[$sid]}" "$sid"
+      done | sort -k1,1nr -k2,2n | awk '{print $2}'
+    )
+
+    mapfile -t sockets_by_ht < <(
+      for sid in "${!socket_ht_count[@]}"; do
+        printf '%s %s\n' "${socket_ht_count[$sid]}" "$sid"
+      done | sort -k1,1nr -k2,2n | awk '{print $2}'
+    )
+
+    case "$local_mode" in
+      same_socket_st)
+        sid="${sockets_by_phys[0]}"
+        mapfile -t socket_phys_arr < <(expand_cpu_list "${socket_phys_csv[$sid]}")
+        n_phys="${#socket_phys_arr[@]}"
+        pair_count=$(( n_phys / 2 ))
+        (( pair_count > auto_cores_max )) && pair_count="$auto_cores_max"
+        if [[ "$pair_count" -lt 1 ]]; then
+          log_err "Socket $sid has only $n_phys physical cores; need at least 2."
+          exit 1
+        fi
+        victim_cores=$(IFS=,; echo "${socket_phys_arr[*]:0:$pair_count}")
+        attacker_cores=$(IFS=,; echo "${socket_phys_arr[*]:$pair_count:$pair_count}")
+        ;;
+      cross_socket_st)
+        if [[ "${#sockets_by_phys[@]}" -lt 2 ]]; then
+          log_err "--auto-cores-mode cross_socket_st requires at least 2 sockets."
+          exit 1
+        fi
+        sid_v="${sockets_by_phys[0]}"
+        sid_a="${sockets_by_phys[1]}"
+        mapfile -t phys_v < <(expand_cpu_list "${socket_phys_csv[$sid_v]}")
+        mapfile -t phys_a < <(expand_cpu_list "${socket_phys_csv[$sid_a]}")
+        pair_count="${#phys_v[@]}"
+        (( ${#phys_a[@]} < pair_count )) && pair_count="${#phys_a[@]}"
+        (( pair_count > auto_cores_max )) && pair_count="$auto_cores_max"
+        if [[ "$pair_count" -lt 1 ]]; then
+          log_err "Not enough physical cores across sockets $sid_v and $sid_a."
+          exit 1
+        fi
+        victim_cores=$(IFS=,; echo "${phys_v[*]:0:$pair_count}")
+        attacker_cores=$(IFS=,; echo "${phys_a[*]:0:$pair_count}")
+        ;;
+      same_socket_ht)
+        if [[ "${#sockets_by_ht[@]}" -lt 1 ]]; then
+          log_err "--auto-cores-mode same_socket_ht requires SMT sibling pairs."
+          exit 1
+        fi
+        sid="${sockets_by_ht[0]}"
+        mapfile -t ht_v < <(expand_cpu_list "${socket_ht_victim_csv[$sid]}")
+        mapfile -t ht_a < <(expand_cpu_list "${socket_ht_attacker_csv[$sid]}")
+        pair_count="${#ht_v[@]}"
+        (( ${#ht_a[@]} < pair_count )) && pair_count="${#ht_a[@]}"
+        (( pair_count > auto_cores_max )) && pair_count="$auto_cores_max"
+        if [[ "$pair_count" -lt 1 ]]; then
+          log_err "No SMT sibling pairs available on socket $sid."
+          exit 1
+        fi
+        victim_cores=$(IFS=,; echo "${ht_v[*]:0:$pair_count}")
+        attacker_cores=$(IFS=,; echo "${ht_a[*]:0:$pair_count}")
+        ;;
+    esac
+
+    as_array "$victim_cores" _vc
+    as_array "$attacker_cores" _ac
+    log_info "Auto-detected topology-based core sets"
+    log_info "  Mode: $local_mode"
+    log_info "  Victim cores (${#_vc[@]}):   $victim_cores"
+    log_info "  Attacker cores (${#_ac[@]}): $attacker_cores"
   fi
-
-  # Cap each group
-  half=$(( total_phys / 2 ))
-  victim_count=$(( half > auto_cores_max ? auto_cores_max : half ))
-  attacker_count=$(( (total_phys - half) > auto_cores_max ? auto_cores_max : (total_phys - half) ))
-
-  # Build comma-separated lists
-  victim_cores=""
-  for ((i = 0; i < victim_count; i++)); do
-    [[ -n "$victim_cores" ]] && victim_cores+=","
-    victim_cores+="${all_phys_cores[$i]}"
-  done
-
-  attacker_cores=""
-  for ((i = half; i < half + attacker_count; i++)); do
-    [[ -n "$attacker_cores" ]] && attacker_cores+=","
-    attacker_cores+="${all_phys_cores[$i]}"
-  done
-
-  log_info "Auto-detected $total_phys physical cores"
-  log_info "  Victim cores ($victim_count):   $victim_cores"
-  log_info "  Attacker cores ($attacker_count): $attacker_cores"
 fi
 
 # ── Validate core lists ─────────────────────────────────────────────────────
