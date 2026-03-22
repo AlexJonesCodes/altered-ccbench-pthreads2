@@ -1,15 +1,16 @@
-# Adversarial Interference Analysis: Cross-Socket vs Same-Socket
+# Adversarial Interference Analysis: Topology Comparison
 
 ## Experiment Setup
 
-Two topology modes of `run_adversarial_interference_study.sh` are compared:
+Three topology modes of `run_adversarial_interference_study.sh` are compared:
 
-| | `cross_socket_st` | `same_socket_st` |
-|---|---|---|
-| Victim placement | Socket 0 | Socket N, subset of cores |
-| Attacker placement | Socket 1 | Socket N, remaining cores |
-| Interconnect crossed | Yes (UPI/QPI) | No (intra-socket ring/mesh) |
-| Attacker sweep | 1, 2, 4, 8 threads | 1, 2, 4, 5 threads |
+| | `cross_socket_st` | `same_socket_st` | `same_socket_ht` |
+|---|---|---|---|
+| Victim placement | Socket 0 | Socket N, physical cores | Socket N, physical cores |
+| Attacker placement | Socket 1 | Socket N, other physical cores | Socket N, SMT siblings |
+| SMT used | No | No | Yes (hyperthreads) |
+| Interconnect crossed | Yes (UPI/QPI) | No (intra-socket ring/mesh) | No (intra-core) |
+| Attacker sweep | 1, 2, 4, 8 threads | 1, 2, 4, 5 threads | 1, 2, 4, 8 threads |
 
 **Phases per configuration**:
 - **Baseline**: victim runs alone (no attackers)
@@ -185,75 +186,199 @@ For the shared-vs-separate comparison:
 
 ---
 
-# Part 3: Comparative Analysis
+# Part 3: Same-Socket Hyperthreaded Results (`same_socket_ht`)
 
-## Slowdown comparison
+In this mode, attackers run on SMT siblings (hyperthreads) of physical cores on
+the same socket. This is the most intimate sharing possible — victim and
+attacker share execution resources within the same physical core (L1/L2 caches,
+execution units, store buffers).
 
-| Metric | Cross-socket | Same-socket |
-|---|:---:|:---:|
-| Diagnosis | Broad interconnect pressure | No significant interference |
-| Shared ratio | 1.337 | 1.010 |
-| Separate ratio | 1.325 | 0.984 |
-| Max median slowdown | ~100% (8 attackers) | ~0% (5 attackers) |
-| Latency at max attackers | 160-169 cycles | 152-172 cycles |
-| Baseline latency | 68 cycles | 82 cycles |
+## Plot A: Victim Mean Latency by Phase
+
+| Attacker threads | Baseline (cycles) | Attacker RMW (cycles) | Attacker control (cycles) |
+|:---:|:---:|:---:|:---:|
+| 1 | 60 | 72 | 65 |
+| 2 | 60 | 89 | 86 |
+| 4 | 60 | 123 | 146 |
+| 8 | 60 | 167 | 174 |
+
+### Observations
+
+- **Baseline is the lowest of all three topologies** (60 cycles vs 68
+  cross-socket, 82 same-socket ST). With SMT siblings available but idle, the
+  victim has maximum access to core resources and benefits from optimal
+  power/frequency states.
+
+- **Interference appears immediately at 1 attacker** — unlike same-socket ST
+  where 1-2 attackers helped the victim, here even a single attacker raises
+  latency (60→72 cycles RMW, 60→65 control). This is because SMT siblings
+  compete directly for execution pipeline resources (ALUs, load/store units,
+  reorder buffer entries), not just cache bandwidth.
+
+- **Slowdown scales steeply and monotonically**: 72→89→123→167 cycles for RMW
+  across 1→2→4→8 attackers. At 8 attackers, victim latency is 167-174 cycles
+  (~180-190% of baseline), the worst absolute latency of any topology.
+
+- **Control again exceeds RMW** at 4 and 8 attackers (146 vs 123, 174 vs 167),
+  consistent with the pattern seen in all topologies.
+
+## Plot B: Per-Replicate Slowdown Distribution
+
+- **Median slowdown is always positive** and grows steadily: ~5% at 1 attacker,
+  ~10% at 2, ~40% at 4, ~110% at 8. There is no zero-crossing or benefit
+  regime — hyperthreaded attackers always hurt.
+
+- **Shared and separate distributions overlap closely** at every attacker count,
+  continuing the pattern from other topologies.
+
+- **The distribution at 8 attackers** shows a tight IQR of ~100-120% with
+  outliers reaching 135%, indicating consistent severe interference with
+  relatively low variability.
+
+- **One outlier at 2 attackers** shows ~-50% (a large speedup), likely a
+  measurement artifact from a single replicate.
+
+## Plot C: Shared vs Separate Attacker Comparison
+
+### Automated diagnosis
+
+> Diagnosis: broad interconnect pressure (shared ratio=1.378, separate
+> ratio=1.369) | fairness: preserved
+
+- Shared ratio (1.378) and separate ratio (1.369) are both above 1.05 and
+  nearly identical, again classified as **broad interconnect pressure**.
+- These ratios are the **highest of any topology** (cross-socket: 1.337/1.325,
+  same-socket ST: 1.010/0.984), meaning hyperthreaded placement creates the
+  most aggregate interference.
+- Jain fairness remains ~0.97-1.0 across all conditions, preserved as in
+  cross-socket.
+- At 8 attackers, both shared and separate reach ~120 cycles with modest error
+  bars, closely matching the cross-socket pattern.
+
+## Plot D: Cache-Line HITM Events (perf c2c)
+
+| Phase | Local HITM | Remote HITM | Total HITM | Ratio vs baseline |
+|:---:|:---:|:---:|:---:|:---:|
+| Baseline | ~250 | ~5 | 255 | 1.00x |
+| Shared | ~940 | ~15 | 955 | 3.75x |
+| Separate | ~1,080 | ~16 | 1,096 | 4.30x |
+
+### Observations
+
+- **Absolute HITM counts match cross-socket levels** (255 baseline vs 249
+  cross-socket), not same-socket ST levels (10 baseline). This is surprising —
+  hyperthreaded cores generate as many coherence events as cross-socket
+  operation. The likely explanation is that SMT siblings sharing L1/L2 create
+  frequent Modified-state conflicts that register as Local HITM.
+
+- **Relative amplification ratios are nearly identical to cross-socket**
+  (3.75x/4.30x vs 3.50x/4.20x), suggesting the same coherence dynamics despite
+  fundamentally different sharing topologies.
+
+- **Separate > shared pattern persists** (4.30x vs 3.75x), consistent across
+  all three topologies.
+
+---
+
+# Part 4: Comparative Analysis
+
+## Summary table
+
+| Metric | Cross-socket ST | Same-socket ST | Same-socket HT |
+|---|:---:|:---:|:---:|
+| Diagnosis | Broad interconnect pressure | No significant interference | Broad interconnect pressure |
+| Shared ratio | 1.337 | 1.010 | 1.378 |
+| Separate ratio | 1.325 | 0.984 | 1.369 |
+| Baseline latency | 68 cycles | 82 cycles | 60 cycles |
+| Max median slowdown | ~100% (8 atk) | ~0% (5 atk) | ~110% (8 atk) |
+| Latency at max attackers | 160-169 cycles | 152-172 cycles | 167-174 cycles |
+| Baseline HITM | 249 | 10 | 255 |
+| HITM amplification (sep) | 4.20x | 23.10x | 4.30x |
+| Jain fairness | ~0.98-1.0 | ~0.75-0.82 | ~0.97-1.0 |
+| Warming effect at low count | No | Yes (22% speedup) | No |
 
 ## Key contrasts
 
-### 1. Cross-socket creates real interference; same-socket does not
+### 1. Three distinct interference regimes
 
-The same victim workload under the same number of attackers produces
-fundamentally different outcomes depending on topology. Cross-socket attackers
-cause up to 100% slowdown; same-socket attackers cause effectively zero net
-slowdown. The inter-socket interconnect is the bottleneck, not the cache
-coherence protocol itself.
+- **Cross-socket ST**: Significant interference driven by UPI/QPI bandwidth
+  saturation. Slowdown reaches ~100% at 8 attackers.
+- **Same-socket ST**: No measurable interference. Attackers at low counts
+  actually *help* the victim through cache warming. The intra-socket ring bus
+  and L3 absorb contention efficiently.
+- **Same-socket HT**: The *worst* interference of all three topologies.
+  Slowdown reaches ~110% at 8 attackers, exceeding even cross-socket. SMT
+  siblings compete for physical core resources (execution units, store buffers,
+  L1/L2) — a fundamentally different and more severe bottleneck than
+  interconnect bandwidth.
 
-### 2. Same-socket attackers can *help* the victim
+### 2. Hyperthreading eliminates the warming benefit
 
-At 1-2 attackers on the same socket, victim latency consistently drops below
-baseline (82→64 cycles, a 22% improvement). This warming effect is absent in
-cross-socket placement, where the attacker's cache activity is on a different L3
-and cannot benefit the victim.
+Same-socket ST shows a clear warming effect at 1-2 attackers (82→64 cycles).
+Same-socket HT shows no such benefit — even 1 attacker raises latency (60→72).
+When the attacker shares the physical core, it competes for execution resources
+from the first cycle. The warming benefit requires attackers on *separate*
+physical cores where they can populate shared L3 without stealing pipeline
+slots.
 
-### 3. HITM cost depends on topology
+### 3. Baseline latency reveals resource availability
 
-Same-socket HITM events are nearly free (23x amplification, zero slowdown),
-while cross-socket HITM events carry real latency cost (3.5x amplification,
-34% slowdown). This confirms that Local HITM within a socket resolves via the
-L3 snoop filter in a few cycles, while cross-socket coherence requires
-expensive interconnect round-trips.
+The baseline ordering (60 HT < 68 cross-socket < 82 same-socket ST) is
+informative:
+- **HT (60)**: Victim has an entire physical core to itself with SMT siblings
+  idle. Optimal resource availability.
+- **Cross-socket (68)**: Victim is alone on its socket. Slightly higher than HT,
+  possibly due to different core types or NUMA memory placement.
+- **Same-socket ST (82)**: Victim shares the socket with other physical cores
+  running OS/system threads. Higher baseline contention for L3 and ring bus.
 
-### 4. Fairness behaves differently
+### 4. HITM patterns reveal two coherence regimes
 
-Cross-socket fairness is high (~0.98-1.0) because interconnect pressure affects
-all threads uniformly. Same-socket fairness is lower (~0.75-0.82) but stable,
-reflecting inherent intra-socket scheduling asymmetry (core proximity to L3
-slices, ring bus position). Attackers do not degrade fairness in either
-topology.
+Same-socket ST has very low baseline HITM (10) with extreme relative
+amplification (23x) but zero latency impact — intra-socket coherence is cheap.
+Cross-socket and HT have similar high baseline HITM (~250) and moderate
+amplification (~4x) with real latency cost. The HT result is particularly
+notable: SMT siblings generate coherence traffic volumes comparable to
+cross-socket operation because L1/L2 sharing creates frequent Modified-state
+conflicts.
 
-### 5. Control workload is as harmful as RMW
+### 5. Fairness splits into two groups
 
-In both topologies, the control (benign load) attacker causes equal or greater
-slowdown than the RMW attacker. This rules out atomic-operation-specific
-overhead as the interference mechanism. The bottleneck is memory traffic volume,
-regardless of whether that traffic is reads or read-modify-writes.
+Cross-socket and HT maintain high fairness (~0.97-1.0) because their
+interference mechanisms (interconnect saturation, pipeline competition) affect
+all threads uniformly. Same-socket ST has lower fairness (~0.75-0.82) due to
+inherent intra-socket asymmetry (core position on ring bus, L3 slice distance),
+but this is a baseline property, not attacker-induced.
+
+### 6. Control workload is universally as harmful as RMW
+
+Across all three topologies, benign load attackers cause equal or greater
+slowdown than RMW attackers. This is topology-invariant evidence that the
+bottleneck is traffic volume, not atomic-operation-specific overhead.
 
 ## Implications
 
-- **NUMA-aware scheduling matters**. Cross-socket placement converts a zero-cost
-  interference pattern into a 100% slowdown. Applications sensitive to latency
-  jitter should pin cooperating threads to the same socket.
+- **SMT placement is the worst topology for interference**. Hyperthreaded
+  attackers cause more slowdown than cross-socket attackers and eliminate the
+  warming benefit seen in same-socket ST. Applications sharing physical cores
+  via hyperthreading are most vulnerable to adversarial interference.
 
-- **Cache-line isolation is irrelevant for bandwidth-bound interference**. In
-  both topologies, shared-line and separate-line attackers produce identical
-  outcomes. Padding structures to avoid false sharing will not help when the
-  bottleneck is interconnect or ring bus bandwidth.
+- **Same-socket, separate physical cores is the most resilient topology**. Not
+  only does it show zero net interference, but low attacker counts provide a
+  measurable warming benefit. This is the optimal placement for cooperating
+  threads.
 
-- **HITM counts are topology-dependent metrics**. A high HITM count on the same
-  socket is benign; the same count across sockets is expensive. Performance
-  analysis tools reporting HITM should contextualize by topology.
+- **NUMA-aware scheduling is necessary but not sufficient**. Placing threads on
+  the same socket avoids cross-socket interference, but placing them on SMT
+  siblings creates *worse* interference. The ideal strategy is same-socket,
+  separate physical cores.
 
-- **Low attacker counts on the same socket are beneficial**. System designs that
-  co-locate a small number of cooperating threads on one socket may see latency
-  improvements from cache warming effects, up to a threshold (~2 threads in
-  this experiment) beyond which contention dominates.
+- **Cache-line isolation is irrelevant across all topologies**. Shared-line and
+  separate-line attackers produce identical outcomes in every mode. Padding to
+  avoid false sharing will not help when the bottleneck is bandwidth (cross-socket),
+  pipeline resources (HT), or nonexistent (same-socket ST).
+
+- **HITM counts require topology context**. The same HITM count means different
+  things: 23x amplification on the same socket is free; 4x across sockets or
+  SMT siblings is expensive. Performance tools should report HITM alongside
+  topology metadata.
