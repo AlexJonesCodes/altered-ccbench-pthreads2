@@ -68,9 +68,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--format", default="png", choices=["png", "pdf", "svg"],
                    help="Output image format")
     p.add_argument("--dpi", type=int, default=150)
-    p.add_argument("--max-groups", type=int, default=20,
+    p.add_argument("--max-groups", type=int, default=0,
                    help="Maximum number of groups to plot individually "
-                        "(prevents enormous multi-panel figures)")
+                        "(0 = unlimited, prevents enormous multi-panel figures)")
     p.add_argument("--per-group", action="store_true",
                    help="Generate separate plot files for each group instead "
                         "of combining all groups into one figure")
@@ -218,8 +218,11 @@ def organise_regimes(regimes: List[Dict[str, str]]):
 
 def plot_zscore_timeline(win_data, regime_data, out_dir: Path, fmt: str,
                          dpi: int, max_groups: int):
-    """Window z-score over time with change-point overlays."""
-    groups = list(win_data.keys())[:max_groups]
+    """Window z-score over time with change-point overlays.
+
+    Uses only the smallest available window size for highest temporal resolution.
+    """
+    groups = list(win_data.keys()) if max_groups <= 0 else list(win_data.keys())[:max_groups]
     if not groups:
         return
 
@@ -230,17 +233,17 @@ def plot_zscore_timeline(win_data, regime_data, out_dir: Path, fmt: str,
     for idx, gk in enumerate(groups):
         ax = axes[idx, 0]
         ws_dict = win_data[gk]
-        window_sizes = sorted(ws_dict.keys())
+        # Use only the smallest window size for highest temporal resolution
+        ws = min(ws_dict.keys())
+        rows = ws_dict[ws]
 
-        for ws in window_sizes:
-            rows = ws_dict[ws]
-            x = [safe_int(r.get("window_index", "0")) for r in rows]
-            z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
-            colour = ws_colour(ws)
-            ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8,
-                    label=f"w={ws}")
-            # Light fill between to show magnitude
-            ax.fill_between(x, 0, z, color=colour, alpha=0.08)
+        x = [safe_int(r.get("window_index", "0")) for r in rows]
+        z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
+        colour = ws_colour(ws)
+        ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8,
+                label=f"w={ws}")
+        # Light fill between to show magnitude
+        ax.fill_between(x, 0, z, color=colour, alpha=0.08)
 
         # Significance thresholds
         ax.axhline(0, color="grey", linewidth=0.6, linestyle="-", alpha=0.4)
@@ -249,15 +252,14 @@ def plot_zscore_timeline(win_data, regime_data, out_dir: Path, fmt: str,
 
         # Overlay change-points if available
         if gk in regime_data:
-            for ws in window_sizes:
-                cps = regime_data.get(gk, {}).get(ws, [])
-                for cp_pos, cp_score, lm, rm in cps:
-                    ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
-                               linestyle="--", alpha=0.6)
+            cps = regime_data.get(gk, {}).get(ws, [])
+            for cp_pos, cp_score, lm, rm in cps:
+                ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
+                           linestyle="--", alpha=0.6)
 
         ax.set_ylabel("Z-score")
-        ax.set_title(group_label(gk), fontsize=10, fontweight="bold")
-        ax.legend(fontsize=7, loc="upper right", ncol=len(window_sizes))
+        ax.set_title(f"{group_label(gk)}  [window={ws}]", fontsize=10, fontweight="bold")
+        ax.legend(fontsize=7, loc="upper right")
         ax.grid(True, alpha=0.2)
 
     axes[-1, 0].set_xlabel("Window Index")
@@ -277,7 +279,7 @@ def plot_zscore_timeline(win_data, regime_data, out_dir: Path, fmt: str,
 def plot_repeat_rate_timeline(win_data, out_dir: Path, fmt: str, dpi: int,
                                max_groups: int):
     """Observed vs expected repeat rate per window over time."""
-    groups = list(win_data.keys())[:max_groups]
+    groups = list(win_data.keys()) if max_groups <= 0 else list(win_data.keys())[:max_groups]
     if not groups:
         return
 
@@ -332,7 +334,7 @@ def plot_repeat_rate_timeline(win_data, out_dir: Path, fmt: str, dpi: int,
 def plot_fairness_timeline(win_data, out_dir: Path, fmt: str, dpi: int,
                             max_groups: int):
     """Jain's fairness index per window over time."""
-    groups = list(win_data.keys())[:max_groups]
+    groups = list(win_data.keys()) if max_groups <= 0 else list(win_data.keys())[:max_groups]
     if not groups:
         return
 
@@ -374,7 +376,7 @@ def plot_fairness_timeline(win_data, out_dir: Path, fmt: str, dpi: int,
 def plot_dominant_winner_ribbon(win_data, out_dir: Path, fmt: str, dpi: int,
                                  max_groups: int):
     """Colour-coded strip showing which thread dominates each window."""
-    groups = list(win_data.keys())[:max_groups]
+    groups = list(win_data.keys()) if max_groups <= 0 else list(win_data.keys())[:max_groups]
     if not groups:
         return
 
@@ -590,7 +592,7 @@ def plot_repeat_excess_distributions(win_data, out_dir: Path, fmt: str,
 def plot_multiscale_heatmap(win_data, out_dir: Path, fmt: str, dpi: int,
                              max_groups: int):
     """Heatmap: x=window position (normalised 0-1), y=window_size, colour=z-score."""
-    groups = list(win_data.keys())[:max_groups]
+    groups = list(win_data.keys()) if max_groups <= 0 else list(win_data.keys())[:max_groups]
     if not groups:
         return
 
@@ -653,28 +655,27 @@ def plot_multiscale_heatmap(win_data, out_dir: Path, fmt: str, dpi: int,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _plot_single_zscore(gk, ws_dict, regime_data, out_dir: Path, fmt: str, dpi: int):
-    """Single-group z-score timeline."""
+    """Single-group z-score timeline (smallest window size only)."""
     fig, ax = plt.subplots(figsize=(14, 4))
-    window_sizes = sorted(ws_dict.keys())
-    for ws in window_sizes:
-        rows = ws_dict[ws]
-        x = [safe_int(r.get("window_index", "0")) for r in rows]
-        z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
-        colour = ws_colour(ws)
-        ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8, label=f"w={ws}")
-        ax.fill_between(x, 0, z, color=colour, alpha=0.08)
+    # Use only the smallest window size for highest temporal resolution
+    ws = min(ws_dict.keys())
+    rows = ws_dict[ws]
+    x = [safe_int(r.get("window_index", "0")) for r in rows]
+    z = [safe_float(r.get("window_repeat_zscore", "nan")) for r in rows]
+    colour = ws_colour(ws)
+    ax.plot(x, z, "-", color=colour, linewidth=1.2, alpha=0.8, label=f"w={ws}")
+    ax.fill_between(x, 0, z, color=colour, alpha=0.08)
     ax.axhline(0, color="grey", linewidth=0.6, linestyle="-", alpha=0.4)
     ax.axhline(2, color="red", linewidth=0.7, linestyle=":", alpha=0.5)
     ax.axhline(-2, color="blue", linewidth=0.7, linestyle=":", alpha=0.5)
     if gk in regime_data:
-        for ws in window_sizes:
-            for cp_pos, cp_score, lm, rm in regime_data.get(gk, {}).get(ws, []):
-                ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
-                           linestyle="--", alpha=0.6)
+        for cp_pos, cp_score, lm, rm in regime_data.get(gk, {}).get(ws, []):
+            ax.axvline(cp_pos, color=ws_colour(ws), linewidth=1.5,
+                       linestyle="--", alpha=0.6)
     ax.set_ylabel("Z-score")
     ax.set_xlabel("Window Index")
-    ax.set_title(group_label(gk), fontsize=11, fontweight="bold")
-    ax.legend(fontsize=8, loc="upper right", ncol=len(window_sizes))
+    ax.set_title(f"{group_label(gk)}  [window={ws}]", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     out = out_dir / f"zscore_{group_filename(gk)}.{fmt}"
