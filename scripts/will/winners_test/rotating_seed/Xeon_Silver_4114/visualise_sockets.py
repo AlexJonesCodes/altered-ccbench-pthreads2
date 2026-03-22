@@ -6,6 +6,16 @@ from collections import defaultdict
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
+# -------------------------------
+# PLOT TOGGLES
+# -------------------------------
+RUN_ORIGINAL_PLOTS = False
+RUN_GINI_PLOTS = True
+RUN_DOMINANCE_PLOTS = False
+RUN_SCATTER_PLOTS = False
+RUN_CV_PLOTS = False
+RUN_IMBALANCE_PLOTS = True
+
 plt.rcParams.update({
     'font.size': 18,
     'axes.titlesize': 20,
@@ -21,6 +31,13 @@ plt.rcParams.update({
 # -------------------------------
 CSV_FILES = [
 
+"4kruns_1_000_000_reps2/4000_runs_1mill_reps2.csv",
+"cas_4kruns_1_000_000_reps/4000_runs_1mill_reps_cas.csv",
+"fai_4kruns_1_000_000_reps/4000_runs_1mill_reps_fai_rep.csv",
+"load_on_modified_4kruns_1_000_000_reps/load_on_modified_4000_runs_1mill_reps.csv",
+"swap_4kruns_1_000_000_reps/4000_runs_1mill_reps_swap.csv",
+"tas_4kruns_1_000_000_reps/1/4000_runs_1mill_reps_tas.csv",
+
 "../Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
 "../Xeon_Gold_6142/cas_6400_runs_1.6mill_reps_repeat/cas_6400_runs_1.6mill_reps.csv",
 "../Xeon_Gold_6142/fai_6400_runs_1.6mill_reps_repeat/fai_6400_runs_1.6mill_reps.csv",
@@ -29,22 +46,11 @@ CSV_FILES = [
 "../Xeon_Gold_6142/tas_6400_runs_1.6mill_reps/1/6400_runs_1.6mill_reps_tas.csv"
 ]
 
-'''
-
-"4kruns_1_000_000_reps2/4000_runs_1mill_reps2.csv",
-"cas_4kruns_1_000_000_reps/4000_runs_1mill_reps_cas.csv",
-"fai_4kruns_1_000_000_reps/4000_runs_1mill_reps_fai_rep.csv",
-"load_on_modified_4kruns_1_000_000_reps/load_on_modified_4000_runs_1mill_reps.csv",
-"swap_4kruns_1_000_000_reps/4000_runs_1mill_reps_swap.csv",
-"tas_4kruns_1_000_000_reps/1/4000_runs_1mill_reps_tas.csv",
-
-'''
-
-NUM_SILVER = 0
+NUM_SILVER = 6
 NUM_TOTAL = len(CSV_FILES)
 is_gold_list = [False]*NUM_SILVER + [True]*(NUM_TOTAL - NUM_SILVER)
 
-OUTPUT_DIR = "socket_plots/all_gold/"
+OUTPUT_DIR = "socket_plots/fairness/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 LABEL_MAP = {
@@ -53,7 +59,7 @@ LABEL_MAP = {
 }
 
 # -------------------------------
-# Socket mapping per test
+# Socket mapping
 # -------------------------------
 def get_socket_mapping(is_gold, total_cpus):
 
@@ -63,11 +69,10 @@ def get_socket_mapping(is_gold, total_cpus):
             1: [cpu for cpu in range(total_cpus) if cpu % 2 == 1],
         }
 
-    else:
-        return {
-            0: list(range(0,10)) + list(range(20,30)),
-            1: list(range(10,20)) + list(range(30,40)),
-        }
+    return {
+        0: list(range(0,10)) + list(range(20,30)),
+        1: list(range(10,20)) + list(range(30,40)),
+    }
 
 # -------------------------------
 # Color helper
@@ -88,9 +93,11 @@ def load_test(csv_file):
     test_type = None
 
     with open(csv_file, newline="") as f:
+
         reader = csv.DictReader(f)
 
         for row in reader:
+
             run = int(row["run"])
             cpu = int(row["cpu"])
             wins = int(row["wins"])
@@ -101,7 +108,7 @@ def load_test(csv_file):
     return core_winners, test_type
 
 # -------------------------------
-# Helper: total executions per run
+# Helper totals
 # -------------------------------
 def total_executions_per_run(core_winners):
 
@@ -133,10 +140,95 @@ def compute_socket_data(core_winners, SOCKETS, mode="totals"):
                 socket_data[socket].append(socket_sum / (fair_share * len(cpus)))
             else:
                 for cpu in cpus:
-                    wins = core_winners[run].get(cpu, 0)
+                    wins = core_winners[run].get(cpu,0)
                     socket_data[socket].append(wins / fair_share)
 
     return socket_data
+
+# -------------------------------
+# Gini coefficient
+# -------------------------------
+def gini(values):
+
+    values = np.array(values, dtype=float)
+
+    if np.sum(values) == 0:
+        return 0
+
+    values = np.sort(values)
+    n = len(values)
+    index = np.arange(1,n+1)
+
+    return (2*np.sum(index*values)/(n*np.sum(values))) - (n+1)/(n-1)
+
+# -------------------------------
+# Coefficient of Variation
+# -------------------------------
+def coefficient_of_variation(values):
+
+    values = np.array(values, dtype=float)
+
+    mean = np.mean(values)
+
+    if mean == 0:
+        return 0
+
+    return np.std(values) / mean
+
+# -------------------------------
+# Imbalance ratio
+# -------------------------------
+def imbalance_ratio(s0, s1):
+
+    total = s0 + s1
+
+    if total == 0:
+        return 0
+
+    return abs(s0 - s1) / total
+
+# -------------------------------
+# Dominance share per run
+# -------------------------------
+def dominance_per_run(core_winners, SOCKETS):
+
+    shares = []
+
+    for run, cpu_dict in core_winners.items():
+
+        s0 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[0])
+        s1 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[1])
+
+        total = s0 + s1
+
+        if total == 0:
+            continue
+
+        shares.append(max(s0/total, s1/total))
+
+    return shares
+
+
+# -------------------------------
+# Socket share per run
+# -------------------------------
+def socket_share_per_run(core_winners, SOCKETS):
+
+    shares = []
+
+    for run, cpu_dict in core_winners.items():
+
+        s0 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[0])
+        s1 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[1])
+
+        total = s0 + s1
+
+        if total == 0:
+            continue
+
+        shares.append(s0 / total)
+
+    return shares
 
 # -------------------------------
 # Axis helpers
@@ -156,7 +248,6 @@ def add_test_separators(ax, positions):
     for i in range(1, len(positions)-1, 2):
 
         boundary = (positions[i] + positions[i+1]) / 2
-
         ax.axvline(boundary, color="black", linewidth=1, alpha=0.4)
 
 def add_group_labels(ax, positions, labels):
@@ -176,7 +267,7 @@ def add_group_labels(ax, positions, labels):
         )
 
 # -------------------------------
-# Load all tests
+# Load tests
 # -------------------------------
 tests = []
 
@@ -185,15 +276,40 @@ for csv_file, is_gold in zip(CSV_FILES, is_gold_list):
     core_winners, test_type = load_test(csv_file)
 
     total_cpus = max(core_winners[next(iter(core_winners))].keys()) + 1
-
     SOCKETS = get_socket_mapping(is_gold, total_cpus)
+
+    dominance_vals = dominance_per_run(core_winners, SOCKETS)
+    share_vals = socket_share_per_run(core_winners, SOCKETS)
+
+    socket_totals = []
+    gini_runs = []
+    imbalance_runs = []
+
+    for run, cpu_dict in core_winners.items():
+
+        s0 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[0])
+        s1 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[1])
+
+        socket_totals.extend([s0, s1])
+
+        gini_runs.append(gini([s0, s1]))
+        imbalance_runs.append(imbalance_ratio(s0, s1))
 
     tests.append({
         "type": test_type,
         "totals": compute_socket_data(core_winners, SOCKETS, "totals"),
-        "individual": compute_socket_data(core_winners, SOCKETS, "individual")
+        "individual": compute_socket_data(core_winners, SOCKETS, "individual"),
+        "gini_total": gini(socket_totals),
+        "gini_runs": gini_runs,
+        "dominance": dominance_vals,
+        "shares": share_vals,
+        "cv": coefficient_of_variation(dominance_vals),
+        "imbalance": np.mean(imbalance_runs)
     })
 
+# -------------------------------
+# ORIGINAL PLOT FUNCTION
+# -------------------------------
 def make_plots(dataset, ylabel, title, filename):
 
     data_for_plot = []
@@ -314,9 +430,206 @@ def make_plots(dataset, ylabel, title, filename):
     plt.close()
 
 # -------------------------------
-# Generate plots
+# GINI PLOT
 # -------------------------------
-make_plots("totals", "Normalized Executions", "Socket Total Executions", "socket_total")
-make_plots("individual", "Normalized Executions per CPU", "Typical Executions per CPU by Socket", "socket_individual")
+def make_gini_plot():
+
+    totals = [t["gini_total"] for t in tests]
+    runs = [t["gini_runs"] for t in tests]
+    labels = [LABEL_MAP.get(t["type"], t["type"]) for t in tests]
+
+    pos = np.arange(len(totals)) + 1
+
+    fig, ax = plt.subplots(figsize=(14,7))
+
+    # Bar plots (total gini)
+    bars = ax.bar(pos, totals, width=0.9, edgecolor="black", zorder=3)
+
+    for i, bar in enumerate(bars):
+
+        if is_gold_list[i]:
+            bar.set_facecolor("#d4af37")
+        else:
+            bar.set_facecolor("#d9d9d9")
+
+    ax.set_xticks(pos)
+    ax.set_xticklabels(labels)
+
+    ax.set_ylabel("Gini Coefficient")
+    ax.set_title("Socket Execution Inequality")
+    ax.set_yticks(np.arange(0, 0.12, 0.01))
+
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver CPU"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Gold CPU"),
+    ]
+
+    ax.legend(handles=legend_handles, loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR,"gini_coefficient.png"), dpi=300)
+    plt.close()
+
+# -------------------------------
+# DOMINANCE PLOT
+# -------------------------------
+def make_dominance_plot():
+
+    data = [t["dominance"] for t in tests]
+    labels = [LABEL_MAP.get(t["type"], t["type"]) for t in tests]
+
+    pos = np.arange(len(data)) + 1
+
+    fig, ax = plt.subplots(figsize=(14,7))
+
+    vp = ax.violinplot(data, positions=pos, showmedians=True)
+
+    for body in vp["bodies"]:
+        body.set_facecolor("#c27ba0")
+        body.set_edgecolor("black")
+        body.set_alpha(0.6)
+
+    ax.set_xticks(pos)
+    ax.set_xticklabels(labels)
+
+    ax.set_ylabel("Dominant Socket Share")
+    ax.set_title("Socket Dominance per Run")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR,"dominance_violin.png"), dpi=300)
+    plt.close()
+
+
+# -------------------------------
+# SOCKET SHARE SCATTER
+# -------------------------------
+
+def make_scatter_plots():
+
+    fig, ax = plt.subplots(figsize=(14,7))
+
+    offset = 0
+
+    for i, test in enumerate(tests):
+
+        shares = test["shares"]
+        runs = np.arange(len(shares)) + offset
+
+        color = "#d4af37" if is_gold_list[i] else "#a6a6a6"
+
+        ax.scatter(runs, shares, s=8, alpha=0.35, color=color)
+
+        offset += len(shares) + 200
+
+    ax.axhline(0.5, linestyle="--", color="black")
+
+    ax.set_ylabel("Socket 0 Share")
+    ax.set_xlabel("Run")
+    ax.set_title("Socket Share Per Run")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR,"socket_share_scatter.png"), dpi=300)
+    plt.close()
+
+# -------------------------------
+# COEFFICIENT OF VARIATION PLOT
+# -------------------------------
+def make_cv_plot():
+
+    values = [t["cv"] for t in tests]
+    labels = [LABEL_MAP.get(t["type"], t["type"]) for t in tests]
+
+    pos = np.arange(len(values)) + 1
+
+    fig, ax = plt.subplots(figsize=(14,7))
+
+    bars = ax.bar(pos, values, edgecolor="black")
+
+    for i, bar in enumerate(bars):
+
+        if is_gold_list[i]:
+            bar.set_facecolor("#d4af37")
+        else:
+            bar.set_facecolor("#d9d9d9")
+
+    ax.set_xticks(pos)
+    ax.set_xticklabels(labels)
+
+    ax.set_ylabel("Coefficient of Variation")
+    ax.set_title("Run to Run Fairness Variability")
+
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver CPU"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Gold CPU")
+    ]
+
+    ax.legend(handles=legend_handles, loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR,"coefficient_of_variation.png"), dpi=300)
+    plt.close()
+
+# -------------------------------
+# IMBALANCE RATIO PLOT
+# -------------------------------
+def make_imbalance_plot():
+
+    values = [t["imbalance"] for t in tests]
+    labels = [LABEL_MAP.get(t["type"], t["type"]) for t in tests]
+
+    pos = np.arange(len(values)) + 1
+
+    fig, ax = plt.subplots(figsize=(14,7))
+
+    bars = ax.bar(pos, values, edgecolor="black")
+
+    for i, bar in enumerate(bars):
+
+        if is_gold_list[i]:
+            bar.set_facecolor("#d4af37")
+        else:
+            bar.set_facecolor("#d9d9d9")
+
+    ax.set_xticks(pos)
+    ax.set_xticklabels(labels)
+
+    ax.set_ylabel("Imbalance Ratio")
+    ax.set_title("Socket Execution Unfairnes")
+
+    ax.set_yticks(np.arange(0, 0.30, 0.025))
+
+    legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver CPU"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Gold CPU")
+    ]
+
+    ax.legend(handles=legend_handles, loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR,"imbalance_ratio.png"), dpi=300)
+    plt.close()
+
+# -------------------------------
+# RUN PLOTS
+# -------------------------------
+if RUN_ORIGINAL_PLOTS:
+
+    make_plots("totals", "Normalized Executions", "Socket Total Executions", "socket_total")
+    make_plots("individual", "Normalized Executions per CPU", "Typical Executions per CPU by Socket", "socket_individual")
+
+if RUN_GINI_PLOTS:
+    make_gini_plot()
+
+if RUN_DOMINANCE_PLOTS:
+    make_dominance_plot()
+
+if RUN_SCATTER_PLOTS:
+    make_scatter_plots()
+
+if RUN_CV_PLOTS:
+    make_cv_plot()
+
+if RUN_IMBALANCE_PLOTS:
+    make_imbalance_plot()
 
 print("Plots generated successfully.")

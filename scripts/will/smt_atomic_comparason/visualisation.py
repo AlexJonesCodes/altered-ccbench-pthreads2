@@ -5,30 +5,36 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from pathlib import Path
 
-# BASE_DIR = "./r53600/"
-# BASE_DIR = "./silver_4114/"
-# BASE_DIR = "./gold_6142/"
-# BASE_DIR = "./E52450/"
-# BASE_DIR = "./2660v2/"
-# BASE_DIR = "./E52630/"
-# BASE_DIR = "./E52683v3/"
-# BASE_DIR = "./E52660v3/"
-BASE_DIR = "./E52680v3/"
+# -------------------------------
+# CONFIGURATION
+# -------------------------------
 
+OUTPUT_DIR = Path("./mixed_chip_plots")
 
-CSV_FILE = BASE_DIR + "ccbench_results.csv"
+ENABLE_GLOBAL_VIOLIN = False
+ENABLE_PER_CORE_VIOLIN = False
+ENABLE_PER_CHIP_HEATMAP = False
+ENABLE_CROSS_CHIP_HEATMAP = True
+COLOR_MODE = "delta"  # options: "raw", "normalized", "delta"
 
-# CHIP_NAME = "Ryzen 5 3600: "
-# CHIP_NAME = "Xeon Silver 4114: "
-# CHIP_NAME = "Xeon Gold 6142: "
-# CHIP_NAME = "Xeon E5-2450: "
-# CHIP_NAME = "Xeon E5-2660 v2: "
-# CHIP_NAME = "Xeon E5-2630: "
-# CHIP_NAME = "Xeon E5-2683 v3: "
-# CHIP_NAME = "Xeon E5-2660 v3: "
-CHIP_NAME = "Xeon E5-2680 v3: "
+# directories containing benchmark results
+CHIPS = {
+    # "Ryzen 5 3600": "./r53600/",
+    "Xeon Gold 6142": "./gold_6142/",
+    "Xeon Silver 4114": "./silver_4114/",
 
-# TESTS = [0,7,13,14,15,34]
+    "Xeon E5-2683 v3": "./E52683v3/",
+    "Xeon E5-2660 v3": "./E52660v3/",
+    "Xeon E5-2630 v3": "./E52630v3/",
+    "Xeon E5-2680 v3": "./E52680v3/",
+
+    "Xeon E5-2660 v2": "./2660v2/",
+
+    "Xeon E5-2450": "./E52450/",
+
+    "Xeon E5530": "./E5530/",
+}
+
 TESTS = [0,7,12,13,14,15]
 
 TEST_NAMES = {
@@ -38,117 +44,103 @@ TEST_NAMES = {
     13: "FAI",
     14: "TAS",
     15: "SWAP",
-    34: "Repeat CAS"
+    34: "Repeat CAS",
 }
 
-OUTDIR = Path(BASE_DIR + "violin_plots")
-CORE_DIR = OUTDIR / "per_core"
-
-OUTDIR.mkdir(exist_ok=True)
-CORE_DIR.mkdir(exist_ok=True)
-
 # -------------------------------
-# Your plotting style
+# Plot styling
 # -------------------------------
 
 plt.rcParams.update({
     "font.size": 16,
     "axes.titlesize": 20,
     "axes.labelsize": 18,
-    "xtick.labelsize": 16,
-    "ytick.labelsize": 16
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14
 })
+
+# -------------------------------
+# Output directories
+# -------------------------------
+
+GLOBAL_DIR = OUTPUT_DIR / "global_violins"
+CORE_DIR = OUTPUT_DIR / "per_core_violins"
+PER_CHIP_HEATMAP_DIR = OUTPUT_DIR / "chip_heatmaps"
+CROSS_CHIP_HEATMAP_DIR = OUTPUT_DIR / "cross_chip_heatmaps"
+
+for d in [
+    OUTPUT_DIR,
+    GLOBAL_DIR,
+    CORE_DIR,
+    PER_CHIP_HEATMAP_DIR,
+    CROSS_CHIP_HEATMAP_DIR
+]:
+    d.mkdir(parents=True, exist_ok=True)
 
 # -------------------------------
 # Data containers
 # -------------------------------
 
-global_data = defaultdict(list)
-per_core_data = defaultdict(lambda: defaultdict(list))
-
-# baseline data (no contention)
-baseline_global = defaultdict(list)
-baseline_per_core = defaultdict(lambda: defaultdict(list))
+chip_global_data = {}
+chip_per_core_data = {}
+chip_baseline = {}
 
 # -------------------------------
-# Read CSV
+# Load all CSVs
 # -------------------------------
 
-with open(CSV_FILE) as f:
+for chip_name, base_dir in CHIPS.items():
 
-    reader = csv.DictReader(f)
+    csv_file = Path(base_dir) / "ccbench_results.csv"
 
-    for r in reader:
+    global_data = defaultdict(list)
+    per_core_data = defaultdict(lambda: defaultdict(list))
+    baseline_global = defaultdict(list)
 
-        cpu1 = int(r["cpu1"])
-        cpu2 = int(r["cpu2"])
+    with open(csv_file) as f:
 
-        t1 = int(r["test1"])
-        t2 = int(r["test2"])
+        reader = csv.DictReader(f)
 
-        lat1 = float(r["core0_avg_cycles"])
-        lat2 = float(r["core1_avg_cycles"])
+        for r in reader:
 
-        # baseline (single CPU runs)
-        if cpu2 == -1 and t2 == -1:
+            cpu1 = int(r["cpu1"])
+            cpu2 = int(r["cpu2"])
 
-            baseline_global[t1].append(lat1)
-            baseline_per_core[(cpu1)][t1].append(lat1)
-            continue
+            t1 = int(r["test1"])
+            t2 = int(r["test2"])
 
-        # store latency for each instruction perspective
-        global_data[(t1,t2)].append(lat1)
-        global_data[(t2,t1)].append(lat2)
+            lat1 = float(r["core0_avg_cycles"])
+            lat2 = float(r["core1_avg_cycles"])
 
-        core_key = (cpu1,cpu2)
+            if cpu2 == -1 and t2 == -1:
 
-        per_core_data[core_key][(t1,t2)].append(lat1)
-        per_core_data[core_key][(t2,t1)].append(lat2)
+                baseline_global[t1].append(lat1)
+                continue
 
-# -------------------------------
-# Compute Y limits per instruction
-# -------------------------------
+            global_data[(t1,t2)].append(lat1)
+            global_data[(t2,t1)].append(lat2)
 
-instruction_max = defaultdict(float)
+            core_key = (cpu1,cpu2)
 
-# check global data
-for (inst, other), vals in global_data.items():
+            per_core_data[core_key][(t1,t2)].append(lat1)
+            per_core_data[core_key][(t2,t1)].append(lat2)
 
-    if vals:
-        instruction_max[inst] = max(instruction_max[inst], max(vals))
-
-# check baseline
-for inst, vals in baseline_global.items():
-
-    if vals:
-        instruction_max[inst] = max(instruction_max[inst], max(vals))
-
-# check per-core data
-for core_data in per_core_data.values():
-
-    for (inst, other), vals in core_data.items():
-
-        if vals:
-            instruction_max[inst] = max(instruction_max[inst], max(vals))
-
-# small padding
-for inst in instruction_max:
-    instruction_max[inst] *= 1.05
+    chip_global_data[chip_name] = global_data
+    chip_per_core_data[chip_name] = per_core_data
+    chip_baseline[chip_name] = baseline_global
 
 # -------------------------------
 # Dataset builder
 # -------------------------------
 
-def build_dataset(source, primary):
+def build_dataset(source, baseline, primary):
 
     datasets = []
     labels = []
 
-    # None baseline first
-    datasets.append(baseline_global[primary])
+    datasets.append(baseline[primary])
     labels.append("None")
 
-    # self first
     datasets.append(source[(primary,primary)])
     labels.append(TEST_NAMES[primary])
 
@@ -163,10 +155,10 @@ def build_dataset(source, primary):
     return datasets, labels
 
 # -------------------------------
-# Plot function
+# Violin plot function
 # -------------------------------
 
-def make_violin(datasets, labels, title, outfile, ymax):
+def make_violin(datasets, labels, title, outfile):
 
     positions = np.arange(1, len(datasets)+1)
 
@@ -207,124 +199,239 @@ def make_violin(datasets, labels, title, outfile, ymax):
 
     ax.set_title(title)
 
-    ax.set_ylim(0, ymax)
-
     plt.tight_layout()
     plt.savefig(outfile, dpi=300)
     plt.close()
 
 # -------------------------------
-# Global plots
+# Global violin plots (per chip)
 # -------------------------------
 
-for inst in TESTS:
+if ENABLE_GLOBAL_VIOLIN:
 
-    datasets, labels = build_dataset(global_data, inst)
+    for chip in CHIPS:
 
-    title = f"Latency of {TEST_NAMES[inst]} vs other instructions"
+        global_data = chip_global_data[chip]
+        baseline = chip_baseline[chip]
 
-    outfile = OUTDIR / f"{TEST_NAMES[inst]}.png"
+        for inst in TESTS:
 
-    make_violin(
-        datasets,
-        labels,
-        title,
-        outfile,
-        instruction_max[inst]
+            datasets, labels = build_dataset(
+                global_data,
+                baseline,
+                inst
+            )
+
+            outfile = GLOBAL_DIR / f"{chip}_{TEST_NAMES[inst]}.png"
+
+            title = f"{chip}: {TEST_NAMES[inst]} latency vs other instructions"
+
+            make_violin(datasets, labels, title, outfile)
+
+# -------------------------------
+# Per-core violin plots
+# -------------------------------
+
+if ENABLE_PER_CORE_VIOLIN:
+
+    for chip in CHIPS:
+
+        per_core_data = chip_per_core_data[chip]
+        baseline = chip_baseline[chip]
+
+        for core, core_data in per_core_data.items():
+
+            core_folder = CORE_DIR / f"{chip}_{core[0]}_{core[1]}"
+            core_folder.mkdir(exist_ok=True)
+
+            for inst in TESTS:
+
+                datasets, labels = build_dataset(
+                    core_data,
+                    baseline,
+                    inst
+                )
+
+                outfile = core_folder / f"{TEST_NAMES[inst]}.png"
+
+                title = f"{chip} cores {core[0]}-{core[1]}: {TEST_NAMES[inst]} latency"
+
+                make_violin(datasets, labels, title, outfile)
+
+# -------------------------------
+# Per-chip heatmaps (original)
+# -------------------------------
+
+if ENABLE_PER_CHIP_HEATMAP:
+
+    cmap = LinearSegmentedColormap.from_list(
+        "grey_white",
+        ["#005499", "#ffffff"]
     )
 
-# -------------------------------
-# Per-core plots
-# -------------------------------
+    for chip in CHIPS:
 
-for core, core_data in per_core_data.items():
+        global_data = chip_global_data[chip]
+        baseline = chip_baseline[chip]
 
-    core_folder = CORE_DIR / f"{core[0]}_{core[1]}"
-    core_folder.mkdir(exist_ok=True)
+        heatmap = np.zeros((len(TESTS)+1, len(TESTS)))
 
-    for inst in TESTS:
+        for xi, focus in enumerate(TESTS):
 
-        datasets, labels = build_dataset(core_data, inst)
+            vals = baseline[focus]
+            heatmap[0,xi] = np.median(vals) if vals else np.nan
 
-        title = f"{TEST_NAMES[inst]} latency (cores {core[0]}, {core[1]})"
+        for yi, introduced in enumerate(TESTS, start=1):
+            for xi, focus in enumerate(TESTS):
 
-        outfile = core_folder / f"{TEST_NAMES[inst]}.png"
+                vals = global_data[(focus,introduced)]
+                heatmap[yi,xi] = np.median(vals) if vals else np.nan
 
-        make_violin(
-            datasets,
-            labels,
-            title,
-            outfile,
-            instruction_max[inst]
+        fig, ax = plt.subplots(figsize=(10,8))
+
+        im = ax.imshow(heatmap, cmap=cmap)
+
+        ax.set_xticks(range(len(TESTS)))
+        ax.set_yticks(range(len(TESTS)+1))
+
+        ax.set_xticklabels([TEST_NAMES[t] for t in TESTS])
+        ax.set_yticklabels(["None"] + [TEST_NAMES[t] for t in TESTS])
+
+        # INVERT Y-AXIS
+        ax.invert_yaxis()
+
+        ax.set_xlabel("Focus Instruction")
+        ax.set_ylabel("Interfering Instruction")
+
+        ax.set_title(f"{chip} Instruction Contention")
+
+        fig.colorbar(im, ax=ax, label="Latency (cycles)")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            PER_CHIP_HEATMAP_DIR /
+            f"{chip}_instruction_interference_heatmap.png",
+            dpi=300
         )
 
+        plt.close()
 
 # -------------------------------
-# Heatmap generation
+# Microarchitecture mapping for vertical lines
 # -------------------------------
+MICROARCHS = {
+    "Xeon Gold 6142": "skylake",
+    "Xeon Silver 4114": "skylake",
+    "Xeon E5-2683 v3": "haswell-ep",
+    "Xeon E5-2660 v3": "haswell-ep",
+    "Xeon E5-2630 v3": "haswell-ep",
+    "Xeon E5-2680 v3": "haswell-ep",
+    "Xeon E5-2660 v2": "ivy-bridge-ep",
+    "Xeon E5-2450": "sandy-bridge-en",
+    "Xeon E5530": "nehalem-ep"
+}
 
-import matplotlib.pyplot as plt
+# -------------------------------
+# Cross-chip heatmaps with architecture separators
+# -------------------------------
+chip_names = list(CHIPS.keys())
 
-heatmap = np.zeros((len(TESTS)+1, len(TESTS)))
+for focus in TESTS:
 
-# baseline row
-for xi, focus in enumerate(TESTS):
+    heatmap = np.zeros((len(TESTS)+1, len(chip_names)))
+    color_data = np.zeros_like(heatmap)  # values used for coloring
 
-    vals = baseline_global[focus]
+    for xi, chip in enumerate(chip_names):
 
-    if vals:
-        heatmap[0, xi] = np.median(vals)
-    else:
-        heatmap[0, xi] = np.nan
+        global_data = chip_global_data[chip]
+        baseline = chip_baseline[chip]
 
-# normal rows
-for yi, introduced in enumerate(TESTS, start=1):
-    for xi, focus in enumerate(TESTS):
+        baseline_val = np.median(baseline[focus]) if baseline[focus] else np.nan
 
-        vals = global_data[(focus, introduced)]
+        # baseline row
+        val = np.median(baseline[focus]) if baseline[focus] else np.nan
+        heatmap[0,xi] = val
 
-        if vals:
-            heatmap[yi, xi] = np.median(vals)
-        else:
-            heatmap[yi, xi] = np.nan
+        # coloring for baseline row
+        if COLOR_MODE == "raw":
+            color_data[0,xi] = val
+        elif COLOR_MODE == "normalized":
+            color_data[0,xi] = 1.0
+        elif COLOR_MODE == "delta":
+            color_data[0,xi] = 0.0
 
-fig, ax = plt.subplots(figsize=(10,8))
+        # other rows
+        for yi, introduced in enumerate(TESTS, start=1):
 
-grey_white = LinearSegmentedColormap.from_list(
-    "grey_white",
-    ["#005499", "#ffffff"]
-)
+            val = np.median(global_data[(focus,introduced)]) if global_data[(focus,introduced)] else np.nan
+            heatmap[yi,xi] = val
 
-im = ax.imshow(heatmap, cmap=grey_white)
+            if np.isnan(val) or baseline_val is None:
+                color_val = np.nan
+            else:
+                if COLOR_MODE == "raw":
+                    color_val = val
+                elif COLOR_MODE == "normalized":
+                    color_val = val / baseline_val
+                elif COLOR_MODE == "delta":
+                    color_val = val - baseline_val
 
-# axis labels
-ax.set_xticks(range(len(TESTS)))
-ax.set_yticks(range(len(TESTS)+1))
+            color_data[yi,xi] = color_val
 
-ax.set_xticklabels([TEST_NAMES[t] for t in TESTS])
-ax.set_yticklabels(["None"] + [TEST_NAMES[t] for t in TESTS])
+    # create figure
+    fig, ax = plt.subplots(figsize=(12,8))
 
-ax.invert_yaxis()
+    # define colormap for this heatmap
+    cmap = LinearSegmentedColormap.from_list(
+        "grey_white",
+        ["#005499", "#ffffff"]
+    )
 
-ax.set_xlabel("Focus Instruction (latency measured)")
-ax.set_ylabel("Introduced Instruction")
+    im = ax.imshow(color_data, cmap=cmap)
+    im = ax.imshow(color_data, cmap=cmap)
 
-ax.set_title(CHIP_NAME + "Latency for Operations Under Contention")
+    ax.set_xticks(range(len(chip_names)))
+    ax.set_xticklabels(chip_names, rotation=45, ha="right")
 
-# annotate cells
-for y in range(len(TESTS)+1):
-    for x in range(len(TESTS)):
-        val = heatmap[y,x]
-        if not np.isnan(val):
-            ax.text(x, y, f"{val:.1f}",
-                    ha="center",
-                    va="center",
-                    color="black")
+    ax.set_yticks(range(len(TESTS)+1))
+    ax.set_yticklabels(["None"] + [TEST_NAMES[t] for t in TESTS])
+    ax.invert_yaxis()
 
-fig.colorbar(im, ax=ax, label="Latency (cycles)")
+    ax.set_xlabel("Processor")
+    ax.set_ylabel("Interfering Instruction")
+    ax.set_title(f"{TEST_NAMES[focus]} Latency Under SMT Contention (values are raw latency)")
 
-plt.tight_layout()
-plt.savefig(OUTDIR / "instruction_interference_heatmap.png", dpi=300)
-plt.close()
+    # annotate with actual latency
+    for y in range(len(TESTS)+1):
+        for x in range(len(chip_names)):
+            val = heatmap[y,x]
+            if not np.isnan(val):
+                ax.text(x, y, f"{val:.1f}", ha="center", va="center")
 
-print("All violin plots generated")
+    # -------------------------------
+    # Draw vertical lines between microarchitectures
+    # -------------------------------
+    last_arch = MICROARCHS[chip_names[0]]
+    for xi in range(1, len(chip_names)):
+        arch = MICROARCHS[chip_names[xi]]
+        if arch != last_arch:
+            ax.axvline(x=xi-0.5, color='black', linestyle='dashed', linewidth=2)
+        last_arch = arch
+
+    # colorbar label
+    if COLOR_MODE == "raw":
+        cbar_label = "Latency (cycles)"
+    elif COLOR_MODE == "normalized":
+        cbar_label = "Normalized latency (baseline=1)"
+    elif COLOR_MODE == "delta":
+        cbar_label = "Delta latency (cycles)"
+
+    fig.colorbar(im, ax=ax, label=cbar_label)
+
+    plt.tight_layout()
+    outfile = CROSS_CHIP_HEATMAP_DIR / f"{TEST_NAMES[focus]}_chip_comparison_{COLOR_MODE}.png"
+    plt.savefig(outfile, dpi=300)
+    plt.close()
+
+print("All plots generated.")
