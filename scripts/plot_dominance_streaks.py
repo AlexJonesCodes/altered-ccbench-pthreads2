@@ -576,17 +576,26 @@ def plot_concentration_scatter(
     ops = [extract_op(r) for r in filtered]
     threads = [extract_threads(r) for r in filtered]
 
+    # Marker shape by thread count: square=2, diamond=4, circle=8
+    _TC_MARKER = {"2": "s", "4": "D", "8": "o"}
+    _TC_MARKER_DEFAULT = "o"
+    _MARKER_SIZE = 50
+
     fig, ax = plt.subplots(figsize=(9, 7))
 
-    # Group by operation for legend
+    # Group by (operation, thread_count) for distinct markers
     op_set = sorted(set(ops), key=lambda o: _OP_ORDER.get(o, 99))
+    tc_set = sorted(set(threads), key=lambda x: int(x) if x.isdigit() else 0)
     for op_name in op_set:
-        mask = [o == op_name for o in ops]
-        idx = np.where(mask)[0]
-        sizes = [30 + int(threads[i]) * 8 for i in idx]
-        ax.scatter(eff[idx], gini[idx], c=op_color(op_name), s=sizes,
-                   alpha=0.65, edgecolors="white", linewidths=0.5,
-                   label=op_name, zorder=3)
+        for tc in tc_set:
+            mask = [(o == op_name and t == tc) for o, t in zip(ops, threads)]
+            idx = np.where(mask)[0]
+            if len(idx) == 0:
+                continue
+            marker = _TC_MARKER.get(tc, _TC_MARKER_DEFAULT)
+            ax.scatter(eff[idx], gini[idx], c=op_color(op_name), s=_MARKER_SIZE,
+                       marker=marker, alpha=0.65, edgecolors="white",
+                       linewidths=0.5, zorder=3)
 
     ax.set_xlabel("Effective Dominant Threads (1/HHI)", fontsize=11)
     ax.set_ylabel("Gini Coefficient", fontsize=11)
@@ -604,14 +613,14 @@ def plot_concentration_scatter(
             arrowprops=dict(arrowstyle="-", color="grey", alpha=0.5, lw=0.5),
         )
 
-    # Build combined legend: operation colours + size markers
+    # Build combined legend: operation colours + shape markers
     op_handles = [Patch(facecolor=op_color(o), alpha=0.65, label=o) for o in op_set]
-    size_handles = []
-    for tc in sorted(set(threads), key=lambda x: int(x) if x.isdigit() else 0):
-        size_handles.append(
-            Line2D([], [], marker="o", color="grey", linestyle="None",
-                   markersize=math.sqrt(30 + int(tc) * 8) / 1.5,
-                   markeredgecolor="white", markeredgewidth=0.5,
+    shape_handles = []
+    for tc in tc_set:
+        marker = _TC_MARKER.get(tc, _TC_MARKER_DEFAULT)
+        shape_handles.append(
+            Line2D([], [], marker=marker, color="grey", linestyle="None",
+                   markersize=8, markeredgecolor="white", markeredgewidth=0.5,
                    label=f"t={tc}")
         )
 
@@ -620,7 +629,7 @@ def plot_concentration_scatter(
                      title="Operation", title_fontsize=9,
                      bbox_to_anchor=(1.0, 1.0))
     ax.add_artist(leg1)
-    ax.legend(handles=size_handles, loc="upper right", fontsize=8,
+    ax.legend(handles=shape_handles, loc="upper right", fontsize=8,
               title="Threads", title_fontsize=9,
               bbox_to_anchor=(1.0, 1.0 - 0.05 * (len(op_handles) + 1.5)))
 
