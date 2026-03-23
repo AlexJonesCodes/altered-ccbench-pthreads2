@@ -2,9 +2,11 @@
 """Visualise dominance streak analysis results.
 
 Reads outputs from analyze_dominance_streaks.py and produces:
-  1. Streak-length distribution (histogram/box per group)
-  2. Dominance concentration comparison (bar chart of key metrics across groups)
+  1. Streak-length distribution (log-scale violin + box per group)
+  2. Dominance heatmap (single compact view replacing 4 redundant bar panels)
   3. Streak timeline (per-group horizontal bar showing streak blocks)
+  4. Concentration scatter (effective threads vs Gini, clean annotations)
+  5. Aggregated view by operation type and thread count
 
 Usage:
   python3 scripts/plot_dominance_streaks.py results/analysis/stickiness \\
@@ -19,7 +21,7 @@ import math
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -69,42 +71,96 @@ def read_csv(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Colour helpers
+#  Colour helpers — deterministic thread-id mapping
 # ─────────────────────────────────────────────────────────────────────────────
 
-_THREAD_CMAP = [
+_THREAD_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
     "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
     "#bcbd22", "#17becf", "#aec7e8", "#ffbb78",
     "#98df8a", "#ff9896", "#c5b0d5", "#c49c94",
 ]
 
-def thread_color(tid: str, palette: Dict[str, str]) -> str:
-    if tid not in palette:
-        idx = len(palette) % len(_THREAD_CMAP)
-        palette[tid] = _THREAD_CMAP[idx]
-    return palette[tid]
+# Operation-type colours for aggregate plots
+_OP_COLORS = {
+    "TAS": "#1f77b4",
+    "CAS_UNTIL_SUCCESS": "#d62728",
+    "FAI": "#2ca02c",
+}
+
+
+def thread_color_deterministic(tid: str) -> str:
+    """Deterministic colour: thread '0' always maps to the same colour."""
+    try:
+        idx = int(tid) % len(_THREAD_COLORS)
+    except (ValueError, TypeError):
+        idx = hash(tid) % len(_THREAD_COLORS)
+    return _THREAD_COLORS[idx]
+
+
+def op_color(op: str) -> str:
+    for key, c in _OP_COLORS.items():
+        if key in op.upper():
+            return c
+    return "#7f7f7f"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Group label helper
+#  Short label helper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def group_label(row: Dict[str, str], group_cols: List[str]) -> str:
-    """Short human-readable label from group columns."""
+# Map of verbose column names to short abbreviations
+_COL_ABBREV = {
+    "run_id": "r",
+    "operation": "op",
+    "op_id": None,          # drop — redundant with operation
+    "contention_size": "cs",
+    "core_set_id": None,    # drop — rarely informative in labels
+    "thread_count": "t",
+    "seed": "s",
+    "s_core": None,         # drop — too verbose
+}
+
+# Map long operation names to short names
+_OP_SHORT = {
+    "CAS_UNTIL_SUCCESS": "CAS",
+    "TAS": "TAS",
+    "FAI": "FAI",
+}
+
+
+def short_label(row: Dict[str, str], group_cols: List[str]) -> str:
+    """Compact human-readable label: 'CAS t=8 s=3' instead of
+    'run_id=96 op=CAS_UNTIL_SUCCESS op_id=34 core_set_id=3 t=8 s_core=5'."""
     parts = []
     for c in group_cols:
+        abbrev = _COL_ABBREV.get(c, c)
+        if abbrev is None:
+            continue  # skip this column entirely
         v = row.get(c, "")
-        if v:
-            # Use short key names
-            short = c.replace("thread_count", "t").replace("contention_size", "cs") \
-                     .replace("operation", "op").replace("seed", "s")
-            parts.append(f"{short}={v}")
+        if not v:
+            continue
+        # Shorten operation names
+        v = _OP_SHORT.get(v, v)
+        if abbrev == "r":
+            parts.append(f"#{v}")
+        else:
+            parts.append(f"{abbrev}={v}")
     return " ".join(parts) if parts else "all"
 
 
+def extract_op(row: Dict[str, str]) -> str:
+    """Extract operation type from row."""
+    op = row.get("operation", "")
+    return _OP_SHORT.get(op, op)
+
+
+def extract_threads(row: Dict[str, str]) -> str:
+    return row.get("thread_count", "?")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  Plot 1: Streak length distributions (box + strip)
+#  Plot 1: Streak length distributions — log-scale violin
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_streak_distributions(
@@ -115,39 +171,65 @@ def plot_streak_distributions(
     dpi: int,
     max_groups: int,
 ) -> None:
-    # Group streak lengths
     groups: Dict[str, List[int]] = defaultdict(list)
+    group_op: Dict[str, str] = {}
     for r in streak_rows:
         if r.get("window_size", "") != ws_filter:
             continue
-        label = group_label(r, group_cols)
+        label = short_label(r, group_cols)
         length = int(r.get("streak_length", "1"))
         groups[label].append(length)
+        if label not in group_op:
+            group_op[label] = extract_op(r)
 
     if not groups:
         print("  SKIP streak distribution plot: no data")
         return
 
-    # Sort by median streak length descending
-    sorted_labels = sorted(groups.keys(),
-                          key=lambda k: np.median(groups[k]),
-                          reverse=True)
+    # Sort by p90 streak length descending (more informative than median)
+    sorted_labels = sorted(
+        groups.keys(),
+        key=lambda k: np.percentile(groups[k], 90) if len(groups[k]) >= 2 else max(groups[k]),
+        reverse=True,
+    )
     if max_groups > 0:
         sorted_labels = sorted_labels[:max_groups]
 
     data = [groups[l] for l in sorted_labels]
+    # Add small offset for log scale (can't plot 0)
+    data_log = [[max(v, 0.5) for v in d] for d in data]
 
-    fig, ax = plt.subplots(figsize=(max(10, len(sorted_labels) * 0.6), 6))
-    bp = ax.boxplot(data, vert=True, patch_artist=True, showfliers=True,
-                    flierprops=dict(marker=".", markersize=3, alpha=0.4))
-    for patch in bp["boxes"]:
-        patch.set_facecolor("#4c72b0")
-        patch.set_alpha(0.6)
+    fig, ax = plt.subplots(figsize=(max(10, len(sorted_labels) * 0.5), 7))
 
-    ax.set_xticklabels(sorted_labels, rotation=60, ha="right", fontsize=7)
-    ax.set_ylabel("Streak Length (windows)")
-    ax.set_title(f"Dominance Streak Length Distribution  [window_size={ws_filter}]")
-    ax.grid(axis="y", alpha=0.3)
+    # Violin plot on log scale
+    parts = ax.violinplot(data_log, positions=range(len(data_log)),
+                          showmedians=True, showextrema=False)
+    for pc in parts["bodies"]:
+        pc.set_facecolor("#4c72b0")
+        pc.set_alpha(0.5)
+    parts["cmedians"].set_color("black")
+
+    # Overlay individual max streak as a marker
+    for i, d in enumerate(data):
+        ax.plot(i, max(d), "v", color="#d62728", markersize=6, zorder=5)
+
+    ax.set_yscale("log")
+    ax.set_xticks(range(len(sorted_labels)))
+    ax.set_xticklabels(sorted_labels, rotation=55, ha="right", fontsize=7)
+    ax.set_ylabel("Streak Length (windows, log scale)")
+    ax.set_title(f"Dominance Streak Length Distribution  [window={ws_filter}]")
+    ax.grid(axis="y", alpha=0.3, which="both")
+    ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+
+    # Reference lines
+    ax.axhline(y=10, color="grey", linestyle="--", alpha=0.4, linewidth=0.8)
+    ax.text(len(sorted_labels) - 0.5, 10, "10", fontsize=7, color="grey",
+            va="bottom", ha="right")
+
+    # Legend for max marker
+    ax.plot([], [], "v", color="#d62728", markersize=6, label="max streak")
+    ax.legend(fontsize=8, loc="upper right")
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -155,10 +237,10 @@ def plot_streak_distributions(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Plot 2: Dominance concentration comparison
+#  Plot 2: Dominance heatmap (replaces 4-panel bar chart)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_dominance_comparison(
+def plot_dominance_heatmap(
     summary_rows: List[Dict[str, str]],
     group_cols: List[str],
     ws_filter: str,
@@ -168,7 +250,7 @@ def plot_dominance_comparison(
 ) -> None:
     filtered = [r for r in summary_rows if r.get("window_size", "") == ws_filter]
     if not filtered:
-        print("  SKIP dominance comparison plot: no data")
+        print("  SKIP dominance heatmap: no data")
         return
 
     # Sort by max_streak_frac descending
@@ -176,32 +258,38 @@ def plot_dominance_comparison(
     if max_groups > 0:
         filtered = filtered[:max_groups]
 
-    labels = [group_label(r, group_cols) for r in filtered]
-    metrics = {
-        "max_streak_frac": ("Max Streak Fraction", "#d62728"),
-        "long_streak_coverage": ("Long Streak Coverage", "#ff7f0e"),
-        "top1_dominance_frac": ("Top-1 Thread Fraction", "#2ca02c"),
-        "gini_coefficient": ("Gini Coefficient", "#9467bd"),
-    }
+    labels = [short_label(r, group_cols) for r in filtered]
+    metrics = ["max_streak_frac", "long_streak_coverage",
+               "top1_dominance_frac", "gini_coefficient"]
+    metric_labels = ["Max Streak\nFraction", "Long Streak\nCoverage",
+                     "Top-1 Thread\nFraction", "Gini\nCoefficient"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(max(12, len(labels) * 0.5), 10))
-    axes = axes.flatten()
+    # Build matrix
+    mat = np.zeros((len(filtered), len(metrics)))
+    for i, r in enumerate(filtered):
+        for j, m in enumerate(metrics):
+            mat[i, j] = float(r.get(m, "0"))
 
-    for ax, (col, (title, color)) in zip(axes, metrics.items()):
-        vals = [float(r.get(col, "0")) for r in filtered]
-        bars = ax.barh(range(len(labels)), vals, color=color, alpha=0.7)
-        ax.set_yticks(range(len(labels)))
-        ax.set_yticklabels(labels, fontsize=7)
-        ax.set_xlabel(title)
-        ax.set_title(title)
-        ax.invert_yaxis()
-        ax.grid(axis="x", alpha=0.3)
-        # Value labels
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2,
-                    f"{v:.2f}", va="center", fontsize=6)
+    fig, ax = plt.subplots(figsize=(6, max(5, len(labels) * 0.3 + 1)))
+    im = ax.imshow(mat, aspect="auto", cmap="YlOrRd", vmin=0, vmax=1)
 
-    fig.suptitle(f"Dominance Concentration  [window_size={ws_filter}]", fontsize=13)
+    # Annotate cells
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]):
+            v = mat[i, j]
+            color = "white" if v > 0.55 else "black"
+            ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                    fontsize=7, color=color)
+
+    ax.set_xticks(range(len(metrics)))
+    ax.set_xticklabels(metric_labels, fontsize=9)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels, fontsize=7)
+    ax.set_title(f"Dominance Concentration  [window={ws_filter}]", fontsize=12)
+
+    cb = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02)
+    cb.set_label("Value (0–1)", fontsize=9)
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -209,7 +297,7 @@ def plot_dominance_comparison(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Plot 3: Streak timeline (horizontal stacked bar per group)
+#  Plot 3: Streak timeline — deterministic thread colours
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_streak_timelines(
@@ -222,20 +310,21 @@ def plot_streak_timelines(
     dpi: int,
     max_groups: int,
 ) -> None:
-    # Group streaks
     groups: Dict[str, List[Tuple[str, int, int]]] = defaultdict(list)
     group_nwindows: Dict[str, int] = {}
+    group_op: Dict[str, str] = {}
 
     for r in summary_rows:
         if r.get("window_size", "") != ws_filter:
             continue
-        label = group_label(r, group_cols)
+        label = short_label(r, group_cols)
         group_nwindows[label] = int(r.get("n_windows", "0"))
+        group_op[label] = extract_op(r)
 
     for r in streak_rows:
         if r.get("window_size", "") != ws_filter:
             continue
-        label = group_label(r, group_cols)
+        label = short_label(r, group_cols)
         tid = r.get("streak_thread", "?")
         start = int(r.get("streak_start_window", "0"))
         length = int(r.get("streak_length", "1"))
@@ -245,7 +334,7 @@ def plot_streak_timelines(
         print("  SKIP streak timeline: no data")
         return
 
-    # Sort by max streak frac (from summary)
+    # Sort by max streak frac
     sorted_labels = sorted(
         groups.keys(),
         key=lambda k: max((l for _, _, l in groups[k]), default=0) / max(group_nwindows.get(k, 1), 1),
@@ -254,29 +343,33 @@ def plot_streak_timelines(
     if max_groups > 0:
         sorted_labels = sorted_labels[:max_groups]
 
-    n_groups = len(sorted_labels)
-    fig_h = max(4, n_groups * 0.5 + 1)
-    fig, ax = plt.subplots(figsize=(14, fig_h))
+    # Collect all thread IDs for a consistent legend
+    all_tids = sorted(set(tid for label in sorted_labels for tid, _, _ in groups[label]),
+                      key=lambda t: (int(t) if t.isdigit() else 999, t))
 
-    palette: Dict[str, str] = {}
+    n_groups = len(sorted_labels)
+    fig_h = max(4, n_groups * 0.45 + 1.5)
+    fig, ax = plt.subplots(figsize=(14, fig_h))
 
     for y_idx, label in enumerate(reversed(sorted_labels)):
         streaks = groups[label]
         for tid, start, length in streaks:
-            color = thread_color(tid, palette)
+            color = thread_color_deterministic(tid)
             ax.barh(y_idx, length, left=start, height=0.7,
                     color=color, edgecolor="none", alpha=0.85)
 
     ax.set_yticks(range(len(sorted_labels)))
     ax.set_yticklabels(list(reversed(sorted_labels)), fontsize=7)
     ax.set_xlabel("Window Index")
-    ax.set_title(f"Dominance Streak Timeline  [window_size={ws_filter}]")
+    ax.set_title(f"Dominance Streak Timeline  [window={ws_filter}]")
     ax.grid(axis="x", alpha=0.3)
 
-    # Legend
-    handles = [Patch(facecolor=c, label=t) for t, c in sorted(palette.items())]
+    # Deterministic legend
+    handles = [Patch(facecolor=thread_color_deterministic(t), label=f"T{t}")
+               for t in all_tids if t]
     if len(handles) <= 16:
-        ax.legend(handles=handles, loc="upper right", fontsize=7, ncol=2)
+        ax.legend(handles=handles, loc="upper right", fontsize=7, ncol=2,
+                  title="Thread", title_fontsize=8)
 
     fig.tight_layout()
     out_path = out_dir / f"streak_timeline.{fmt}"
@@ -286,7 +379,7 @@ def plot_streak_timelines(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Plot 4: Effective threads vs Gini scatter
+#  Plot 4: Concentration scatter — clean annotations
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_concentration_scatter(
@@ -301,28 +394,120 @@ def plot_concentration_scatter(
         print("  SKIP concentration scatter: no data")
         return
 
-    eff = [float(r.get("effective_dominant_threads", "1")) for r in filtered]
-    gini = [float(r.get("gini_coefficient", "0")) for r in filtered]
-    max_frac = [float(r.get("max_streak_frac", "0")) for r in filtered]
-    labels = [group_label(r, group_cols) for r in filtered]
+    eff = np.array([float(r.get("effective_dominant_threads", "1")) for r in filtered])
+    gini = np.array([float(r.get("gini_coefficient", "0")) for r in filtered])
+    max_frac = np.array([float(r.get("max_streak_frac", "0")) for r in filtered])
+    ops = [extract_op(r) for r in filtered]
+    threads = [extract_threads(r) for r in filtered]
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    sc = ax.scatter(eff, gini, c=max_frac, cmap="YlOrRd", s=60, alpha=0.8,
-                    edgecolors="grey", linewidths=0.5)
-    cb = fig.colorbar(sc, ax=ax)
-    cb.set_label("Max Streak Fraction")
+    # Colour by operation, size by thread count
+    fig, ax = plt.subplots(figsize=(9, 7))
 
-    ax.set_xlabel("Effective Dominant Threads (1/HHI)")
-    ax.set_ylabel("Gini Coefficient")
-    ax.set_title(f"Dominance Concentration  [window_size={ws_filter}]")
-    ax.grid(alpha=0.3)
+    # Group by operation for legend
+    op_set = sorted(set(ops))
+    for op_name in op_set:
+        mask = [o == op_name for o in ops]
+        idx = np.where(mask)[0]
+        sizes = [30 + int(threads[i]) * 8 for i in idx]
+        ax.scatter(eff[idx], gini[idx], c=op_color(op_name), s=sizes,
+                   alpha=0.65, edgecolors="white", linewidths=0.5,
+                   label=op_name, zorder=3)
 
-    # Annotate extreme points
-    for i, (x, y, l) in enumerate(zip(eff, gini, labels)):
-        if max_frac[i] >= 0.3 or y >= 0.5:
-            ax.annotate(l, (x, y), fontsize=5, alpha=0.7,
-                       xytext=(3, 3), textcoords="offset points")
+    ax.set_xlabel("Effective Dominant Threads (1/HHI)", fontsize=11)
+    ax.set_ylabel("Gini Coefficient", fontsize=11)
+    ax.set_title(f"Dominance Concentration  [window={ws_filter}]", fontsize=12)
+    ax.grid(alpha=0.2)
+    ax.legend(fontsize=9, title="Operation", title_fontsize=10)
 
+    # Only annotate the most extreme points (top 5 by max_frac)
+    top_idx = np.argsort(max_frac)[-5:]
+    for i in top_idx:
+        label = short_label(filtered[i], group_cols)
+        ax.annotate(
+            label, (eff[i], gini[i]),
+            fontsize=6, alpha=0.8,
+            xytext=(6, 6), textcoords="offset points",
+            arrowprops=dict(arrowstyle="-", color="grey", alpha=0.5, lw=0.5),
+        )
+
+    # Size legend
+    for tc in sorted(set(threads)):
+        ax.scatter([], [], c="grey", s=30 + int(tc) * 8, label=f"t={tc}",
+                   edgecolors="white", linewidths=0.5)
+    ax.legend(fontsize=8, title="Operation / Threads", title_fontsize=9,
+              loc="upper right", ncol=2)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {out_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Plot 5: Aggregated by operation and thread count
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_aggregated_by_factor(
+    summary_rows: List[Dict[str, str]],
+    group_cols: List[str],
+    ws_filter: str,
+    out_path: Path,
+    dpi: int,
+) -> None:
+    filtered = [r for r in summary_rows if r.get("window_size", "") == ws_filter]
+    if not filtered:
+        print("  SKIP aggregated plot: no data")
+        return
+
+    # Aggregate by (operation, thread_count)
+    agg: Dict[Tuple[str, str], List[Dict[str, str]]] = defaultdict(list)
+    for r in filtered:
+        key = (extract_op(r), extract_threads(r))
+        agg[key].append(r)
+
+    if len(agg) < 2:
+        print("  SKIP aggregated plot: fewer than 2 factor combinations")
+        return
+
+    sorted_keys = sorted(agg.keys())
+    labels = [f"{op} t={tc}" for op, tc in sorted_keys]
+
+    metrics = {
+        "max_streak_frac": "Max Streak Fraction",
+        "long_streak_coverage": "Long Streak Coverage",
+        "gini_coefficient": "Gini Coefficient",
+        "effective_dominant_threads": "Effective Dominant Threads",
+    }
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.flatten()
+
+    for ax, (col, title) in zip(axes, metrics.items()):
+        means = []
+        stds = []
+        colors = []
+        for key in sorted_keys:
+            vals = [float(r.get(col, "0")) for r in agg[key]]
+            means.append(np.mean(vals))
+            stds.append(np.std(vals))
+            colors.append(op_color(key[0]))
+
+        x = np.arange(len(labels))
+        bars = ax.bar(x, means, yerr=stds, color=colors, alpha=0.7,
+                      edgecolor="white", linewidth=0.5, capsize=3,
+                      error_kw=dict(lw=1, alpha=0.6))
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+        ax.set_title(title, fontsize=10)
+        ax.grid(axis="y", alpha=0.3)
+
+        # Value labels on bars
+        for bar, m in zip(bars, means):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                    f"{m:.2f}", ha="center", fontsize=7, va="bottom")
+
+    fig.suptitle(f"Dominance by Operation & Thread Count  [window={ws_filter}]",
+                 fontsize=13)
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -381,13 +566,14 @@ def main() -> None:
     fmt = args.format
     dpi = args.dpi
 
+    print("Generating plots...")
     plot_streak_distributions(
         streak_rows, group_cols, ws_filter,
         out_dir / f"streak_length_distribution.{fmt}", dpi, args.max_groups,
     )
-    plot_dominance_comparison(
+    plot_dominance_heatmap(
         summary_rows, group_cols, ws_filter,
-        out_dir / f"dominance_comparison.{fmt}", dpi, args.max_groups,
+        out_dir / f"dominance_heatmap.{fmt}", dpi, args.max_groups,
     )
     plot_streak_timelines(
         streak_rows, summary_rows, group_cols, ws_filter,
@@ -396,6 +582,10 @@ def main() -> None:
     plot_concentration_scatter(
         summary_rows, group_cols, ws_filter,
         out_dir / f"concentration_scatter.{fmt}", dpi,
+    )
+    plot_aggregated_by_factor(
+        summary_rows, group_cols, ws_filter,
+        out_dir / f"aggregated_by_factor.{fmt}", dpi,
     )
 
     print(f"\nAll plots saved to {out_dir}/")
