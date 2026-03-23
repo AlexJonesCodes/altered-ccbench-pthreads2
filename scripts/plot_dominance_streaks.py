@@ -200,6 +200,7 @@ def plot_streak_distributions(
     dpi: int,
     max_groups: int,
 ) -> None:
+    """Faceted violin plot: one panel per operation type for readability."""
     groups: Dict[str, List[int]] = defaultdict(list)
     group_meta: Dict[str, Dict[str, str]] = {}
     for r in streak_rows:
@@ -215,7 +216,7 @@ def plot_streak_distributions(
         print("  SKIP streak distribution plot: no data")
         return
 
-    # Build sort key from summary rows for consistent ordering
+    # Build sort key from summary rows
     summary_metric: Dict[str, float] = {}
     summary_row_map: Dict[str, Dict[str, str]] = {}
     for r in summary_rows:
@@ -225,69 +226,87 @@ def plot_streak_distributions(
         summary_metric[label] = float(r.get("max_streak_frac", "0"))
         summary_row_map[label] = r
 
-    # Sort by (operation, thread_count, -max_streak_frac)
-    sorted_labels = sorted(
-        groups.keys(),
-        key=lambda k: _sort_key_for_row(
-            summary_row_map.get(k, group_meta.get(k, {})),
-            summary_metric.get(k, 0),
-        ),
-    )
-    if max_groups > 0:
-        sorted_labels = sorted_labels[:max_groups]
-
-    data = [groups[l] for l in sorted_labels]
-    data_log = [[max(v, 0.5) for v in d] for d in data]
-
-    fig, ax = plt.subplots(figsize=(max(10, len(sorted_labels) * 0.5), 7))
-
-    # Colour violins by operation
-    parts = ax.violinplot(data_log, positions=range(len(data_log)),
-                          showmedians=True, showextrema=False)
-    for i, pc in enumerate(parts["bodies"]):
-        row = summary_row_map.get(sorted_labels[i], group_meta.get(sorted_labels[i], {}))
-        pc.set_facecolor(op_color(extract_op(row)))
-        pc.set_alpha(0.5)
-    parts["cmedians"].set_color("black")
-
-    # Overlay individual max streak as a marker
-    for i, d in enumerate(data):
-        ax.plot(i, max(d), "v", color="#d62728", markersize=6, zorder=5)
-
-    # Add vertical separators between operation groups
-    prev_op = None
-    for i, label in enumerate(sorted_labels):
-        row = summary_row_map.get(label, group_meta.get(label, {}))
-        cur_op = extract_op(row)
-        if prev_op is not None and cur_op != prev_op:
-            ax.axvline(x=i - 0.5, color="grey", linestyle="-", alpha=0.4, linewidth=1)
-        prev_op = cur_op
-
-    ax.set_yscale("log")
-    ax.set_xticks(range(len(sorted_labels)))
-    ax.set_xticklabels(sorted_labels, rotation=55, ha="right", fontsize=7)
-    ax.set_ylabel("Streak Length (windows, log scale)")
-    ax.set_title(f"Dominance Streak Length Distribution  [window={ws_filter}]")
-    ax.grid(axis="y", alpha=0.3, which="both")
-    ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
-
-    # Reference lines
-    ax.axhline(y=10, color="grey", linestyle="--", alpha=0.4, linewidth=0.8)
-    ax.text(len(sorted_labels) - 0.5, 10, "10", fontsize=7, color="grey",
-            va="bottom", ha="right")
-
-    # Legend: max marker + operation colours
-    legend_handles = [Line2D([], [], marker="v", color="#d62728", linestyle="None",
-                             markersize=6, label="max streak")]
-    seen_ops = []
-    for label in sorted_labels:
+    # Partition labels by operation
+    op_labels: Dict[str, List[str]] = defaultdict(list)
+    for label in groups:
         row = summary_row_map.get(label, group_meta.get(label, {}))
         op = extract_op(row)
-        if op not in seen_ops:
-            seen_ops.append(op)
-            legend_handles.append(Patch(facecolor=op_color(op), alpha=0.5, label=op))
-    ax.legend(handles=legend_handles, fontsize=8, loc="upper right")
+        op_labels[op].append(label)
 
+    # Sort operations canonically
+    op_names = sorted(op_labels.keys(), key=lambda o: _OP_ORDER.get(o, 99))
+
+    # Sort within each operation by (thread_count, -max_streak_frac)
+    for op in op_names:
+        op_labels[op].sort(key=lambda k: _sort_key_for_row(
+            summary_row_map.get(k, group_meta.get(k, {})),
+            summary_metric.get(k, 0),
+        ))
+        if max_groups > 0:
+            op_labels[op] = op_labels[op][:max_groups]
+
+    n_ops = len(op_names)
+    if n_ops == 0:
+        return
+
+    max_per_panel = max(len(op_labels[op]) for op in op_names)
+    fig, axes = plt.subplots(1, n_ops,
+                              figsize=(max(5, max_per_panel * 0.4 + 2) * n_ops, 7),
+                              sharey=True)
+    if n_ops == 1:
+        axes = [axes]
+
+    for ax, op in zip(axes, op_names):
+        labels_in_panel = op_labels[op]
+        data = [groups[l] for l in labels_in_panel]
+        data_log = [[max(v, 0.5) for v in d] for d in data]
+
+        if data_log:
+            parts = ax.violinplot(data_log, positions=range(len(data_log)),
+                                  showmedians=True, showextrema=False)
+            for pc in parts["bodies"]:
+                pc.set_facecolor(op_color(op))
+                pc.set_alpha(0.5)
+            parts["cmedians"].set_color("black")
+
+            for i, d in enumerate(data):
+                ax.plot(i, max(d), "v", color="#d62728", markersize=6, zorder=5)
+
+            # Vertical separators between thread counts
+            prev_tc = None
+            for i, label in enumerate(labels_in_panel):
+                row = summary_row_map.get(label, group_meta.get(label, {}))
+                tc = extract_threads(row)
+                if prev_tc is not None and tc != prev_tc:
+                    ax.axvline(x=i - 0.5, color="grey", linestyle="-",
+                               alpha=0.4, linewidth=1)
+                prev_tc = tc
+
+        # Short labels without the operation name
+        short_names = []
+        for label in labels_in_panel:
+            row = summary_row_map.get(label, group_meta.get(label, {}))
+            tc = extract_threads(row)
+            rid = row.get("run_id", "?")
+            short_names.append(f"#{rid} t={tc}")
+
+        ax.set_yscale("log")
+        ax.set_xticks(range(len(short_names)))
+        ax.set_xticklabels(short_names, rotation=55, ha="right", fontsize=7)
+        ax.set_title(op, fontsize=12, fontweight="bold", color=op_color(op))
+        ax.grid(axis="y", alpha=0.3, which="both")
+        ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+        ax.axhline(y=10, color="grey", linestyle="--", alpha=0.4, linewidth=0.8)
+
+    axes[0].set_ylabel("Streak Length (windows, log scale)")
+
+    # Shared legend
+    legend_handles = [Line2D([], [], marker="v", color="#d62728", linestyle="None",
+                             markersize=6, label="max streak")]
+    fig.legend(handles=legend_handles, fontsize=8, loc="upper right")
+
+    fig.suptitle(f"Dominance Streak Length Distribution  [window={ws_filter}]",
+                 fontsize=13)
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -306,59 +325,103 @@ def plot_dominance_heatmap(
     dpi: int,
     max_groups: int,
 ) -> None:
+    """Side-by-side heatmaps: one panel per operation (CAS | TAS | FAI)."""
     filtered = [r for r in summary_rows if r.get("window_size", "") == ws_filter]
     if not filtered:
         print("  SKIP dominance heatmap: no data")
         return
 
-    # Sort by (operation, thread_count, -max_streak_frac)
-    filtered.sort(key=lambda r: _sort_key_for_row(
-        r, float(r.get("max_streak_frac", "0")),
-    ))
-    if max_groups > 0:
-        filtered = filtered[:max_groups]
-
-    labels = [short_label(r, group_cols) for r in filtered]
     metrics = ["max_streak_frac", "long_streak_coverage",
                "top1_dominance_frac", "gini_coefficient"]
-    metric_labels = ["Max Streak\nFraction", "Long Streak\nCoverage",
-                     "Top-1 Thread\nFraction", "Gini\nCoefficient"]
+    metric_labels = ["Max Streak\nFrac", "Long Streak\nCov",
+                     "Top-1 Thread\nFrac", "Gini\nCoeff"]
 
-    # Build matrix
-    mat = np.zeros((len(filtered), len(metrics)))
-    for i, r in enumerate(filtered):
-        for j, m in enumerate(metrics):
-            mat[i, j] = float(r.get(m, "0"))
+    # Group rows by operation
+    ops_data: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    for r in filtered:
+        ops_data[extract_op(r)].append(r)
 
-    fig, ax = plt.subplots(figsize=(6, max(5, len(labels) * 0.3 + 1)))
-    im = ax.imshow(mat, aspect="auto", cmap="YlOrRd", vmin=0, vmax=1)
+    # Sort operations canonically
+    op_names = sorted(ops_data.keys(), key=lambda o: _OP_ORDER.get(o, 99))
+    n_ops = len(op_names)
+    if n_ops == 0:
+        return
 
-    # Annotate cells
-    for i in range(mat.shape[0]):
-        for j in range(mat.shape[1]):
-            v = mat[i, j]
-            color = "white" if v > 0.55 else "black"
-            ax.text(j, i, f"{v:.2f}", ha="center", va="center",
-                    fontsize=7, color=color)
+    # Sort rows within each operation by (thread_count, -max_streak_frac)
+    for op in op_names:
+        ops_data[op].sort(key=lambda r: (
+            int(extract_threads(r)) if extract_threads(r).isdigit() else 0,
+            -float(r.get("max_streak_frac", "0")),
+        ))
+        if max_groups > 0:
+            ops_data[op] = ops_data[op][:max_groups]
 
-    # Add horizontal separators between operation groups
-    prev_op = None
-    for i, r in enumerate(filtered):
-        cur_op = extract_op(r)
-        if prev_op is not None and cur_op != prev_op:
-            ax.axhline(y=i - 0.5, color="black", linestyle="-", alpha=0.5, linewidth=1.5)
-        prev_op = cur_op
+    max_rows = max(len(ops_data[op]) for op in op_names)
+    fig_h = max(5, max_rows * 0.28 + 2)
+    fig, axes = plt.subplots(1, n_ops, figsize=(5 * n_ops + 1, fig_h),
+                              sharey=False)
+    if n_ops == 1:
+        axes = [axes]
 
-    ax.set_xticks(range(len(metrics)))
-    ax.set_xticklabels(metric_labels, fontsize=9)
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels, fontsize=7)
-    ax.set_title(f"Dominance Concentration  [window={ws_filter}]", fontsize=12)
+    # Build a short label that omits the operation (it's in the panel title)
+    def _panel_label(row: Dict[str, str]) -> str:
+        parts = []
+        for c in group_cols:
+            abbrev = _COL_ABBREV.get(c, c)
+            if abbrev is None or abbrev == "op":
+                continue
+            v = row.get(c, "")
+            if not v:
+                continue
+            v = _OP_SHORT.get(v, v)
+            if abbrev == "r":
+                parts.append(f"#{v}")
+            else:
+                parts.append(f"{abbrev}={v}")
+        return " ".join(parts) if parts else "all"
 
-    cb = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02)
+    for ax_idx, (ax, op) in enumerate(zip(axes, op_names)):
+        rows = ops_data[op]
+        labels = [_panel_label(r) for r in rows]
+
+        mat = np.zeros((len(rows), len(metrics)))
+        for i, r in enumerate(rows):
+            for j, m in enumerate(metrics):
+                mat[i, j] = float(r.get(m, "0"))
+
+        im = ax.imshow(mat, aspect="auto", cmap="YlOrRd", vmin=0, vmax=1)
+
+        for i in range(mat.shape[0]):
+            for j in range(mat.shape[1]):
+                v = mat[i, j]
+                color = "white" if v > 0.55 else "black"
+                ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                        fontsize=7, color=color)
+
+        # Horizontal separators between thread counts
+        prev_tc = None
+        for i, r in enumerate(rows):
+            tc = extract_threads(r)
+            if prev_tc is not None and tc != prev_tc:
+                ax.axhline(y=i - 0.5, color="black", linestyle="-",
+                           alpha=0.4, linewidth=1)
+            prev_tc = tc
+
+        ax.set_xticks(range(len(metrics)))
+        ax.set_xticklabels(metric_labels, fontsize=8)
+        ax.set_yticks(range(len(labels)))
+        ax.set_yticklabels(labels, fontsize=7)
+        ax.set_title(op, fontsize=12, fontweight="bold",
+                     color=op_color(op))
+
+    fig.suptitle(f"Dominance Concentration  [window={ws_filter}]", fontsize=13, y=1.01)
+
+    # Single shared colorbar
+    fig.subplots_adjust(right=0.92)
+    cbar_ax = fig.add_axes([0.94, 0.15, 0.015, 0.7])
+    cb = fig.colorbar(im, cax=cbar_ax)
     cb.set_label("Value (0\u20131)", fontsize=9)
 
-    fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved {out_path}")
@@ -378,6 +441,9 @@ def plot_streak_timelines(
     dpi: int,
     max_groups: int,
 ) -> None:
+    """Faceted timeline: one panel per operation, showing top-N most dominant runs."""
+    _TOP_PER_OP = 10  # show the N most interesting runs per operation
+
     groups: Dict[str, List[Tuple[str, int, int]]] = defaultdict(list)
     group_nwindows: Dict[str, int] = {}
     group_row: Dict[str, Dict[str, str]] = {}
@@ -402,57 +468,85 @@ def plot_streak_timelines(
         print("  SKIP streak timeline: no data")
         return
 
-    # Sort by (operation, thread_count, -max_streak_frac)
-    sorted_labels = sorted(
-        groups.keys(),
-        key=lambda k: _sort_key_for_row(
-            group_row.get(k, {}),
-            max((l for _, _, l in groups[k]), default=0)
-            / max(group_nwindows.get(k, 1), 1),
-        ),
-    )
-    if max_groups > 0:
-        sorted_labels = sorted_labels[:max_groups]
-
-    # Collect all thread IDs for a consistent legend
-    all_tids = sorted(set(tid for label in sorted_labels for tid, _, _ in groups[label]),
-                      key=lambda t: (int(t) if t.isdigit() else 999, t))
-
-    n_groups = len(sorted_labels)
-    fig_h = max(4, n_groups * 0.45 + 1.5)
-    fig, ax = plt.subplots(figsize=(14, fig_h))
-
-    for y_idx, label in enumerate(reversed(sorted_labels)):
-        streaks = groups[label]
-        for tid, start, length in streaks:
-            color = thread_color_deterministic(tid)
-            ax.barh(y_idx, length, left=start, height=0.7,
-                    color=color, edgecolor="none", alpha=0.85)
-
-    # Add horizontal separators between operation groups (reversed order)
-    rev_labels = list(reversed(sorted_labels))
-    prev_op = None
-    for y_idx, label in enumerate(rev_labels):
+    # Partition by operation
+    op_labels: Dict[str, List[str]] = defaultdict(list)
+    for label in groups:
         row = group_row.get(label, {})
-        cur_op = extract_op(row)
-        if prev_op is not None and cur_op != prev_op:
-            ax.axhline(y=y_idx - 0.5, color="black", linestyle="-",
-                       alpha=0.5, linewidth=1.5)
-        prev_op = cur_op
+        op = extract_op(row)
+        op_labels[op].append(label)
 
-    ax.set_yticks(range(len(sorted_labels)))
-    ax.set_yticklabels(rev_labels, fontsize=7)
-    ax.set_xlabel("Window Index")
-    ax.set_title(f"Dominance Streak Timeline  [window={ws_filter}]")
-    ax.grid(axis="x", alpha=0.3)
+    op_names = sorted(op_labels.keys(), key=lambda o: _OP_ORDER.get(o, 99))
+
+    # Within each operation, rank by max_streak_frac (most dominant first)
+    for op in op_names:
+        op_labels[op].sort(key=lambda k: -float(
+            group_row.get(k, {}).get("max_streak_frac", "0")
+        ))
+        limit = max_groups if max_groups > 0 else _TOP_PER_OP
+        op_labels[op] = op_labels[op][:limit]
+
+    n_ops = len(op_names)
+    if n_ops == 0:
+        return
+
+    # Collect all thread IDs for consistent legend
+    all_tids = sorted(
+        set(tid for op in op_names for lbl in op_labels[op]
+            for tid, _, _ in groups[lbl]),
+        key=lambda t: (int(t) if t.isdigit() else 999, t),
+    )
+
+    max_per_panel = max(len(op_labels[op]) for op in op_names)
+    fig_h = max(4, max_per_panel * 0.55 + 2)
+    fig, axes = plt.subplots(n_ops, 1, figsize=(14, fig_h * n_ops),
+                              sharex=True)
+    if n_ops == 1:
+        axes = [axes]
+
+    for ax, op in zip(axes, op_names):
+        labels_in_panel = op_labels[op]
+        rev_labels = list(reversed(labels_in_panel))
+
+        for y_idx, label in enumerate(rev_labels):
+            for tid, start, length in groups[label]:
+                color = thread_color_deterministic(tid)
+                ax.barh(y_idx, length, left=start, height=0.7,
+                        color=color, edgecolor="none", alpha=0.85)
+
+        # Separators between thread counts
+        prev_tc = None
+        for y_idx, label in enumerate(rev_labels):
+            row = group_row.get(label, {})
+            tc = extract_threads(row)
+            if prev_tc is not None and tc != prev_tc:
+                ax.axhline(y=y_idx - 0.5, color="grey", linestyle="-",
+                           alpha=0.4, linewidth=1)
+            prev_tc = tc
+
+        # Short labels without op name
+        short_names = []
+        for label in rev_labels:
+            row = group_row.get(label, {})
+            tc = extract_threads(row)
+            rid = row.get("run_id", "?")
+            short_names.append(f"#{rid} t={tc}")
+
+        ax.set_yticks(range(len(short_names)))
+        ax.set_yticklabels(short_names, fontsize=7)
+        ax.set_title(f"{op}  (top {len(labels_in_panel)} by dominance)",
+                     fontsize=11, fontweight="bold", color=op_color(op))
+        ax.grid(axis="x", alpha=0.3)
+
+    axes[-1].set_xlabel("Window Index")
 
     # Deterministic legend
     handles = [Patch(facecolor=thread_color_deterministic(t), label=f"T{t}")
                for t in all_tids if t]
     if len(handles) <= 16:
-        ax.legend(handles=handles, loc="upper right", fontsize=7, ncol=2,
-                  title="Thread", title_fontsize=8)
+        axes[0].legend(handles=handles, loc="upper right", fontsize=7, ncol=2,
+                       title="Thread", title_fontsize=8)
 
+    fig.suptitle(f"Dominance Streak Timeline  [window={ws_filter}]", fontsize=13)
     fig.tight_layout()
     out_path = out_dir / f"streak_timeline.{fmt}"
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
