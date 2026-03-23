@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dpi", type=int, default=150)
     p.add_argument("--window-size", type=int, default=0,
                    help="Filter to a specific window size (0 = use first found)")
-    p.add_argument("--max-groups", type=int, default=30,
+    p.add_argument("--max-groups", type=int, default=0,
                    help="Max groups to show in comparison plots (0 = unlimited)")
     return p.parse_args()
 
@@ -120,6 +120,7 @@ def op_color(op: str) -> str:
 _COL_ABBREV = {
     "run_id": "r",
     "operation": "op",
+    "op": "op",             # alternate column name used by stickiness pipeline
     "op_id": None,          # drop — redundant with operation
     "contention_size": "cs",
     "core_set_id": None,    # drop — rarely informative in labels
@@ -158,8 +159,8 @@ def short_label(row: Dict[str, str], group_cols: List[str]) -> str:
 
 
 def extract_op(row: Dict[str, str]) -> str:
-    """Extract operation type from row."""
-    op = row.get("operation", "")
+    """Extract operation type from row, trying common column names."""
+    op = row.get("operation", "") or row.get("op", "")
     return _OP_SHORT.get(op, op)
 
 
