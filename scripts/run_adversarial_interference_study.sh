@@ -42,6 +42,12 @@ Options:
   --auto-cores-mode MODE     Auto core placement strategy:
                              split (legacy), same_socket_st, same_socket_ht,
                              cross_socket_st (default)
+  --pair-groups SPEC         Run the full study for multiple topology groups.
+                             Format: "name1:vcores1:acores1;name2:vcores2:acores2"
+                             Each group gets its own output subdirectory.
+                             Overrides --victim-cores/--attacker-cores/--auto-cores.
+                             Example:
+                               "same_socket_st:0,2,4,6:8,10,12,14;cross_socket:0,2,4,6:16,18,20,22"
 
   --victim-test NAME|ID      Victim primitive (default: CAS)
   --attacker-test NAME|ID    Attacker primitive for RMW phase (default: FAI)
@@ -94,6 +100,10 @@ Examples:
 
   # Dry run to see what would execute
   scripts/run_adversarial_interference_study.sh --auto-cores --dry-run
+
+  # Run multiple topology groups in one shot
+  scripts/run_adversarial_interference_study.sh \
+    --pair-groups "same_socket_st:0,2,4,6:8,10,12,14;cross_socket:0,2,4,6:16,18,20,22;ht:0,2,4,6:1,3,5,7"
 USAGE
 }
 
@@ -104,6 +114,7 @@ attacker_cores=""
 auto_cores=0
 auto_cores_max=8
 auto_cores_mode="cross_socket_st"
+pair_groups=""
 
 victim_test="CAS"
 attacker_test="FAI"
@@ -139,6 +150,7 @@ while [[ $# -gt 0 ]]; do
     --auto-cores)            auto_cores=1; shift ;;
     --auto-cores-max)        auto_cores_max="$2"; shift 2 ;;
     --auto-cores-mode)       auto_cores_mode="$2"; shift 2 ;;
+    --pair-groups)           pair_groups="$2"; shift 2 ;;
     --victim-test)           victim_test="$2"; shift 2 ;;
     --attacker-test)         attacker_test="$2"; shift 2 ;;
     --control-test)          control_test="$2"; shift 2 ;;
@@ -460,85 +472,6 @@ if [[ "$auto_cores" -eq 1 ]]; then
   fi
 fi
 
-# ── Validate core lists ─────────────────────────────────────────────────────
-
-if [[ -z "$victim_cores" || -z "$attacker_cores" ]]; then
-  log_err "--victim-cores and --attacker-cores are required (or use --auto-cores)."
-  usage
-  exit 1
-fi
-
-as_array "$victim_cores" victim_arr
-as_array "$attacker_cores" attacker_arr
-victim_count=${#victim_arr[@]}
-attacker_count=${#attacker_arr[@]}
-
-for c in "${victim_arr[@]}" "${attacker_arr[@]}"; do
-  [[ "$c" =~ ^[0-9]+$ ]] || { log_err "Non-integer core id: $c"; exit 1; }
-done
-
-# Check disjoint
-for v in "${victim_arr[@]}"; do
-  for a in "${attacker_arr[@]}"; do
-    [[ "$v" == "$a" ]] && { log_err "Overlapping core: $v (must be disjoint)"; exit 1; }
-  done
-done
-
-# ── Compute derived defaults ─────────────────────────────────────────────────
-
-# Attacker thread sweep: default to powers of 2 up to attacker_count
-if [[ -z "$attacker_thread_sweep" ]]; then
-  attacker_thread_sweep=""
-  n=1
-  while (( n <= attacker_count )); do
-    [[ -n "$attacker_thread_sweep" ]] && attacker_thread_sweep+=","
-    attacker_thread_sweep+="$n"
-    (( n *= 2 ))
-  done
-  # Always include max if not already there
-  as_array "$attacker_thread_sweep" _sweep_check
-  last="${_sweep_check[-1]}"
-  if [[ "$last" -ne "$attacker_count" ]]; then
-    attacker_thread_sweep+=",$attacker_count"
-  fi
-fi
-
-# Seed rotation: default to all victim cores
-if [[ -z "$seed_rotation" ]]; then
-  seed_rotation="$victim_cores"
-fi
-
-# Build the list of all victim tests to run
-all_victim_tests=("$victim_test")
-if [[ -n "$extra_victim_tests" ]]; then
-  IFS=',' read -r -a extras <<<"$extra_victim_tests"
-  all_victim_tests+=("${extras[@]}")
-fi
-
-# ── Print plan ───────────────────────────────────────────────────────────────
-
-cat <<PLAN
-
-┌──────────────────────────────────────────────────────────────────┐
-│               ADVERSARIAL INTERFERENCE STUDY                     │
-├──────────────────────────────────────────────────────────────────┤
-│  Victim cores:          $victim_cores
-│  Attacker cores:        $attacker_cores
-│  Victim test(s):        $(IFS=,; echo "${all_victim_tests[*]}")
-│  Attacker test (RMW):   $attacker_test
-│  Control test:          $control_test
-│  Thread sweep:          $attacker_thread_sweep
-│  Seed rotation:         $seed_rotation
-│  Replicates (stage 2):  $replicates
-│  Victim reps:           $victim_reps
-│  Attacker reps:         $attacker_reps
-│  Stages:                $stages
-│  Output dir:            $output_dir
-│  Dry run:               $( [[ "$dry_run" -eq 1 ]] && echo "YES" || echo "no" )
-└──────────────────────────────────────────────────────────────────┘
-
-PLAN
-
 # ── Common flags builder ─────────────────────────────────────────────────────
 
 common_flags=()
@@ -550,237 +483,429 @@ run_cmd() {
   "$@"
 }
 
-# Track per-stage success
-declare -A stage_status=()
+# ── run_study_for_cores: runs all enabled stages for one victim/attacker set ─
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STAGE 1 — Lock-vs-FAI adversarial sweep
-# ═════════════════════════════════════════════════════════════════════════════
+run_study_for_cores() {
+  local victim_cores="$1"
+  local attacker_cores="$2"
+  local output_dir="$3"
+  local group_label="${4:-}"
 
-if stage_enabled 1; then
-  log_stage "1 — Lock-vs-FAI adversarial sweep"
+  # Validate core lists
+  local -a victim_arr attacker_arr
+  as_array "$victim_cores" victim_arr
+  as_array "$attacker_cores" attacker_arr
+  local victim_count=${#victim_arr[@]}
+  local attacker_count=${#attacker_arr[@]}
 
-  for vtest in "${all_victim_tests[@]}"; do
-    suffix=""
-    [[ "${#all_victim_tests[@]}" -gt 1 ]] && suffix="_${vtest}"
-    stage1_dir="$output_dir/adversarial_lock_vs_fai${suffix}"
-
-    log_info "Victim test: $vtest, attacker: $attacker_test, control: $control_test"
-    log_info "  Attacker thread sweep: $attacker_thread_sweep"
-    log_info "  Output: $stage1_dir"
-
-    cmd=(
-      "$script_dir/run_adversarial_lock_vs_fai.sh"
-      --victim-cores "$victim_cores"
-      --attacker-cores "$attacker_cores"
-      --victim-test "$vtest"
-      --attacker-test "$attacker_test"
-      --control-test "$control_test"
-      --attacker-thread-sweep "$attacker_thread_sweep"
-      --victim-reps "$victim_reps"
-      --attacker-reps "$attacker_reps"
-      --fixed-victim-addr "$fixed_victim_addr"
-      --ccbench "$ccbench"
-      --output-dir "$stage1_dir"
-      --results-csv "$stage1_dir/results.csv"
-      "${common_flags[@]}"
-    )
-
-    if run_cmd "${cmd[@]}"; then
-      stage_status[1]="ok"
-      log_info "Stage 1 ($vtest): DONE — $stage1_dir/summary.csv"
-    else
-      stage_status[1]="failed"
-      log_warn "Stage 1 ($vtest): FAILED (exit $?) — continuing with next stages"
-    fi
+  local c
+  for c in "${victim_arr[@]}" "${attacker_arr[@]}"; do
+    [[ "$c" =~ ^[0-9]+$ ]] || { log_err "Non-integer core id: $c"; return 1; }
   done
-else
-  log_info "Stage 1 skipped"
-fi
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  STAGE 2 — Separate-address sweep (seed rotation + replicates)
-# ═════════════════════════════════════════════════════════════════════════════
-
-if stage_enabled 2; then
-  log_stage "2 — Separate-address sweep"
-
-  for vtest in "${all_victim_tests[@]}"; do
-    suffix=""
-    [[ "${#all_victim_tests[@]}" -gt 1 ]] && suffix="_${vtest}"
-    stage2_dir="$output_dir/adversarial_separate_attacker_addrs_sweep${suffix}"
-
-    log_info "Victim test: $vtest, attacker: $attacker_test"
-    log_info "  Seed rotation: $seed_rotation"
-    log_info "  Replicates: $replicates"
-    log_info "  Attacker core sweep: $attacker_thread_sweep"
-    log_info "  Output: $stage2_dir"
-
-    cmd=(
-      "$script_dir/run_adversarial_separate_attacker_addrs_sweep.sh"
-      --victim-cores "$victim_cores"
-      --attacker-cores "$attacker_cores"
-      --victim-test "$vtest"
-      --attacker-test "$attacker_test"
-      --attacker-core-sweep "$attacker_thread_sweep"
-      --seed-cores "$seed_rotation"
-      --replicates "$replicates"
-      --victim-reps "$victim_reps"
-      --attacker-reps "$attacker_reps"
-      --fixed-victim-addr "$fixed_victim_addr"
-      --ccbench "$ccbench"
-      --output-dir "$stage2_dir"
-      "${common_flags[@]}"
-    )
-    [[ "$perf_counters" -eq 1 ]] && cmd+=(--perf-counters)
-
-    if run_cmd "${cmd[@]}"; then
-      stage_status[2]="ok"
-      log_info "Stage 2 ($vtest): DONE — $stage2_dir/raw_phase_results.csv"
-    else
-      stage_status[2]="failed"
-      log_warn "Stage 2 ($vtest): FAILED (exit $?) — continuing with next stages"
-    fi
-  done
-else
-  log_info "Stage 2 skipped"
-fi
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  STAGE 3 — Perf c2c diagnostic
-# ═════════════════════════════════════════════════════════════════════════════
-
-if stage_enabled 3; then
-  log_stage "3 — Perf c2c diagnostic"
-
-  # Only run perf c2c for the primary victim test (not extra tests)
-  stage3_dir="$output_dir/perf_c2c_diagnostic"
-
-  log_info "Victim test: $victim_test, attacker: $attacker_test"
-  log_info "  c2c victim reps: $c2c_victim_reps, c2c attacker reps: $c2c_attacker_reps"
-  log_info "  Output: $stage3_dir"
-
-  cmd=(
-    "$script_dir/run_perf_c2c_diagnostic.sh"
-    --victim-cores "$victim_cores"
-    --attacker-cores "$attacker_cores"
-    --victim-test "$victim_test"
-    --attacker-test "$attacker_test"
-    --victim-reps "$c2c_victim_reps"
-    --attacker-reps "$c2c_attacker_reps"
-    --fixed-victim-addr "$fixed_victim_addr"
-    --ccbench "$ccbench"
-    --output-dir "$stage3_dir"
-  )
-  [[ "$dry_run" -eq 1 ]] && cmd+=(--dry-run)
-
-  if run_cmd "${cmd[@]}"; then
-    stage_status[3]="ok"
-    log_info "Stage 3: DONE — $stage3_dir/c2c_summary_report.csv"
-  else
-    stage_status[3]="failed"
-    log_warn "Stage 3: FAILED (exit $?) — continuing with plotting"
-  fi
-else
-  log_info "Stage 3 skipped"
-fi
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  STAGE 4 — Plot all results
-# ═════════════════════════════════════════════════════════════════════════════
-
-if stage_enabled 4; then
-  log_stage "4 — Generate plots"
-
-  plots_dir="$output_dir/plots"
-  log_info "Scanning $output_dir for CSVs, writing plots to $plots_dir"
-
-  cmd=(
-    python3 "$script_dir/plot_adversarial_interference.py"
-    "$output_dir"
-    --out-dir "$plots_dir"
-    --format "$plot_format"
-    --dpi "$plot_dpi"
-  )
-
-  if [[ "$dry_run" -eq 1 ]]; then
-    log_info "[dry-run] Would run: ${cmd[*]}"
-  else
-    if "${cmd[@]}"; then
-      stage_status[4]="ok"
-      log_info "Stage 4: DONE — plots in $plots_dir/"
-    else
-      stage_status[4]="failed"
-      log_warn "Stage 4: plotting failed (exit $?)"
-    fi
-  fi
-else
-  log_info "Stage 4 skipped"
-fi
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Summary
-# ═════════════════════════════════════════════════════════════════════════════
-
-echo
-echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║                     STUDY COMPLETE                              ║"
-echo "╠══════════════════════════════════════════════════════════════════╣"
-
-for s in 1 2 3 4; do
-  status="${stage_status[$s]:-skipped}"
-  case "$status" in
-    ok)      icon="[OK]  " ;;
-    failed)  icon="[FAIL]" ;;
-    skipped) icon="[SKIP]" ;;
-  esac
-  case "$s" in
-    1) label="Lock-vs-FAI adversarial sweep" ;;
-    2) label="Separate-address sweep" ;;
-    3) label="Perf c2c diagnostic" ;;
-    4) label="Plot results" ;;
-  esac
-  printf "║  %s  Stage %s: %-44s ║\n" "$icon" "$s" "$label"
-done
-
-echo "╠══════════════════════════════════════════════════════════════════╣"
-echo "║  Output directory: $output_dir"
-echo "╚══════════════════════════════════════════════════════════════════╝"
-echo
-echo "Key files:"
-
-# List generated artifacts
-for f in \
-    "$output_dir/adversarial_lock_vs_fai/summary.csv" \
-    "$output_dir/adversarial_separate_attacker_addrs_sweep/raw_phase_results.csv" \
-    "$output_dir/adversarial_separate_attacker_addrs_sweep/summary_by_attacker_threads.csv" \
-    "$output_dir/adversarial_separate_attacker_addrs_sweep/trend_separate_minus_shared.csv" \
-    "$output_dir/perf_c2c_diagnostic/c2c_summary_report.csv" \
-    "$output_dir/perf_c2c_diagnostic/c2c_summary_analysis.txt" \
-    "$output_dir/plots/A_latency_bars.${plot_format}" \
-    "$output_dir/plots/B_delta_distributions.${plot_format}" \
-    "$output_dir/plots/C_shared_separate_comparison.${plot_format}" \
-    "$output_dir/plots/D_hitm_chart.${plot_format}"; do
-  if [[ -f "$f" ]]; then
-    printf '  %s\n' "$f"
-  fi
-done
-
-# Also list any extra-test variants
-if [[ "${#all_victim_tests[@]}" -gt 1 ]]; then
-  for vtest in "${all_victim_tests[@]}"; do
-    for d in \
-        "$output_dir/adversarial_lock_vs_fai_${vtest}" \
-        "$output_dir/adversarial_separate_attacker_addrs_sweep_${vtest}"; do
-      if [[ -d "$d" ]]; then
-        printf '  %s/\n' "$d"
-      fi
+  # Check disjoint
+  local v a
+  for v in "${victim_arr[@]}"; do
+    for a in "${attacker_arr[@]}"; do
+      [[ "$v" == "$a" ]] && { log_err "Overlapping core: $v (must be disjoint)"; return 1; }
     done
   done
-fi
 
-echo
+  # Compute attacker thread sweep for this core set
+  local local_sweep="$attacker_thread_sweep"
+  if [[ -z "$local_sweep" ]]; then
+    local_sweep=""
+    local n=1
+    while (( n <= attacker_count )); do
+      [[ -n "$local_sweep" ]] && local_sweep+=","
+      local_sweep+="$n"
+      (( n *= 2 ))
+    done
+    local -a _sweep_check
+    as_array "$local_sweep" _sweep_check
+    local last="${_sweep_check[-1]}"
+    if [[ "$last" -ne "$attacker_count" ]]; then
+      local_sweep+=",$attacker_count"
+    fi
+  fi
+
+  # Seed rotation: default to all victim cores
+  local local_seed="$seed_rotation"
+  if [[ -z "$local_seed" ]]; then
+    local_seed="$victim_cores"
+  fi
+
+  # Build the list of all victim tests to run
+  local -a all_victim_tests=("$victim_test")
+  if [[ -n "$extra_victim_tests" ]]; then
+    local -a extras
+    IFS=',' read -r -a extras <<<"$extra_victim_tests"
+    all_victim_tests+=("${extras[@]}")
+  fi
+
+  # Print plan
+  if [[ -n "$group_label" ]]; then
+    printf '\n\033[1;35m┌──────────────────────────────────────────────────────────────────┐\033[0m\n'
+    printf '\033[1;35m│  PAIR GROUP: %-51s │\033[0m\n' "$group_label"
+    printf '\033[1;35m└──────────────────────────────────────────────────────────────────┘\033[0m\n'
+  fi
+
+  cat <<PLAN
+
+┌──────────────────────────────────────────────────────────────────┐
+│               ADVERSARIAL INTERFERENCE STUDY                     │
+├──────────────────────────────────────────────────────────────────┤
+│  Victim cores:          $victim_cores
+│  Attacker cores:        $attacker_cores
+│  Victim test(s):        $(IFS=,; echo "${all_victim_tests[*]}")
+│  Attacker test (RMW):   $attacker_test
+│  Control test:          $control_test
+│  Thread sweep:          $local_sweep
+│  Seed rotation:         $local_seed
+│  Replicates (stage 2):  $replicates
+│  Victim reps:           $victim_reps
+│  Attacker reps:         $attacker_reps
+│  Stages:                $stages
+│  Output dir:            $output_dir
+│  Dry run:               $( [[ "$dry_run" -eq 1 ]] && echo "YES" || echo "no" )
+└──────────────────────────────────────────────────────────────────┘
+
+PLAN
+
+  # Track per-stage success
+  local -A stage_status=()
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  STAGE 1 — Lock-vs-FAI adversarial sweep
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  if stage_enabled 1; then
+    log_stage "1 — Lock-vs-FAI adversarial sweep"
+
+    local vtest suffix stage1_dir
+    for vtest in "${all_victim_tests[@]}"; do
+      suffix=""
+      [[ "${#all_victim_tests[@]}" -gt 1 ]] && suffix="_${vtest}"
+      stage1_dir="$output_dir/adversarial_lock_vs_fai${suffix}"
+
+      log_info "Victim test: $vtest, attacker: $attacker_test, control: $control_test"
+      log_info "  Attacker thread sweep: $local_sweep"
+      log_info "  Output: $stage1_dir"
+
+      local -a cmd=(
+        "$script_dir/run_adversarial_lock_vs_fai.sh"
+        --victim-cores "$victim_cores"
+        --attacker-cores "$attacker_cores"
+        --victim-test "$vtest"
+        --attacker-test "$attacker_test"
+        --control-test "$control_test"
+        --attacker-thread-sweep "$local_sweep"
+        --victim-reps "$victim_reps"
+        --attacker-reps "$attacker_reps"
+        --fixed-victim-addr "$fixed_victim_addr"
+        --ccbench "$ccbench"
+        --output-dir "$stage1_dir"
+        --results-csv "$stage1_dir/results.csv"
+        "${common_flags[@]}"
+      )
+
+      if run_cmd "${cmd[@]}"; then
+        stage_status[1]="ok"
+        log_info "Stage 1 ($vtest): DONE — $stage1_dir/summary.csv"
+      else
+        stage_status[1]="failed"
+        log_warn "Stage 1 ($vtest): FAILED (exit $?) — continuing with next stages"
+      fi
+    done
+  else
+    log_info "Stage 1 skipped"
+  fi
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  STAGE 2 — Separate-address sweep (seed rotation + replicates)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  if stage_enabled 2; then
+    log_stage "2 — Separate-address sweep"
+
+    local vtest suffix stage2_dir
+    for vtest in "${all_victim_tests[@]}"; do
+      suffix=""
+      [[ "${#all_victim_tests[@]}" -gt 1 ]] && suffix="_${vtest}"
+      stage2_dir="$output_dir/adversarial_separate_attacker_addrs_sweep${suffix}"
+
+      log_info "Victim test: $vtest, attacker: $attacker_test"
+      log_info "  Seed rotation: $local_seed"
+      log_info "  Replicates: $replicates"
+      log_info "  Attacker core sweep: $local_sweep"
+      log_info "  Output: $stage2_dir"
+
+      local -a cmd=(
+        "$script_dir/run_adversarial_separate_attacker_addrs_sweep.sh"
+        --victim-cores "$victim_cores"
+        --attacker-cores "$attacker_cores"
+        --victim-test "$vtest"
+        --attacker-test "$attacker_test"
+        --attacker-core-sweep "$local_sweep"
+        --seed-cores "$local_seed"
+        --replicates "$replicates"
+        --victim-reps "$victim_reps"
+        --attacker-reps "$attacker_reps"
+        --fixed-victim-addr "$fixed_victim_addr"
+        --ccbench "$ccbench"
+        --output-dir "$stage2_dir"
+        "${common_flags[@]}"
+      )
+      [[ "$perf_counters" -eq 1 ]] && cmd+=(--perf-counters)
+
+      if run_cmd "${cmd[@]}"; then
+        stage_status[2]="ok"
+        log_info "Stage 2 ($vtest): DONE — $stage2_dir/raw_phase_results.csv"
+      else
+        stage_status[2]="failed"
+        log_warn "Stage 2 ($vtest): FAILED (exit $?) — continuing with next stages"
+      fi
+    done
+  else
+    log_info "Stage 2 skipped"
+  fi
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  STAGE 3 — Perf c2c diagnostic
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  if stage_enabled 3; then
+    log_stage "3 — Perf c2c diagnostic"
+
+    local stage3_dir="$output_dir/perf_c2c_diagnostic"
+
+    log_info "Victim test: $victim_test, attacker: $attacker_test"
+    log_info "  c2c victim reps: $c2c_victim_reps, c2c attacker reps: $c2c_attacker_reps"
+    log_info "  Output: $stage3_dir"
+
+    local -a cmd=(
+      "$script_dir/run_perf_c2c_diagnostic.sh"
+      --victim-cores "$victim_cores"
+      --attacker-cores "$attacker_cores"
+      --victim-test "$victim_test"
+      --attacker-test "$attacker_test"
+      --victim-reps "$c2c_victim_reps"
+      --attacker-reps "$c2c_attacker_reps"
+      --fixed-victim-addr "$fixed_victim_addr"
+      --ccbench "$ccbench"
+      --output-dir "$stage3_dir"
+    )
+    [[ "$dry_run" -eq 1 ]] && cmd+=(--dry-run)
+
+    if run_cmd "${cmd[@]}"; then
+      stage_status[3]="ok"
+      log_info "Stage 3: DONE — $stage3_dir/c2c_summary_report.csv"
+    else
+      stage_status[3]="failed"
+      log_warn "Stage 3: FAILED (exit $?) — continuing with plotting"
+    fi
+  else
+    log_info "Stage 3 skipped"
+  fi
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  STAGE 4 — Plot all results
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  if stage_enabled 4; then
+    log_stage "4 — Generate plots"
+
+    local plots_dir="$output_dir/plots"
+    log_info "Scanning $output_dir for CSVs, writing plots to $plots_dir"
+
+    local -a cmd=(
+      python3 "$script_dir/plot_adversarial_interference.py"
+      "$output_dir"
+      --out-dir "$plots_dir"
+      --format "$plot_format"
+      --dpi "$plot_dpi"
+    )
+
+    if [[ "$dry_run" -eq 1 ]]; then
+      log_info "[dry-run] Would run: ${cmd[*]}"
+    else
+      if "${cmd[@]}"; then
+        stage_status[4]="ok"
+        log_info "Stage 4: DONE — plots in $plots_dir/"
+      else
+        stage_status[4]="failed"
+        log_warn "Stage 4: plotting failed (exit $?)"
+      fi
+    fi
+  else
+    log_info "Stage 4 skipped"
+  fi
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  Summary for this group
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  echo
+  if [[ -n "$group_label" ]]; then
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    printf "║  GROUP: %-56s ║\n" "$group_label"
+    echo "╠══════════════════════════════════════════════════════════════════╣"
+  else
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║                     STUDY COMPLETE                              ║"
+    echo "╠══════════════════════════════════════════════════════════════════╣"
+  fi
+
+  local s status icon label
+  for s in 1 2 3 4; do
+    status="${stage_status[$s]:-skipped}"
+    case "$status" in
+      ok)      icon="[OK]  " ;;
+      failed)  icon="[FAIL]" ;;
+      skipped) icon="[SKIP]" ;;
+    esac
+    case "$s" in
+      1) label="Lock-vs-FAI adversarial sweep" ;;
+      2) label="Separate-address sweep" ;;
+      3) label="Perf c2c diagnostic" ;;
+      4) label="Plot results" ;;
+    esac
+    printf "║  %s  Stage %s: %-44s ║\n" "$icon" "$s" "$label"
+  done
+
+  echo "╠══════════════════════════════════════════════════════════════════╣"
+  echo "║  Output directory: $output_dir"
+  echo "╚══════════════════════════════════════════════════════════════════╝"
+  echo
+  echo "Key files:"
+
+  local f
+  for f in \
+      "$output_dir/adversarial_lock_vs_fai/summary.csv" \
+      "$output_dir/adversarial_separate_attacker_addrs_sweep/raw_phase_results.csv" \
+      "$output_dir/adversarial_separate_attacker_addrs_sweep/summary_by_attacker_threads.csv" \
+      "$output_dir/adversarial_separate_attacker_addrs_sweep/trend_separate_minus_shared.csv" \
+      "$output_dir/perf_c2c_diagnostic/c2c_summary_report.csv" \
+      "$output_dir/perf_c2c_diagnostic/c2c_summary_analysis.txt" \
+      "$output_dir/plots/A_latency_bars.${plot_format}" \
+      "$output_dir/plots/B_delta_distributions.${plot_format}" \
+      "$output_dir/plots/C_shared_separate_comparison.${plot_format}" \
+      "$output_dir/plots/D_hitm_chart.${plot_format}"; do
+    if [[ -f "$f" ]]; then
+      printf '  %s\n' "$f"
+    fi
+  done
+
+  # Also list any extra-test variants
+  if [[ "${#all_victim_tests[@]}" -gt 1 ]]; then
+    local vtest d
+    for vtest in "${all_victim_tests[@]}"; do
+      for d in \
+          "$output_dir/adversarial_lock_vs_fai_${vtest}" \
+          "$output_dir/adversarial_separate_attacker_addrs_sweep_${vtest}"; do
+        if [[ -d "$d" ]]; then
+          printf '  %s/\n' "$d"
+        fi
+      done
+    done
+  fi
+
+  echo
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Dispatch: pair-groups mode vs single mode
+# ═════════════════════════════════════════════════════════════════════════════
+
+if [[ -n "$pair_groups" ]]; then
+  # Parse pair groups: "name1:vcores:acores;name2:vcores:acores;..."
+  log_info "Pair-groups mode: parsing group definitions"
+
+  IFS=';' read -r -a _pg_entries <<<"$pair_groups"
+  declare -a pg_names=()
+  declare -a pg_vcores=()
+  declare -a pg_acores=()
+
+  for _entry in "${_pg_entries[@]}"; do
+    _entry="${_entry#"${_entry%%[![:space:]]*}"}"  # trim leading whitespace
+    _entry="${_entry%"${_entry##*[![:space:]]}"}"   # trim trailing whitespace
+    [[ -z "$_entry" ]] && continue
+
+    IFS=':' read -r _name _vc _ac <<<"$_entry"
+    if [[ -z "$_name" || -z "$_vc" || -z "$_ac" ]]; then
+      log_err "Invalid pair-group entry: '$_entry'"
+      log_err "Expected format: name:victim_cores:attacker_cores"
+      exit 1
+    fi
+    pg_names+=("$_name")
+    pg_vcores+=("$_vc")
+    pg_acores+=("$_ac")
+  done
+
+  if [[ "${#pg_names[@]}" -eq 0 ]]; then
+    log_err "No valid pair groups parsed from: $pair_groups"
+    exit 1
+  fi
+
+  echo
+  echo "╔══════════════════════════════════════════════════════════════════╗"
+  echo "║              PAIR-GROUP ADVERSARIAL STUDY                       ║"
+  echo "╠══════════════════════════════════════════════════════════════════╣"
+  for _i in "${!pg_names[@]}"; do
+    printf "║  %-12s  victim=%-18s attacker=%-14s ║\n" \
+      "${pg_names[$_i]}" "${pg_vcores[$_i]}" "${pg_acores[$_i]}"
+  done
+  echo "╠══════════════════════════════════════════════════════════════════╣"
+  printf "║  Stages: %-54s ║\n" "$stages"
+  printf "║  Output: %-54s ║\n" "$output_dir"
+  echo "╚══════════════════════════════════════════════════════════════════╝"
+  echo
+
+  total_groups="${#pg_names[@]}"
+  for _i in "${!pg_names[@]}"; do
+    gname="${pg_names[$_i]}"
+    gvc="${pg_vcores[$_i]}"
+    gac="${pg_acores[$_i]}"
+    group_out="$output_dir/$gname"
+    group_num=$(( _i + 1 ))
+
+    printf '\n\033[1;36m================================================================\033[0m\n'
+    printf '\033[1;36m  GROUP %d/%d: %s\033[0m\n' "$group_num" "$total_groups" "$gname"
+    printf '\033[1;36m================================================================\033[0m\n'
+
+    run_study_for_cores "$gvc" "$gac" "$group_out" "$gname"
+  done
+
+  # Final cross-group summary
+  echo
+  echo "╔══════════════════════════════════════════════════════════════════╗"
+  echo "║              ALL PAIR GROUPS COMPLETE                            ║"
+  echo "╠══════════════════════════════════════════════════════════════════╣"
+  for _i in "${!pg_names[@]}"; do
+    gname="${pg_names[$_i]}"
+    group_out="$output_dir/$gname"
+    if [[ -d "$group_out" ]]; then
+      printf "║  %-12s -> %-48s ║\n" "$gname" "$group_out/"
+    else
+      printf "║  %-12s -> %-48s ║\n" "$gname" "(no output)"
+    fi
+  done
+  echo "╚══════════════════════════════════════════════════════════════════╝"
+  echo
+
+else
+  # ── Single-group mode (original behavior) ───────────────────────────────
+
+  # Validate core lists
+  if [[ -z "$victim_cores" || -z "$attacker_cores" ]]; then
+    log_err "--victim-cores and --attacker-cores are required (or use --auto-cores or --pair-groups)."
+    usage
+    exit 1
+  fi
+
+  run_study_for_cores "$victim_cores" "$attacker_cores" "$output_dir" ""
+fi
