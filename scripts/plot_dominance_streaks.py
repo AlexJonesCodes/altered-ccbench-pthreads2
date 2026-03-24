@@ -56,6 +56,9 @@ def parse_args() -> argparse.Namespace:
                    help="Filter to a specific window size (0 = use first found)")
     p.add_argument("--max-groups", type=int, default=0,
                    help="Max groups to show in comparison plots (0 = unlimited)")
+    p.add_argument("--facet-by", default=None,
+                   help="Column to facet by (e.g. core_set_id). Generates a separate "
+                        "set of plots per unique value of this column.")
     return p.parse_args()
 
 
@@ -123,7 +126,7 @@ _COL_ABBREV = {
     "op": "op",             # alternate column name used by stickiness pipeline
     "op_id": None,          # drop — redundant with operation
     "contention_size": "cs",
-    "core_set_id": None,    # drop — rarely informative in labels
+    "core_set_id": "cset",
     "thread_count": "t",
     "seed": "s",
     "s_core": None,         # drop — too verbose
@@ -778,28 +781,57 @@ def main() -> None:
 
     fmt = args.format
     dpi = args.dpi
+    facet_col = args.facet_by
 
-    print("Generating plots...")
-    plot_streak_distributions(
-        streak_rows, summary_rows, group_cols, ws_filter,
-        out_dir / f"streak_length_distribution.{fmt}", dpi, args.max_groups,
-    )
-    plot_dominance_heatmap(
-        summary_rows, group_cols, ws_filter,
-        out_dir / f"dominance_heatmap.{fmt}", dpi, args.max_groups,
-    )
-    plot_streak_timelines(
-        streak_rows, summary_rows, group_cols, ws_filter,
-        out_dir, fmt, dpi, args.max_groups,
-    )
-    plot_concentration_scatter(
-        summary_rows, group_cols, ws_filter,
-        out_dir / f"concentration_scatter.{fmt}", dpi,
-    )
-    plot_aggregated_by_factor(
-        summary_rows, group_cols, ws_filter,
-        out_dir / f"aggregated_by_factor.{fmt}", dpi,
-    )
+    # ── Determine facet slices ────────────────────────────────────────────
+    if facet_col:
+        if facet_col not in s_headers:
+            print(f"WARNING: --facet-by column '{facet_col}' not in summary CSV; "
+                  f"ignoring.  Available: {s_headers}", file=sys.stderr)
+            facet_col = None
+
+    if facet_col:
+        facet_values = sorted(set(r.get(facet_col, "") for r in summary_rows))
+        print(f"Faceting by '{facet_col}': {facet_values}")
+    else:
+        facet_values = [None]  # single pass over all data
+
+    for fval in facet_values:
+        if fval is not None:
+            tag = f"{facet_col}={fval}"
+            safe_tag = str(fval).replace("/", "_")
+            sub_dir = out_dir / f"{facet_col}_{safe_tag}"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            sub_summary = [r for r in summary_rows if r.get(facet_col, "") == fval]
+            sub_streaks = [r for r in streak_rows if r.get(facet_col, "") == fval]
+            print(f"\nGenerating plots for {tag} ({len(sub_summary)} summary rows)...")
+        else:
+            tag = None
+            sub_dir = out_dir
+            sub_summary = summary_rows
+            sub_streaks = streak_rows
+            print("Generating plots...")
+
+        plot_streak_distributions(
+            sub_streaks, sub_summary, group_cols, ws_filter,
+            sub_dir / f"streak_length_distribution.{fmt}", dpi, args.max_groups,
+        )
+        plot_dominance_heatmap(
+            sub_summary, group_cols, ws_filter,
+            sub_dir / f"dominance_heatmap.{fmt}", dpi, args.max_groups,
+        )
+        plot_streak_timelines(
+            sub_streaks, sub_summary, group_cols, ws_filter,
+            sub_dir, fmt, dpi, args.max_groups,
+        )
+        plot_concentration_scatter(
+            sub_summary, group_cols, ws_filter,
+            sub_dir / f"concentration_scatter.{fmt}", dpi,
+        )
+        plot_aggregated_by_factor(
+            sub_summary, group_cols, ws_filter,
+            sub_dir / f"aggregated_by_factor.{fmt}", dpi,
+        )
 
     print(f"\nAll plots saved to {out_dir}/")
 
