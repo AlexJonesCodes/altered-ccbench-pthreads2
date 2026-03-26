@@ -10,11 +10,12 @@ from matplotlib.patches import Patch
 # PLOT TOGGLES
 # -------------------------------
 RUN_ORIGINAL_PLOTS = False
-RUN_GINI_PLOTS = True
+RUN_RAW_LATENCY_PLOTS = True
+RUN_GINI_PLOTS = False
 RUN_DOMINANCE_PLOTS = False
 RUN_SCATTER_PLOTS = False
 RUN_CV_PLOTS = False
-RUN_IMBALANCE_PLOTS = True
+RUN_IMBALANCE_PLOTS = False
 
 plt.rcParams.update({
     'font.size': 18,
@@ -238,7 +239,7 @@ def format_axes(ax, positions, socket_labels, ylabel, fair_value_real, title):
     ax.set_xticks(positions)
     ax.set_xticklabels(socket_labels)
     ax.set_xlabel("Socket and Operation", labelpad=40)
-    ax.set_ylabel(f"{ylabel} (Fair = {fair_value_real})")
+    ax.set_ylabel(f"{ylabel}")
     ax.set_ylim(bottom=0)
     ax.set_yticks(np.arange(0, ax.get_ylim()[1] + 0.1, 0.1))
     ax.set_title(title)
@@ -284,6 +285,7 @@ for csv_file, is_gold in zip(CSV_FILES, is_gold_list):
     socket_totals = []
     gini_runs = []
     imbalance_runs = []
+    raw_totals = []
 
     for run, cpu_dict in core_winners.items():
 
@@ -294,6 +296,7 @@ for csv_file, is_gold in zip(CSV_FILES, is_gold_list):
 
         gini_runs.append(gini([s0, s1]))
         imbalance_runs.append(imbalance_ratio(s0, s1))
+        raw_totals.append(s0 + s1)
 
     tests.append({
         "type": test_type,
@@ -304,7 +307,8 @@ for csv_file, is_gold in zip(CSV_FILES, is_gold_list):
         "dominance": dominance_vals,
         "shares": share_vals,
         "cv": coefficient_of_variation(dominance_vals),
-        "imbalance": np.mean(imbalance_runs)
+        "imbalance": np.mean(imbalance_runs),
+        "raw_latency": raw_totals
     })
 
 # -------------------------------
@@ -373,8 +377,8 @@ def make_plots(dataset, ylabel, title, filename):
     ax.axhline(1.0, color='gray', linestyle='--', label='Fair Value')
 
     legend_handles = [
-        Patch(facecolor="#d9d9d9", edgecolor="black", label="Socket 0"),
-        Patch(facecolor="#a6a6a6", edgecolor="black", label="Socket 1"),
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Xeon Silver 4114"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Xeon Gold 6142"),
         Line2D([0],[0],color="deepskyblue",marker="o",label="Median"),
         Line2D([0],[0],color='gray',linestyle='--',label='Fair Value')
     ]
@@ -410,9 +414,11 @@ def make_plots(dataset, ylabel, title, filename):
         ax.hlines(np.mean(d), positions[i]-0.3, positions[i]+0.3,
                   colors="red", linestyles="dashed", linewidth=2)
 
-    ax.axhline(1.0, color='gray', linestyle='--', label='Fair Share')
+    ax.axhline(1.0, color='gray', linestyle='--', label='Fair Value')
 
     legend_handles = [
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Xeon Silver 4114"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Xeon Gold 6142"),
         Line2D([0],[0],color="black",lw=2,label="Median"),
         Line2D([0],[0],color="red",lw=2,linestyle="--",label="Mean"),
         Line2D([0],[0],color='gray',linestyle='--',label='Fair Share')
@@ -424,10 +430,123 @@ def make_plots(dataset, ylabel, title, filename):
     add_test_separators(ax, positions)
 
     ax.legend(handles=legend_handles, loc='lower right')
+    ax.margins(x=0.01)
 
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, filename + "_violin.png"), dpi=300)
     plt.close()
+
+# -------------------------------
+# RAW SOCKET EXECUTION VIOLINS
+# -------------------------------
+def make_raw_latency_plots():
+
+    SCALE = 100000  # 1 unit = 100k executions
+
+    for chip_type in ["silver", "gold"]:
+
+        fig, ax = plt.subplots(figsize=(14,7))
+
+        positions = []
+        data = []
+        socket_labels = []
+        test_labels = []
+
+        pos = 1
+
+        for i, test in enumerate(tests):
+
+            is_gold = is_gold_list[i]
+
+            if (chip_type == "gold" and not is_gold) or (chip_type == "silver" and is_gold):
+                continue
+
+            label = LABEL_MAP.get(test["type"], test["type"])
+
+            csv_file = CSV_FILES[i]
+            core_winners, _ = load_test(csv_file)
+
+            total_cpus = max(core_winners[next(iter(core_winners))].keys()) + 1
+            SOCKETS = get_socket_mapping(is_gold, total_cpus)
+
+            socket0 = []
+            socket1 = []
+            fair_values = []
+
+            for run, cpu_dict in core_winners.items():
+
+                s0 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[0])
+                s1 = sum(cpu_dict.get(cpu,0) for cpu in SOCKETS[1])
+
+                total = s0 + s1
+
+                socket0.append(s0 / SCALE)
+                socket1.append(s1 / SCALE)
+
+                fair_values.append((total / 2) / SCALE)
+
+            data.append(socket0)
+            data.append(socket1)
+
+            positions.append(pos)
+            positions.append(pos+1)
+
+            socket_labels.append("0")
+            socket_labels.append("1")
+
+            test_labels.append(label)
+            test_labels.append(label)
+
+            pos += 3
+
+        vp = ax.violinplot(data, positions=positions, showmedians=True)
+
+        fair_value = np.mean(fair_values)
+
+        ax.axhline(
+            fair_value,
+            linestyle="--",
+            color="gray",
+            linewidth=2,
+            label="Fair Value"
+        )
+
+        for body in vp["bodies"]:
+
+            if chip_type == "gold":
+                body.set_facecolor("#d4af37")
+            else:
+                body.set_facecolor("#d9d9d9")
+
+            body.set_edgecolor("black")
+            body.set_alpha(0.6)
+
+
+        label_chip = ""
+        if chip_type == "gold":
+            label_chip = "Xeon Gold 6142"
+        elif chip_type == "silver":
+            label_chip = "Xeon Silver 4114"
+
+        ax.set_xticks(positions)
+        ax.set_xticklabels(socket_labels)
+
+        ax.set_ylabel("Total Executions per Run (In 100,000s)")
+        ax.set_title(f"Raw Total Socket Executions: {label_chip}")
+        ax.set_xlabel("Socket and Operation", labelpad=40)
+
+        ax.set_ylim(bottom=0)
+
+        ymax = max(max(d) for d in data)
+        ax.set_yticks(np.arange(0, ymax + 1, 1))
+
+        # center instruction names between socket 0 and 1
+        add_group_labels(ax, positions, test_labels)
+
+        plt.tight_layout()
+        ax.legend(loc="lower right")
+        plt.savefig(os.path.join(OUTPUT_DIR,f"raw_socket_exec_{chip_type}.png"), dpi=300)
+        plt.close()
 
 # -------------------------------
 # GINI PLOT
@@ -460,8 +579,8 @@ def make_gini_plot():
     ax.set_yticks(np.arange(0, 0.12, 0.01))
 
     legend_handles = [
-        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver CPU"),
-        Patch(facecolor="#d4af37", edgecolor="black", label="Gold CPU"),
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Gold"),
     ]
 
     ax.legend(handles=legend_handles, loc="upper right")
@@ -559,8 +678,8 @@ def make_cv_plot():
     ax.set_title("Run to Run Fairness Variability")
 
     legend_handles = [
-        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver CPU"),
-        Patch(facecolor="#d4af37", edgecolor="black", label="Gold CPU")
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Xeon Silver 4114"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Xeon Gold 6142")
     ]
 
     ax.legend(handles=legend_handles, loc="upper right")
@@ -599,8 +718,8 @@ def make_imbalance_plot():
     ax.set_yticks(np.arange(0, 0.30, 0.025))
 
     legend_handles = [
-        Patch(facecolor="#d9d9d9", edgecolor="black", label="Silver CPU"),
-        Patch(facecolor="#d4af37", edgecolor="black", label="Gold CPU")
+        Patch(facecolor="#d9d9d9", edgecolor="black", label="Xeon Silver 4114"),
+        Patch(facecolor="#d4af37", edgecolor="black", label="Xeon Gold 6142")
     ]
 
     ax.legend(handles=legend_handles, loc="upper right")
@@ -632,4 +751,6 @@ if RUN_CV_PLOTS:
 if RUN_IMBALANCE_PLOTS:
     make_imbalance_plot()
 
+if RUN_RAW_LATENCY_PLOTS:
+    make_raw_latency_plots()
 print("Plots generated successfully.")
