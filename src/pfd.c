@@ -42,6 +42,30 @@ __thread volatile ticks** pfd_store;
 __thread volatile ticks* _pfd_s;
 __thread volatile ticks pfd_correction;
 
+static ticks
+pfd_default_correction(void)
+{
+#if defined(OPTERON)
+  return 64;
+#elif defined(OPTERON2)
+  return 68;
+#elif defined(XEON) || defined(XEON2)
+  return 20;
+#elif defined(NIAGARA)
+  return 76;
+#elif defined(RYZEN53600)
+  return 32;
+#elif defined(i3_7020U)
+  return 25;
+#elif defined(I9_13900HX)
+  return 14;
+#elif defined(XeonGold6142)
+  return 19;
+#else
+  return 20;
+#endif
+}
+
 static int __attribute__((unused))
 is_i9_13900hx(void)
 {
@@ -97,7 +121,7 @@ pfd_store_init(uint32_t num_entries)
 #define PFD_CORRECTION_CONF 3
 
  int default_pdf_bool = 1;
- char str[1024];
+ char str[1024] = {0};
  size_t str_len = 0;
  retry:
   for (i = 0; i < num_entries; i++)
@@ -110,8 +134,9 @@ pfd_store_init(uint32_t num_entries)
   abs_deviation_t ad;
   get_abs_deviation(pfd_store[0], num_entries, &ad);
   double std_pp = 100 * (1 - (ad.avg - ad.std_dev) / ad.avg);
+  int invalid_calibration = (!isfinite(ad.avg) || ad.avg <= 0 || !isfinite(std_pp));
   
-  if (std_pp > PFD_CORRECTION_CONF)
+  if (invalid_calibration || std_pp > PFD_CORRECTION_CONF)
     {
       if (tries-- > 0)
       {
@@ -120,26 +145,9 @@ pfd_store_init(uint32_t num_entries)
       else
       {
         default_pdf_bool = -1;
-        #if defined(OPTERON)
-              ad.avg = 64;
-        #elif defined(OPTERON2)
-              ad.avg = 68;
-        #elif defined(XEON) || defined(XEON2)
-              ad.avg = 20;
-        #elif defined(NIAGARA)
-              ad.avg = 76;
-        #elif defined(RYZEN53600)
-            ad.avg = 32;
-        #elif defined(i3_7020U)
-            ad.avg = 25;
-        #elif defined(I9_13900HX)
-            ad.avg = 14;
-        #elif defined(XeonGold6142)
-            ad.avg = 19;
-        #else
-              default_pdf_bool = 0;
-        #endif
-            }
+        ad.avg = pfd_default_correction();
+        std_pp = 100.0;
+      }
     }
     str_len += snprintf(
         str + str_len,
@@ -149,6 +157,11 @@ pfd_store_init(uint32_t num_entries)
     );
 
   pfd_correction = ad.avg;
+  if (pfd_correction <= 0)
+    {
+      default_pdf_bool = -1;
+      pfd_correction = pfd_default_correction();
+    }
   assert(pfd_correction > 0);
   
   str_len += snprintf(
@@ -159,18 +172,11 @@ pfd_store_init(uint32_t num_entries)
       std_pp
   );
 
-  if (default_pdf_bool == 0) {
+  if (default_pdf_bool == -1) {
     str_len += snprintf(
       str + str_len,
       sizeof(str) - str_len,
-      " WARN: std is high and no fallback pfd correction"
-    );
-  }
-  else if (default_pdf_bool == -1) {
-    str_len += snprintf(
-      str + str_len,
-      sizeof(str) - str_len,
-      " std is high, using default pfd correction"
+      " calibration unstable, using default pfd correction"
     );
   }
   printf("%s\n", str);
