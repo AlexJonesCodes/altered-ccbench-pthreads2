@@ -104,7 +104,36 @@ def parse_args() -> argparse.Namespace:
                    help="Image format (default: png)")
     p.add_argument("--dpi", type=int, default=150,
                    help="DPI for raster formats (default: 150)")
+    p.add_argument("--topology", default=None,
+                   help="Topology label for plot titles (e.g. 'Same-Socket ST'). "
+                        "Auto-detected from directory name if not provided.")
     return p.parse_args()
+
+
+def _detect_topology(results_dir: Path) -> str:
+    """Try to infer topology label from the results directory name."""
+    name = results_dir.name.lower()
+    mapping = {
+        "same_socket_st": "Same-Socket ST",
+        "same-socket-st": "Same-Socket ST",
+        "cross_socket_st": "Cross-Socket ST",
+        "cross-socket-st": "Cross-Socket ST",
+        "same_socket_ht": "Same-Socket HT",
+        "same-socket-ht": "Same-Socket HT",
+        "cross_socket_ht": "Cross-Socket HT",
+        "cross-socket-ht": "Cross-Socket HT",
+        "same_core": "Same-Core",
+        "same-core": "Same-Core",
+    }
+    for key, label in mapping.items():
+        if key in name:
+            return label
+    # Try parent directory too
+    parent_name = results_dir.parent.name.lower()
+    for key, label in mapping.items():
+        if key in parent_name:
+            return label
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +228,7 @@ def discover_csvs(results_dir: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def plot_A_latency_bars(rows: List[dict], out_dir: Path, fmt: str, dpi: int,
-                        source: str):
+                        source: str, topology: str = ""):
     """Bar chart of victim mean latency across phases for each attacker count.
 
     Works with both lock_vs_fai summary.csv and sweep raw_phase_results.csv.
@@ -273,13 +302,24 @@ def plot_A_latency_bars(rows: List[dict], out_dir: Path, fmt: str, dpi: int,
         if i == 0:
             ax.set_ylabel("Mean latency (cycles)")
 
+        # Zoom y-axis to data range instead of starting at 0
+        if means:
+            all_heights = [m + e for m, e in zip(means, errs)]
+            all_lows = [m - e for m, e in zip(means, errs)]
+            data_min = min(all_lows)
+            data_max = max(all_heights)
+            margin = (data_max - data_min) * 0.3 if data_max > data_min else data_min * 0.05
+            ax.set_ylim(max(0, data_min - margin), data_max + margin * 1.5)
+
         # Annotate bar values
         for bar, m in zip(bars, means):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                     f"{m:.0f}", ha="center", va="bottom", fontsize=7)
 
-    fig.suptitle("Victim mean latency by phase",
-                 fontsize=12, fontweight="bold")
+    title = "Victim mean latency by phase"
+    if topology:
+        title += f"  [{topology}]"
+    fig.suptitle(title, fontsize=12, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     out = out_dir / f"A_latency_bars.{fmt}"
     fig.savefig(out, dpi=dpi)
@@ -293,7 +333,7 @@ def plot_A_latency_bars(rows: List[dict], out_dir: Path, fmt: str, dpi: int,
 # ---------------------------------------------------------------------------
 
 def plot_B_delta_distributions(rows: List[dict], out_dir: Path, fmt: str,
-                               dpi: int):
+                               dpi: int, topology: str = ""):
     """Box plots of per-run latency delta % vs baseline.
 
     Requires sweep raw_phase_results.csv with multiple replicates per
@@ -382,8 +422,36 @@ def plot_B_delta_distributions(rows: List[dict], out_dir: Path, fmt: str,
     ax.set_xticklabels(atk_counts)
     ax.set_xlabel("Attacker threads")
     ax.set_ylabel("Latency delta vs baseline (%)")
-    ax.set_title("Per-replicate slowdown distribution",
-                 fontsize=12, fontweight="bold")
+    title = "Per-replicate slowdown distribution"
+    if topology:
+        title += f"  [{topology}]"
+    ax.set_title(title, fontsize=12, fontweight="bold")
+
+    # Annotate if shared ≈ separate (boxes overlap)
+    if len(treatment_phases) == 2:
+        all_shared = []
+        all_sep = []
+        for ai, atk in enumerate(atk_counts):
+            for pi, phase in enumerate(treatment_phases):
+                subset = [r for r in non_baseline
+                          if r["attacker_threads"] == str(atk)
+                          and r["phase"] == phase]
+                vals = extract_values(subset, "latency_delta_pct_vs_baseline")
+                if len(vals) > 0:
+                    if pi == 0:
+                        all_shared.extend(vals)
+                    else:
+                        all_sep.extend(vals)
+        if all_shared and all_sep:
+            shared_med = np.median(all_shared)
+            sep_med = np.median(all_sep)
+            if abs(shared_med - sep_med) < 2.0:  # within 2 percentage points
+                ax.annotate("shared \u2248 separate",
+                            xy=(0.5, 0.97), xycoords="axes fraction",
+                            ha="center", va="top", fontsize=9, style="italic",
+                            color="#555555",
+                            bbox=dict(boxstyle="round,pad=0.3",
+                                      facecolor="#f0f0f0", edgecolor="#cccccc"))
     if legend_patches:
         ax.legend(handles=legend_patches, loc="best", fontsize=9)
     fig.tight_layout()
@@ -399,7 +467,7 @@ def plot_B_delta_distributions(rows: List[dict], out_dir: Path, fmt: str,
 # ---------------------------------------------------------------------------
 
 def plot_C_shared_separate_comparison(rows: List[dict], out_dir: Path,
-                                      fmt: str, dpi: int):
+                                      fmt: str, dpi: int, topology: str = ""):
     """Grouped bars of baseline / shared / separate latency + fairness.
 
     Works with either sweep raw_phase_results.csv or single-run summary.csv.
@@ -473,6 +541,38 @@ def plot_C_shared_separate_comparison(rows: List[dict], out_dir: Path,
         ax.set_xlabel("Attacker threads" if has_atk else "")
         ax.set_ylabel(ylabel)
 
+        # Zoom y-axis to data range instead of starting at 0
+        ymin, ymax = ax.get_ylim()
+        if ymax > 0:
+            data_range = ymax - ymin
+            # Only zoom if the bars are bunched at the top (> 60% of range is empty)
+            if ymin == 0 and data_range > 0:
+                # Collect all bar heights for this axis
+                bar_vals = []
+                for gi, atk in enumerate(atk_counts):
+                    for pi, phase in enumerate(phase_order):
+                        if atk == "all":
+                            subset = [r for r in rows if r.get("phase") == phase]
+                        else:
+                            if phase == "victim_baseline":
+                                subset = [r for r in rows if r.get("phase") == phase]
+                            else:
+                                subset = [r for r in rows
+                                          if r.get("phase") == phase
+                                          and r.get("attacker_threads") == str(atk)]
+                        vals = extract_values(subset, metric)
+                        if len(vals) > 0:
+                            bar_vals.append(np.mean(vals))
+                if bar_vals:
+                    bmin = min(bar_vals)
+                    bmax = max(bar_vals)
+                    brange = bmax - bmin if bmax > bmin else bmax * 0.05
+                    margin = brange * 0.3
+                    new_bottom = max(0, bmin - margin)
+                    # Only zoom if bottom > 40% of the way up
+                    if new_bottom > ymax * 0.4:
+                        ax.set_ylim(new_bottom, bmax + margin * 2)
+
     # Add diagnosis annotation
     diagnosis = _compute_diagnosis(rows, atk_counts)
     if diagnosis:
@@ -486,8 +586,10 @@ def plot_C_shared_separate_comparison(rows: List[dict], out_dir: Path,
                       for p in phase_order]
     ax_lat.legend(handles=legend_patches, loc="best", fontsize=8)
 
-    fig.suptitle("Shared vs separate attacker comparison",
-                 fontsize=12, fontweight="bold")
+    title = "Shared vs separate attacker comparison"
+    if topology:
+        title += f"  [{topology}]"
+    fig.suptitle(title, fontsize=12, fontweight="bold")
     fig.tight_layout(rect=[0, 0.06, 1, 0.93])
     out = out_dir / f"C_shared_separate_comparison.{fmt}"
     fig.savefig(out, dpi=dpi)
@@ -564,7 +666,8 @@ def _compute_diagnosis(rows: List[dict], atk_counts: list) -> str:
 #  Plot D: Perf c2c HITM chart — stacked bars of local vs remote HITM
 # ---------------------------------------------------------------------------
 
-def plot_D_hitm_chart(csv_path: Path, out_dir: Path, fmt: str, dpi: int):
+def plot_D_hitm_chart(csv_path: Path, out_dir: Path, fmt: str, dpi: int,
+                      topology: str = ""):
     """Stacked bar chart of local vs remote HITM counts from perf c2c.
 
     Parses the c2c_summary_report.csv which has a structured format with
@@ -651,8 +754,19 @@ def plot_D_hitm_chart(csv_path: Path, out_dir: Path, fmt: str, dpi: int):
     ax.set_xticks(x)
     ax.set_xticklabels([p.capitalize() for p in ordered_phases])
     ax.set_ylabel("HITM count")
-    ax.set_title("Cache-line HITM events by phase (perf c2c)",
-                 fontsize=12, fontweight="bold")
+    title = "Cache-line HITM events by phase (perf c2c)"
+    if topology:
+        title += f"  [{topology}]"
+    ax.set_title(title, fontsize=12, fontweight="bold")
+
+    # Note low HITM counts in caption
+    total_hitm_all = sum(local_hitm.get(p, 0) + remote_hitm.get(p, 0) for p in ordered_phases)
+    if total_hitm_all < 200:
+        ax.text(0.5, -0.12,
+                f"Note: Total HITM counts are very low ({total_hitm_all} across all phases). "
+                "Ratios may be unreliable at this scale.",
+                transform=ax.transAxes, ha="center", fontsize=7, style="italic",
+                color="#777777")
     ax.legend(loc="best", fontsize=9)
 
     # Add ratio annotations vs baseline
@@ -698,9 +812,11 @@ def main():
     csvs = discover_csvs(results_dir)
     fmt = args.format
     dpi = args.dpi
+    topology = args.topology or _detect_topology(results_dir)
 
     print(f"Results dir : {results_dir}")
     print(f"Output dir  : {out_dir}")
+    print(f"Topology    : {topology or '(not detected)'}")
     print(f"CSVs found  : {', '.join(csvs.keys()) or '(none)'}")
     print()
 
@@ -711,13 +827,13 @@ def main():
     if "lock_vs_fai_summary" in csvs:
         path, rows = csvs["lock_vs_fai_summary"]
         print(f"[A] Latency bars from: {path}")
-        out = plot_A_latency_bars(rows, out_dir, fmt, dpi, "lock_vs_fai")
+        out = plot_A_latency_bars(rows, out_dir, fmt, dpi, "lock_vs_fai", topology)
         if out:
             generated.append(out)
     elif "sweep_raw" in csvs:
         path, rows = csvs["sweep_raw"]
         print(f"[A] Latency bars from: {path}")
-        out = plot_A_latency_bars(rows, out_dir, fmt, dpi, "sweep")
+        out = plot_A_latency_bars(rows, out_dir, fmt, dpi, "sweep", topology)
         if out:
             generated.append(out)
     else:
@@ -727,7 +843,7 @@ def main():
     if "sweep_raw" in csvs:
         path, rows = csvs["sweep_raw"]
         print(f"[B] Delta distributions from: {path}")
-        out = plot_B_delta_distributions(rows, out_dir, fmt, dpi)
+        out = plot_B_delta_distributions(rows, out_dir, fmt, dpi, topology)
         if out:
             generated.append(out)
     else:
@@ -737,13 +853,13 @@ def main():
     if "sweep_raw" in csvs:
         path, rows = csvs["sweep_raw"]
         print(f"[C] Shared-separate comparison from: {path}")
-        out = plot_C_shared_separate_comparison(rows, out_dir, fmt, dpi)
+        out = plot_C_shared_separate_comparison(rows, out_dir, fmt, dpi, topology)
         if out:
             generated.append(out)
     elif "sep_addr_summary" in csvs:
         path, rows = csvs["sep_addr_summary"]
         print(f"[C] Shared-separate comparison from: {path}")
-        out = plot_C_shared_separate_comparison(rows, out_dir, fmt, dpi)
+        out = plot_C_shared_separate_comparison(rows, out_dir, fmt, dpi, topology)
         if out:
             generated.append(out)
     else:
@@ -753,7 +869,7 @@ def main():
     if "c2c_summary" in csvs:
         path = csvs["c2c_summary"]
         print(f"[D] HITM chart from: {path}")
-        out = plot_D_hitm_chart(path, out_dir, fmt, dpi)
+        out = plot_D_hitm_chart(path, out_dir, fmt, dpi, topology)
         if out:
             generated.append(out)
     else:
