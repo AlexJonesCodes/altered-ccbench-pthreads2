@@ -351,13 +351,14 @@ def plot_dominance_heatmap(
         return
 
     # Sort rows within each operation by (thread_count, -max_streak_frac)
+    _HEATMAP_MAX_ROWS = 20  # cap rows per panel for readability at print scale
     for op in op_names:
         ops_data[op].sort(key=lambda r: (
             int(extract_threads(r)) if extract_threads(r).isdigit() else 0,
             -float(r.get("max_streak_frac", "0")),
         ))
-        if max_groups > 0:
-            ops_data[op] = ops_data[op][:max_groups]
+        limit = max_groups if max_groups > 0 else _HEATMAP_MAX_ROWS
+        ops_data[op] = ops_data[op][:limit]
 
     max_rows = max(len(ops_data[op]) for op in op_names)
     fig_h = max(5, max_rows * 0.28 + 2)
@@ -536,8 +537,15 @@ def plot_streak_timelines(
 
         ax.set_yticks(range(len(short_names)))
         ax.set_yticklabels(short_names, fontsize=7)
-        ax.set_title(f"{op}  (top {len(labels_in_panel)} by dominance)",
-                     fontsize=11, fontweight="bold", color=op_color(op))
+        # Check if even the "most dominant" runs show fair mixing
+        max_fracs = [float(group_row.get(l, {}).get("max_streak_frac", "0"))
+                     for l in labels_in_panel]
+        if max_fracs and max(max_fracs) < 0.15:
+            subtitle = (f"{op}  (top {len(labels_in_panel)} by dominance — "
+                        "note: even these show near-uniform mixing)")
+        else:
+            subtitle = f"{op}  (top {len(labels_in_panel)} by dominance)"
+        ax.set_title(subtitle, fontsize=11, fontweight="bold", color=op_color(op))
         ax.grid(axis="x", alpha=0.3)
 
     axes[-1].set_xlabel("Window Index")
@@ -579,23 +587,24 @@ def plot_concentration_scatter(
     ops = [extract_op(r) for r in filtered]
     threads = [extract_threads(r) for r in filtered]
 
-    # Marker shape by thread count: square=2, diamond=4, circle=8
-    _TC_MARKER = {"2": "s", "4": "D", "8": "o"}
-    _TC_MARKER_DEFAULT = "o"
-    _MARKER_SIZE = 50
+    # Distinct marker shapes per thread count for visual clarity
+    _TC_MARKERS = ["o", "s", "D", "^", "v", "P", "*", "X", "p"]
+    _MARKER_SIZE = 60
 
     fig, ax = plt.subplots(figsize=(9, 7))
 
     # Group by (operation, thread_count) for distinct markers
     op_set = sorted(set(ops), key=lambda o: _OP_ORDER.get(o, 99))
     tc_set = sorted(set(threads), key=lambda x: int(x) if x.isdigit() else 0)
+    _tc_marker_map = {tc: _TC_MARKERS[i % len(_TC_MARKERS)]
+                      for i, tc in enumerate(tc_set)}
     for op_name in op_set:
         for tc in tc_set:
             mask = [(o == op_name and t == tc) for o, t in zip(ops, threads)]
             idx = np.where(mask)[0]
             if len(idx) == 0:
                 continue
-            marker = _TC_MARKER.get(tc, _TC_MARKER_DEFAULT)
+            marker = _tc_marker_map[tc]
             ax.scatter(eff[idx], gini[idx], c=op_color(op_name), s=_MARKER_SIZE,
                        marker=marker, alpha=0.65, edgecolors="white",
                        linewidths=0.5, zorder=3)
@@ -620,7 +629,7 @@ def plot_concentration_scatter(
     op_handles = [Patch(facecolor=op_color(o), alpha=0.65, label=o) for o in op_set]
     shape_handles = []
     for tc in tc_set:
-        marker = _TC_MARKER.get(tc, _TC_MARKER_DEFAULT)
+        marker = _tc_marker_map[tc]
         shape_handles.append(
             Line2D([], [], marker=marker, color="grey", linestyle="None",
                    markersize=8, markeredgecolor="white", markeredgewidth=0.5,
@@ -673,7 +682,9 @@ def plot_aggregated_by_factor(
         agg.keys(),
         key=lambda k: (_OP_ORDER.get(k[0], 99), int(k[1]) if k[1].isdigit() else 0),
     )
-    labels = [f"{op} t={tc}" for op, tc in sorted_keys]
+    # Abbreviated labels: C2, T4, F8 etc. instead of "CAS t=2"
+    _OP_ABBREV = {"CAS": "C", "TAS": "T", "FAI": "F"}
+    labels = [f"{_OP_ABBREV.get(op, op)}{tc}" for op, tc in sorted_keys]
 
     metrics = {
         "max_streak_frac": "Max Streak Fraction",
@@ -709,7 +720,7 @@ def plot_aggregated_by_factor(
                        alpha=0.4, edgecolors="none", zorder=4)
 
         ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+        ax.set_xticklabels(labels, rotation=90, ha="center", fontsize=8)
         ax.set_title(title, fontsize=10)
         ax.grid(axis="y", alpha=0.3)
 
