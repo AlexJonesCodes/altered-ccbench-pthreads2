@@ -23,7 +23,6 @@ CHIPS = {
     "Xeon Gold 6142": "./gold_6142/",
     "Xeon Silver 4114": "./silver_4114/",
 
-    "Xeon E5-2683 v3": "./E52683v3/",
     "Xeon E5-2660 v3": "./E52660v3/",
     "Xeon E5-2630 v3": "./E52630v3/",
     "Xeon E5-2680 v3": "./E52680v3/",
@@ -380,7 +379,7 @@ for focus in TESTS:
             color_data[yi,xi] = color_val
 
     # create figure
-    fig, ax = plt.subplots(figsize=(12,8))
+    fig, ax = plt.subplots(figsize=(11,8))
 
     # define colormap for this heatmap
     cmap = LinearSegmentedColormap.from_list(
@@ -425,7 +424,7 @@ for focus in TESTS:
     elif COLOR_MODE == "normalized":
         cbar_label = "Normalized latency (baseline=1)"
     elif COLOR_MODE == "delta":
-        cbar_label = "Delta latency (cycles)"
+        cbar_label = "Colour is Delta Latency From None\n Values are Raw Latency (cycles)"
 
     fig.colorbar(im, ax=ax, label=cbar_label)
 
