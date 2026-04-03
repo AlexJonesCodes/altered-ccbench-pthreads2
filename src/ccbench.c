@@ -98,21 +98,19 @@ static int test_fail_stats = 0;
 static int seed_node = -1;
 static int cache_line_from_numa = 0;
 
-/* Per-thread and per-repetition winner tracking (generalised for all tests) */
-static uint32_t* win_counts_per_rank = NULL;   /* size: test_cores */
-static uint32_t* first_winner_per_rep = NULL;  /* size: test_reps, UINT32_MAX means unclaimed */
-/* Round start (common t0 per repetition) and per-thread, per-rep latency from t0 to success */
-static ticks* round_start = NULL;                 /* size: test_reps */
-static uint64_t* common_latency_cycles = NULL;    /* size: test_cores * test_reps */
-static uint64_t* cas_attempts_per_rank = NULL;    /* size: test_cores */
-static uint64_t* cas_failures_per_rank = NULL;    /* size: test_cores */
-static uint64_t* cas_successes_per_rank = NULL;   /* size: test_cores */
-static uint64_t* tas_attempts_per_rank = NULL;    /* size: test_cores */
-static uint64_t* tas_failures_per_rank = NULL;    /* size: test_cores */
-static uint64_t* tas_successes_per_rank = NULL;   /* size: test_cores */
-static uint64_t* casus_attempts_per_rank = NULL;  /* size: test_cores */
-static uint64_t* casus_failures_per_rank = NULL;  /* size: test_cores */
-static uint64_t* casus_successes_per_rank = NULL; /* size: test_cores */
+static uint32_t* win_counts_per_rank = NULL; 
+static uint32_t* first_winner_per_rep = NULL;
+static ticks* round_start = NULL;  
+static uint64_t* common_latency_cycles = NULL;   
+static uint64_t* cas_attempts_per_rank = NULL;   
+static uint64_t* cas_failures_per_rank = NULL;   
+static uint64_t* cas_successes_per_rank = NULL; 
+static uint64_t* tas_attempts_per_rank = NULL; 
+static uint64_t* tas_failures_per_rank = NULL; 
+static uint64_t* tas_successes_per_rank = NULL;
+static uint64_t* casus_attempts_per_rank = NULL; 
+static uint64_t* casus_failures_per_rank = NULL;  
+static uint64_t* casus_successes_per_rank = NULL; 
 static uint64_t* fai_attempts_per_rank = NULL;
 static uint64_t* fai_successes_per_rank = NULL;
 static uint64_t* swap_attempts_per_rank = NULL;
@@ -124,14 +122,14 @@ static uint64_t* store_successes_per_rank = NULL;
 static const char* winner_seq_path = NULL;
 
 
-/* Continuous run mode */
+/* continuous run mode */
 static int opt_run_mode = 0;
 
-/* Run-mode global counters */
+/* run-mode global counters */
 static volatile uint64_t global_remaining_successes = 0; /* starts at test_reps */
 static volatile uint32_t global_stop_flag = 0;
 
-/* Consume one unit of the global success quota; 1 if counted, 0 if exhausted */
+/* consume one unit of the global success quota; 1 if counted, 0 if exhausted */
 static inline int try_claim_success_unit(void)
 {
   for (;;) {
@@ -148,7 +146,6 @@ static inline int try_claim_success_unit(void)
   }
 }
 
-/* Record B4->success for this thread and repetition (only once). */
 static inline void rec_success(uint64_t rep)
 {
   if (!common_latency_cycles || !round_start) return;
@@ -160,20 +157,17 @@ static inline void rec_success(uint64_t rep)
 }
 
 
-/* Thread-local current repetition index for ops that don't take 'reps' param */
 __thread uint64_t current_rep_idx = 0;
 
-/* Attempt to claim victory for this repetition; first thread to claim wins */
 static inline void race_try_win(uint64_t rep_idx)
 {
   if (!first_winner_per_rep) return;
   if (rep_idx >= test_reps) return;
 
-  /* Atomically set from UINT32_MAX (unclaimed) to our thread ID */
   uint32_t expected = UINT32_MAX;
   if (__sync_bool_compare_and_swap(&first_winner_per_rep[rep_idx], expected, (uint32_t) ID))
     {
-      /* We won this repetition */
+      /* we won this repetition */
       if (win_counts_per_rank)
         {
           __sync_fetch_and_add(&win_counts_per_rank[ID], 1);
@@ -223,7 +217,6 @@ static void print_fail_stats_for_op(const char* label,
   }
 }
 
-/* Convenience macro: pick reps param if available, else use current_rep_idx */
 #define RACE_TRY_WITH_REP(rep_expr) race_try_win((uint64_t)(rep_expr))
 #define RACE_TRY() race_try_win(current_rep_idx)
 
@@ -278,7 +271,6 @@ static int cache_line_from_fixed_mmap = 0;    /* did we mmap at fixed addr? */
 static void* fixed_mmap_base = NULL;          /* page-aligned mapping base */
 static size_t fixed_mmap_size = 0;            /* size of mapping (page) */
 
-/* 64B-aligned static line (used if fixed_vaddr==0) */
 static cache_line_t fixed_static_line __attribute__((aligned(64)));
 
 
@@ -456,9 +448,8 @@ int main(int argc, char** argv)
 	case 'o':
 	  test_core_others = atoi(optarg);
 	  break;
-	case 'R': /* --run: continuous mode, reps == global success quota */
+	case 'R': 
 		opt_run_mode = 1;
-		/* ensure failure stats for per-thread reporting */
 		test_fail_stats = 1;
 		break;
 	case 'W':
@@ -592,7 +583,6 @@ int main(int argc, char** argv)
     }
 	printf("\n");
 
-	/* Build per-rank mappings from jagged core arrays and test ids. */
 	if (test_cores_array == NULL) {
 		test_cores = DEFAULT_CORES;
 		core_for_rank = (size_t*) malloc(sizeof(size_t) * test_cores);
@@ -610,7 +600,6 @@ int main(int argc, char** argv)
 			group_for_rank[rr] = 0;
 		}
 	} else {
-		/* compute total number of ranks (flatten all groups) */
 		size_t total = 0;
 		for (size_t g = 0; g < core_rows; g++) {
 			total += core_cols[g];
@@ -631,10 +620,8 @@ int main(int argc, char** argv)
 			size_t assigned_test = (size_t) test_test;
 			if (test_num_array != NULL) {
 				if (test_rows == 1 && core_rows == 1 && test_cols[0] == core_cols[0]) {
-				/* Per-thread ops: one group, tests list length equals group size */
-				assigned_test = (size_t) test_test; /* placeholder, overridden per j below */
+				assigned_test = (size_t) test_test; 
 				} else if (test_rows == 1) {
-				/* One test per group (by position g) */
 				if (g < test_cols[0]) {
 					assigned_test = test_num_array[0][g];
 				} else {
@@ -657,7 +644,6 @@ int main(int argc, char** argv)
 			for (size_t j = 0; j < core_cols[g]; j++) {
 				core_for_rank[idx] = test_cores_array[g][j];
 				if (test_num_array != NULL && test_rows == 1 && core_rows == 1 && test_cols[0] == core_cols[0]) {
-				/* per-thread ops list */
 				test_for_rank[idx] = (size_t) test_num_array[0][j];
 				} else {
 				test_for_rank[idx] = assigned_test;
@@ -685,7 +671,6 @@ int main(int argc, char** argv)
 		test_backoff = 1;
 	}
 
-	/* Allocate winner tracking arrays */
 	win_counts_per_rank = (uint32_t*) calloc(test_cores, sizeof(uint32_t));
 	if (!win_counts_per_rank) { perror("calloc"); exit(1); }
 
@@ -708,8 +693,6 @@ int main(int argc, char** argv)
 		casus_attempts_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		casus_failures_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		casus_successes_per_rank = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
-
-		/* New: non-failing op families */
 		fai_attempts_per_rank   = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		fai_successes_per_rank  = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
 		swap_attempts_per_rank  = (uint64_t*) calloc(test_cores, sizeof(uint64_t));
@@ -733,7 +716,7 @@ int main(int argc, char** argv)
 
 	if (!opt_run_mode) {
 		for (size_t i_init = 0; i_init < test_reps; i_init++) {
-			first_winner_per_rep[i_init] = UINT32_MAX; /* unclaimed */
+			first_winner_per_rep[i_init] = UINT32_MAX;
 		}
 	}
 
@@ -744,12 +727,11 @@ int main(int argc, char** argv)
 			if ((int)core_for_rank[r] == seed_core) { seed_rank = (int) r; break; }
 		}
 		if (seed_rank < 0) {
-			have_seeder_thread = 1; /* prime outside -x */
+			have_seeder_thread = 1;
 		}
 	}
 
 	#ifdef PLATFORM_NUMA
-		/* Resolve seed NUMA node from seed_core (libnuma, user-space) */
 		if (opt_numa && seed_core >= 0 && numa_available() != -1) {
 			seed_node = numa_node_of_cpu(seed_core);
 			if (seed_node >= 0) {
@@ -760,11 +742,6 @@ int main(int argc, char** argv)
 
 	barriers_init(test_cores);
 
-	/* Reconfigure per-group barriers so each per-group barrier expects only
-	 * the number of participants in that group (core_cols[g]). This prevents
-	 * deadlock where a barrier initialized for all threads would wait for
-	 * threads that never call it.
-	 */
 	for (size_t g = 0; g < core_rows; g++) {
 		for (size_t k = 0; k < PER_GROUP_SLOTS; k++) {
 			uint32_t bar_idx = (uint32_t)(PER_GROUP_BASE + g * PER_GROUP_SLOTS + k);
@@ -778,16 +755,13 @@ int main(int argc, char** argv)
 		barrier_set_participants(5, (uint64_t)(test_cores + 1), test_cores);
 	}
 
-	/* First-touch on seed's NUMA node: pin main to seed_core before cache_line_open() */
 	if (seed_core >= 0) {
 		set_cpu(seed_core);
 		printf("Main pinned to seed core %d for first-touch placement\n", seed_core);
 		}
 
-		/* Now allocate the test buffer */
 		volatile cache_line_t* cache_line = cache_line_open();
 		if (opt_fixed_target) {
-		/* Ensure the page is faulted in */
 		(void) cache_line->word[0];
 		_mm_mfence();
 
@@ -800,7 +774,6 @@ int main(int argc, char** argv)
 			printf("Fixed target cache line (physical): 0x%llx (page size %ld)\n",
 				(unsigned long long) phys, sysconf(_SC_PAGESIZE));
 		} else {
-			/* Best-effort diagnostics */
 			const char* why = "unknown";
 			if (rc == -1) why = "open(/proc/self/pagemap) failed";
 			else if (rc == -2) why = "lseek(pagemap) failed";
@@ -819,11 +792,10 @@ int main(int argc, char** argv)
 			global_remaining_successes = (uint64_t) test_reps; /* -r is success quota */
 			global_stop_flag = 0;
 
-			/* One-time seed on current core (main pinned to -b earlier) */
 			cache_line->word[0] = 0; 
 			_mm_mfence();
 
-			if (test_flush) { /* optional single flush */
+			if (test_flush) { 
 				_mm_clflush((void*) cache_line);
 				_mm_mfence();
 			}
@@ -831,7 +803,6 @@ int main(int argc, char** argv)
 
 
 		#ifdef PLATFORM_NUMA
-		/* Diagnostic: print the current NUMA node of the first page of cache_line */
 		if (opt_numa && numa_available() != -1) {
 			int status = -1;
 			void* pages[1] = { (void*) cache_line };
@@ -998,7 +969,6 @@ static void* seeder_main(void* arg)
   seeder_args_t* a = (seeder_args_t*) arg;
   volatile cache_line_t* cache_line = a->cache_line;
 
-  /* Pin this helper thread to the seed core */
   set_cpu(seed_core);
 
 	for (uint64_t reps = 0; reps < test_reps; reps++) {
@@ -1016,7 +986,7 @@ static void* seeder_main(void* arg)
 			_mm_mfence();
 		}
 
-		B4; /* release contenders */
+		B4; 
 	}
 
   return NULL;
@@ -1044,8 +1014,6 @@ run_benchmark(void* arg)
 		my_test = test_test;
 	}
 
-	/* lightweight startup info removed (cleanup) */
-
 #if defined(NIAGARA)
   if (test_cores <= 8 && test_cores > 3)
     {
@@ -1062,8 +1030,8 @@ run_benchmark(void* arg)
 	printf("Requested core: %zu, now running on cpu: %d, test is: %d (%s)\n", core, sched_getcpu(), (int) my_test, tname); }
   
 #if defined(__tile__)
-  tmc_cmem_init(0);		/*   initialize shared memory */
-#endif  /* TILERA */
+  tmc_cmem_init(0);		
+#endif  
 
   volatile uint64_t* cl = (volatile uint64_t*) cache_line;
 
@@ -1074,23 +1042,19 @@ run_benchmark(void* arg)
     }
   B0;
 
-  /* Local warmup: touch the target line a few times to prime TLB/L1 */
   for (int w = 0; w < 1024; w++) {
     (void) cache_line->word[0];
     _mm_pause();
   }
   _mm_mfence();
-
-  /* Continuous run mode: no per-repetition barriers or resets */
+  
   if (opt_run_mode) {
-	/* Single start sync so all contenders start together */
 	B0;
 
 	while (__builtin_expect(!global_stop_flag, 1)) {
 		int success = 0;
 
 		switch (my_test) {
-			/* Atomics and RMWs on cl[0] */
 			case CAS:
 			case CAS_CONCURRENT: {
 				volatile uint32_t* w = &cache_line[0].word[0];
@@ -1124,7 +1088,7 @@ run_benchmark(void* arg)
 					if (test_fail_stats && tas_successes_per_rank) tas_successes_per_rank[ID]++;
 					success = 1;
 					_mm_mfence();
-					cache_line->word[0] = 0; /* release */
+					cache_line->word[0] = 0; 
 					_mm_mfence();
 					break;
 				} else {
@@ -1156,9 +1120,6 @@ run_benchmark(void* arg)
 					_mm_mfence();
 					success = 1;
 					break;
-
-
-			/* Stores: count each store to cl[0] as a success; honor load fences */
 			case STORE_ON_MODIFIED:
 			case STORE_ON_MODIFIED_NO_SYNC:
 			case STORE_ON_EXCLUSIVE:
@@ -1174,9 +1135,6 @@ run_benchmark(void* arg)
 				success = 1;
 				break;
 			}
-
-
-		/* Loads: count each load from cl[0] as a success; honor load fences */
 		case LOAD_FROM_MODIFIED:
 		case LOAD_FROM_EXCLUSIVE:
 		case LOAD_FROM_SHARED:
@@ -1195,7 +1153,6 @@ run_benchmark(void* arg)
 
 
 		default:
-			/* PROFILER, fences, NOP, etc.: do not count */
 			break;
     }
 
@@ -1204,16 +1161,10 @@ run_benchmark(void* arg)
         __sync_fetch_and_add(&win_counts_per_rank[ID], 1);
       }
     }
-    /* Optional: _mm_pause(); */
 	}
 
-	/* Skip legacy per-rep path */
 	goto RUN_MODE_POST;
   }
-
-  /* /\********************************************************************************* */
-  /*  *  main functionality */
-  /*  *********************************************************************************\/ */
 
   uint64_t sum = 0;
 
@@ -1228,12 +1179,10 @@ run_benchmark(void* arg)
 	}
 
 	B0;            /* BARRIER 0 */
-	/* Seed mode: either seed is inside -x (seed_rank >= 0) or we have a helper seeder thread */
 	if (seed_rank >= 0 || have_seeder_thread) {
 		int i_am_seeder = (seed_rank >= 0 && (int)ID == seed_rank);
 
 		if (i_am_seeder) {
-			/* In-thread priming when seed is part of -x: leave value = o */
 			uint8_t o = (uint8_t)(reps & 0x1);
 			cache_line->word[0] = o;
 			_mm_mfence();
@@ -1247,15 +1196,13 @@ run_benchmark(void* arg)
 			}
 		}
 
-		/* Start contention phase: release all contenders (including the seeder) */
 		B4;
 
-		/* Dispatch this thread's assigned test (seeder joins the race) */
 		switch (my_test) {
 			case CAS:        sum += cas_0_eventually(cache_line, reps); break;  /* 12 */
 			case FAI:        sum += fai(cache_line, reps); break;                /* 13 */
 			case TAS:        sum += tas(cache_line, reps);
-							_mm_mfence(); cache_line->word[0] = 0; break;       /* keep TAS re-entrant */
+							_mm_mfence(); cache_line->word[0] = 0; break;       /* 14 */
 			case SWAP:       sum += swap(cache_line, reps); break;               /* 15 */
 			case CAS_UNTIL_SUCCESS:
 							sum += cas_until_success(cache_line, reps); break;  /* 34 */
@@ -1285,9 +1232,8 @@ run_benchmark(void* arg)
 			break;
 		}
 
-		/* Optional per-group sync to keep loop structure */
 		B1;
-	continue; /* skip the normal test switch for this repetition */
+	continue; 
 	}
 
 
@@ -1953,7 +1899,6 @@ run_benchmark(void* arg)
 	    case STORE_ON_OWNED:
 	      if (ID < 2)
 		{
-                  // PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		  if (ID == 1)
 		    {
@@ -1962,25 +1907,21 @@ run_benchmark(void* arg)
 		}
 	      break;
             case CAS_CONCURRENT:
-              // PRINT(" *** Core %zu ************************************************************************************", core);
               collect_core_stats(0, test_reps, test_print);
               break;
 	    case LOAD_FROM_L1:
 	      if (ID < 1)
 		{
-                  // PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    case LOAD_FROM_MEM_SIZE:
 	      if (ID < test_cores)
 		{
-                  // PRINT(" *** Core %zu ************************************************************************************", core);
 		  collect_core_stats(0, test_reps, test_print);
 		}
 	      break;
 	    default:
-              // PRINT(" *** Core %zu ************************************************************************************", core);
 	      collect_core_stats(0, test_reps, test_print);
 	    }
 	}
@@ -2119,7 +2060,6 @@ if (rank == 0) {
         }
 	  printf("\n\n");
 
-	  /* Aggregate by socket (simple heuristic: even CPUs -> socket 0, odd CPUs -> socket 1) */
       double sum_avg_sock[2] = {0.0, 0.0};
       uint32_t cnt_sock[2] = {0, 0};
       uint32_t wins_sock[2] = {0, 0};
@@ -2162,8 +2102,6 @@ if (rank == 0) {
         {
           PRINT(" Summary : no statistics captured");
         }
-	  
-	  /* Mean common-start latency per thread (from B4 to this thread’s success) */
 		if (common_latency_cycles) {
 		printf("\nCommon-start latency (B4 -> success), per thread:\n");
 		    for (uint32_t r = 0; r < test_cores; r++) {
@@ -2188,7 +2126,6 @@ if (rank == 0) {
 		}
 		printf("\n");
 
-		/* Optional: check how often the winner is the fastest (argmin) for that rep */
 		if (first_winner_per_rep) {
 			size_t matches = 0, valid = 0;
 			for (size_t rep = 0; rep < test_reps; rep++) {
@@ -2212,7 +2149,6 @@ if (rank == 0) {
 		}
 		}
 
-	        /* Report first-op winners across all repetitions (generalised) */
 	      if (win_counts_per_rank)
 	        {
 	          printf("\nFirst-success winners per thread (out of %zu reps):\n", test_reps);
@@ -2624,7 +2560,6 @@ cas_no_pf(volatile cache_line_t* cl, volatile uint64_t reps)
 static uint32_t
 cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
 {
-  /* Random-walk until we reach the target line (cln==0) without timing. */
   uint32_t cln;
   do {
     cln = clrand();
@@ -2640,7 +2575,6 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
     max_backoff = backoff_max_per_rank[ID];
   }
 
-  /* We keep the original PFD “attempt->success” timing as-is */
   PFDI(0);
   for (;;) {
     attempts++;
@@ -2648,7 +2582,6 @@ cas_until_success(volatile cache_line_t* cl, volatile uint64_t reps)
     uint32_t desired = expect ^ 1;  /* flip LSB */
     uint32_t old = CAS_U32(w, expect, desired);
     if (old == expect) {
-      /* First successful CAS may claim the win for this rep */
       race_try_win((uint64_t) reps);
       break;
     }
@@ -2747,11 +2680,7 @@ tas(volatile cache_line_t* cl, volatile uint64_t reps)
     {
       uint32_t attempts = 0;
       uint32_t failures = 0;
-
-      /* We reached the target line: first arrival marker (keeps existing fairness winner semantics) */
       RACE_TRY_WITH_REP(reps);
-
-      /* Time the "attempts until TAS succeeds" region and record B4->success on success */
       PFDI(0);
       for (;;)
       {
@@ -2773,8 +2702,6 @@ tas(volatile cache_line_t* cl, volatile uint64_t reps)
     }
   }
   while (cln > 0);
-
-  /* We always succeed before leaving the cln==0 iteration */
   return 1;
 }
 
@@ -3304,8 +3231,6 @@ collect_core_stats(uint32_t store, uint32_t num_vals, uint32_t num_print)
 }
 
 #ifdef __linux__
-/* Return 0 on success; fill *phys_out with physical address.
-   Errors: -1 open, -2 lseek, -3 read, -4 not present, -5 restricted. */
    static int virt_to_phys(void* vaddr, uint64_t* phys_out)
 {
   long pagesz = sysconf(_SC_PAGESIZE);
@@ -3323,8 +3248,6 @@ collect_core_stats(uint32_t store, uint32_t num_vals, uint32_t num_print)
   ssize_t n = read(fd, &entry, sizeof(entry));
   close(fd);
   if (n != (ssize_t)sizeof(entry)) return -3;
-
-  /* Bit 63: present; bits 0..54: PFN on x86_64 */
   if ((entry & (1ULL << 63)) == 0) return -4;
 
   uint64_t pfn = (entry & ((1ULL << 55) - 1));
@@ -3337,19 +3260,15 @@ volatile cache_line_t*
 cache_line_open()
 {
   uint64_t size = test_cache_line_num * sizeof(cache_line_t);
-
-  /* NEW: fixed-address single target mode */
   if (opt_fixed_target) {
     volatile cache_line_t* cache_line = NULL;
 
     if (fixed_vaddr == 0) {
-      /* Use the built-in static line (address is stable across runs if linked -no-pie) */
       cache_line = &fixed_static_line;
       cache_line->word[0] = 0;
       _mm_mfence();
       return cache_line;
     } else {
-      /* Try to mmap one page at the requested virtual address */
       long pagesz = sysconf(_SC_PAGESIZE);
       if (pagesz <= 0) { perror("sysconf"); exit(1); }
       uintptr_t pg = (uintptr_t)fixed_vaddr & ~((uintptr_t)pagesz - 1);
@@ -3359,7 +3278,6 @@ cache_line_open()
 #ifdef MAP_FIXED_NOREPLACE
       flags |= MAP_FIXED_NOREPLACE;
 #else
-      /* Fallback: MAP_FIXED will replace existing mappings. Use with care. */
       flags |= MAP_FIXED;
 #endif
       void* p = mmap((void*)pg, len, PROT_READ | PROT_WRITE, flags, -1, 0);
@@ -3372,7 +3290,6 @@ cache_line_open()
       fixed_mmap_base = p;
       fixed_mmap_size = len;
 
-      /* Use exactly the address the user asked for. Warn if not 64B-aligned. */
       cache_line = (volatile cache_line_t*) (fixed_vaddr);
       if (((uintptr_t)cache_line & 63ULL) != 0) {
         fprintf(stderr, "Warning: --fixed-addr is not 64B-aligned; results may be noisy.\n");
@@ -3398,16 +3315,15 @@ cache_line_open()
       tmc_task_die("Failed to allocate memory.");
     }
 
-  tmc_cmem_init(0);		/*   initialize shared memory */
+  tmc_cmem_init(0);	
 
 
   cache_line->word[0] = 0;
 
-#else    /* !__tile__ ****************************************************************************************/
+#else   
   void* mem = NULL;
 
   #ifdef PLATFORM_NUMA
-	/* Prefer allocating the buffer on the seed’s NUMA node (page-aligned, OK for 64B alignment) */
 	if (seed_node >= 0 && numa_available() != -1) {
 		mem = numa_alloc_onnode(size, seed_node);
 		if (mem != NULL) {
@@ -3416,7 +3332,6 @@ cache_line_open()
 	}
   #endif
 
-  /* Fallback to regular allocation if libnuma unavailable or allocation failed */
   if (mem == NULL) {
     int rc = posix_memalign(&mem, 64, size);
     if (rc != 0)
@@ -3428,8 +3343,7 @@ cache_line_open()
   }
 
   volatile cache_line_t* cache_line = (volatile cache_line_t*) mem;
-  
-  /* Best-effort lock to reduce paging jitter (may fail due to RLIMIT_MEMLOCK) */
+
   if (opt_mlock) {
     if (mlock((const void*) cache_line, size) != 0) {
       perror("mlock (best-effort)");
@@ -3437,18 +3351,14 @@ cache_line_open()
   }
 
 
-#endif  /* __tile ********************************************************************************************/
-    /* Only memset when we need the whole region (LOAD_FROM_MEM_SIZE).
-     For single-line/stride tests, avoid touching all pages to reduce noise. */
+#endif
 	if (test_test == LOAD_FROM_MEM_SIZE) {
 		memset((void*) cache_line, '1', size);
 	}
 
-
 	  if (ID == 0) {
 		if (test_test == LOAD_FROM_MEM_SIZE)
 			{
-			/* Touch all pages and build the random list */
 			uint32_t cl;
 			for (cl = 0; cl < test_cache_line_num; cl++)
 				{
@@ -3459,7 +3369,6 @@ cache_line_open()
 			}
 		else
 			{
-			/* Minimal first-touch: only the first line we actually use */
 			cache_line[0].word[0] = 0;
 			_mm_clflush((void*) (cache_line + 0));
 			}
@@ -3510,12 +3419,10 @@ create_rand_list_cl(volatile uint64_t* list, size_t n)
 void
 cache_line_close(volatile cache_line_t* cache_line)
 {
-  /* NEW: fixed-address mode cleanup */
   if (opt_fixed_target) {
     if (cache_line_from_fixed_mmap && fixed_mmap_base && fixed_mmap_size) {
       munmap(fixed_mmap_base, fixed_mmap_size);
     }
-    /* static case requires no free */
     return;
   }
 #if !defined(__tile__)
@@ -3557,25 +3464,19 @@ int parse_jagged_array(
   while (*p) {
     while (*p && *p != '[') p++;
     if (!*p) break;
-    p++; /* enter row */
+    p++;
 
-    /* dynamic vector for this row */
     size_t cap = 16, len = 0;
     size_t *row = (size_t*) malloc(cap * sizeof *row);
     if (!row) goto fail;
 
     while (*p && *p != ']') {
-      /* skip until number or '-' */
       while (*p && !isdigit((unsigned char)*p) && *p != '-' && *p != ']') p++;
       if (!*p || *p == ']') break;
-
-      /* parse first integer (start or single) */
       char *endptr = NULL;
       long long a = strtoll(p, &endptr, 10);
       if (p == endptr) { free(row); goto fail; }
       p = endptr;
-
-      /* look ahead for ellipsis */
       const char *save = p;
       while (*p == ' ' || *p == '\t' || *p == ',') p++;
       int has_ellipsis = (p[0]=='.' && p[1]=='.' && p[2]=='.');
@@ -3600,7 +3501,7 @@ int parse_jagged_array(
         }
       } else {
         /* single value */
-        p = save; /* rewind to after the number; separators are skipped below */
+        p = save; 
         if (len == cap) {
           cap *= 2;
           size_t *tmp = (size_t*) realloc(row, cap * sizeof *row);
@@ -3610,14 +3511,11 @@ int parse_jagged_array(
         row[len++] = (size_t) a;
       }
 
-      /* advance to next number or ']' */
       while (*p && *p != ']' && !(isdigit((unsigned char)*p) || *p=='-')) p++;
     }
 
     if (*p != ']') { free(row); goto fail; }
-    p++; /* leave row */
-
-    /* shrink row to size and append to outputs */
+    p++; 
     size_t *final = len ? (size_t*) realloc(row, len * sizeof *row) : row;
     if (!final && len) { free(row); goto fail; }
 

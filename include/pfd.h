@@ -139,7 +139,7 @@ void pfd_collect_abs_deviation(uint32_t store, uint32_t num_vals, uint32_t num_p
 #  define PFDO(store, entry) 
 #  define PFDP(store, num_vals) 
 #  define PFDPN(store, num_vals, num_print)
-#else  /* DO_TIMINGS */
+#else 
 #  define PFDINIT(num_entries) pfd_store_init(num_entries)
 
 #  define PFDI(store)				\
@@ -162,7 +162,7 @@ void pfd_collect_abs_deviation(uint32_t store, uint32_t num_vals, uint32_t num_p
 
 #  define PFDPN(store, num_vals, num_print) \
   pfd_collect_abs_deviation(store, num_vals, num_print, NULL)
-#endif /* !DO_TIMINGS */
+#endif
 
 # define PFDPREFTCH(store, entry)		\
   PFDI(store);					\
@@ -175,4 +175,4 @@ void get_abs_deviation(volatile ticks* vals, const size_t num_vals, abs_deviatio
 void print_abs_deviation(const abs_deviation_t* abs_dev);
 
 
-#endif	/* _PFD_H_ */
+#endif	

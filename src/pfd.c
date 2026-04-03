@@ -114,7 +114,7 @@ pfd_store_init(uint32_t num_entries)
     {
       asm volatile ("");
     }
-#endif	/* XEON */
+#endif	
 
   pfd_correction = 0;
 

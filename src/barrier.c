@@ -38,7 +38,7 @@
 #  include <sys/types.h>
 #  include <sys/processor.h>
 #  include <sys/procset.h>
-#endif	/* __sparc__ */
+#endif	
 
 barrier_t* barriers;
 
@@ -105,8 +105,6 @@ barrier_set_participants(const uint32_t barrier_num, const uint64_t participants
 {
   if (barrier_num >= NUM_BARRIERS)
     return;
-
-  /* destroy existing barrier and re-init with the requested participant count */
   int rc = pthread_barrier_destroy(&barriers[barrier_num].barrier);
   (void) rc; /* ignore destroy errors */
 

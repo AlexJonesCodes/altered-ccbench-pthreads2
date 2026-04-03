@@ -268,7 +268,6 @@ uint8_t oldval;
 //Relax CPU
 //#define PAUSE _mm_pause()
 
-/*End of x86 code*/
 #endif
 
 

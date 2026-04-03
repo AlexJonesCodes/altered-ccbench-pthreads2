@@ -65,7 +65,7 @@ extern cpu_set_t cpus;
 #  include <numa.h>
 /* runtime NUMA toggle from ccbench.c */
 extern int opt_numa;
-#endif  /* PLATFORM_NUMA */
+#endif 
 
 #include "common.h"
 #include "pfd.h"
@@ -84,7 +84,6 @@ typedef struct cache_line
 extern volatile cache_line_t* cache_line_open();
 extern void cache_line_close(volatile cache_line_t* cache_line);
 
-/* exported from ccbench.c */
 extern size_t *group_for_rank;
 
 typedef enum
@@ -277,12 +276,11 @@ set_cpu(int cpu)
       int node = numa_node_of_cpu(cpu);
       if (node >= 0)
         {
-          /* Bind this thread’s memory policy to the CPU’s NUMA node */
           numa_run_on_node(node);
           numa_set_preferred(node);
         }
     }
-#endif /* PLATFORM_NUMA */
+#endif 
 
 }
 
@@ -342,7 +340,6 @@ static inline ticks getticks_correction_calc()
   }
 
 extern __thread unsigned long* seeds;
-  //Marsaglia's xorshf generator //period 2^96-1
 static inline uint64_t
 xorshf96(uint64_t* x, uint64_t* y, uint64_t* z)
 {
@@ -373,7 +370,7 @@ static inline uint32_t pow2roundup (uint32_t x)
   x |= x >> 16;
   return x+1;
 }
-#endif	/* _H_CCBENCH_ */
+#endif	
 
 int parse_jagged_array(
   const char *s,
