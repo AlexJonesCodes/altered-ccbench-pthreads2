@@ -2,38 +2,24 @@ import subprocess
 import csv
 import re
 
-NUM_RUNS = 4000
-CSV_FILE = "4000_runs_1mill_reps_repeat.csv"
+NUM_RUNS = 24 # total runs of ccbench invoked
+CSV_FILE_NAME = "4000_runs_1mill_reps_repeat.csv"
+# for 39 cpu sys, do 40 since list doesnt include final val
+x_array = list(range(0,40))   # change list if you want to use different cpus, range not needed, eg [0,4,6,8,9]
 
-# Regex to parse ccbench out:
-CPU_LINE_RE = re.compile(
-    r"CPU\s+(\d+)\s+ran\s+(\S+)\s+\|\s+"
-    r"wins:\s+(\d+)\s+\|\s+"
-    r"attempts:\s+(\d+)\s+\|\s+"
-    r"successes:\s+(\d+)\s+\|\s+"
-    r"failures:\s+(\d+)"
-)
+print(f"-x array cpus is: {x_array}")
+num_cpus = len(x_array)
 
-# The -x array string 
-X_ARRAY_STR = str(list(range(0,40)))  # For 39 cpu sys, do 40
-
-
-
-
-print(f"Using -x array: {X_ARRAY_STR}")
-# Convert to actual list of integers
-X_ARRAY = [int(x.strip()) for x in X_ARRAY_STR.strip("[]").split(",")]
-NUM_CPUS = len(X_ARRAY)
-
-CMD_BASE = [
+# TODO: CHANGE FROM 1 MILLION TO 1.6 IF USING GOLD CPU, 1M IS FOR SILVER
+command = [
     "../../../../ccbench",
     "-r", "1" + "000" + "000" ,
-    "-x", X_ARRAY_STR,
+    "-x", str(x_array),
     "-t", "[0]",
-    "-R"
+    "-R",
 ]
 
-with open(CSV_FILE, "w", newline="") as f:
+with open(CSV_FILE_NAME, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow([
         "run",
@@ -47,36 +33,24 @@ with open(CSV_FILE, "w", newline="") as f:
     ])
 
     for run in range(NUM_RUNS):
-        # Rotate -b through the actual X_ARRAY values
-        b_value = X_ARRAY[run % NUM_CPUS]
-
-        cmd = CMD_BASE + ["-b", str(b_value)]
-
-        print(f"Starting run {run + 1} with -b {b_value}...")
-
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=True
-        )
+        b = x_array[run % num_cpus]
+        full_command = command + ["-b", str(b)] # b val increments run to run so is appended here
+        print(f"starting run {run + 1} -b is {b}")
+        result = subprocess.run(full_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True)
 
         for line in result.stdout.splitlines():
-            match = CPU_LINE_RE.search(line)
+            regex = re.compile(
+                r"CPU\s+(\d+)\s+ran\s+(\S+)\s+\|\s+"
+                r"wins:\s+(\d+)\s+\|\s+"
+                r"attempts:\s+(\d+)\s+\|\s+"
+                r"successes:\s+(\d+)\s+\|\s+"
+                r"failures:\s+(\d+)"
+            )
+            match = regex.search(line)
             if match:
                 cpu, test_type, wins, attempts, successes, failures = match.groups()
-                writer.writerow([
-                    run + 1,
-                    cpu,
-                    b_value,
-                    test_type,
-                    wins,
-                    attempts,
-                    successes,
-                    failures
-                ])
+                writer.writerow([ run + 1, cpu, b, test_type, wins, attempts, successes, failures])
 
-        print(f"Run {run + 1} completed.")
-
-print(f"All runs completed. Results saved to {CSV_FILE}")
+        print(f"run completed: {run + 1}")
+        
+print(f"all runs are complete, no error")
