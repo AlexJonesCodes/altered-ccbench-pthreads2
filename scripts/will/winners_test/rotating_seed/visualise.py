@@ -1,4 +1,5 @@
 import csv
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
@@ -10,7 +11,6 @@ from matplotlib.lines import Line2D
 
 
 
-'''
 
 CSV_FILES = [
     "Xeon_Gold_6142/6400_runs_1.6mill_reps_repeat/6400_runs_1.6mill_reps_repeat.csv",
@@ -37,16 +37,23 @@ CSV_FILES = [
 ]
 
 IS_GOLD = False
+'''
+
+
+OUTPUT_DIR = "visualisation_dump/"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(os.path.join(OUTPUT_DIR, "Xeon_Silver_4114"), exist_ok=True)
+os.makedirs(os.path.join(OUTPUT_DIR, "Xeon_Gold_6142"), exist_ok=True)
 
 
 plt.rcParams.update({
-    'font.size': 20,
-    'axes.titlesize': 26,
-    'axes.labelsize': 20,
+    'font.size': 25,
+    'axes.titlesize': 30,
+    'axes.labelsize': 25,
     'xtick.labelsize': 13,
     'ytick.labelsize': 16,
     'legend.fontsize': 16,
-    'figure.titlesize': 26
+    'figure.titlesize': 30
 })
 
 for CSV_FILE in CSV_FILES:
@@ -69,6 +76,15 @@ for CSV_FILE in CSV_FILES:
     runs = sorted(runs)
 
     NUM_SOCKETS = 2
+
+    test_names = {
+        "CAS": "Cas",
+        "FAI": "Fai",
+        "LOAD_FROM_MODIFIED": "Load",
+        "SWAP": "Swap",
+        "TAS": "Tas",
+        "STORE_ON_MODIFIED": "Store"
+    }
 
     if IS_GOLD:
         CHIP_NAME = "Xeon Gold 6142"
@@ -170,7 +186,7 @@ for CSV_FILE in CSV_FILES:
         
         ax.plot(positions, medians, color="blue", marker="o", linewidth=2)
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: {ordering_name}: {test_type}")
+        ax.set_title(f"{CHIP_NAME} - {ordering_name}: {test_names[test_type]}")
         set_yaxis(ax, means + medians)
 
         # CPU numbers on the main ticks
@@ -208,7 +224,8 @@ for CSV_FILE in CSV_FILES:
 
 
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + f"_{ordering_name}_barline.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/raw_bar.png", dpi=300)
         plt.close()
 
         # ---------- VIOLIN ----------
@@ -228,7 +245,7 @@ for CSV_FILE in CSV_FILES:
 
         ax.set_ylabel("Instructions Executed")
         ax.set_xlabel("Cores and CPUs", labelpad=20)
-        ax.set_title(f"{CHIP_NAME}: {ordering_name}: {test_type}")
+        ax.set_title(f"{CHIP_NAME} - {ordering_name}: {test_names[test_type]}")
 
         # Top axis = CPU numbers
         # CPU numbers on the main ticks
@@ -254,7 +271,9 @@ for CSV_FILE in CSV_FILES:
         ax_top.set_xlabel("")          # optional: no label
 
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + f"_{ordering_name}_violin.png", dpi=300)
+
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/raw_violin.png", dpi=300)
         plt.close()
 
     # -------------------------------
@@ -353,11 +372,12 @@ for CSV_FILE in CSV_FILES:
         ax.set_xticklabels(core_labels)
         ax.set_xlabel("Socket")
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: Socket Comparison: {test_type}")
+        ax.set_title(f"{CHIP_NAME}: Socket Comparison: {test_names[test_type]}")
         plt.tight_layout()
         set_yaxis(ax, means + medians)
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + "_socket_barline.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/socket_bar.png", dpi=300)
         plt.close()
 
         # Violin
@@ -373,11 +393,12 @@ for CSV_FILE in CSV_FILES:
         ax.set_xticklabels(core_labels)
         ax.set_xlabel("Socket")
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: Socket Comparison: {test_type}")
+        ax.set_title(f"{CHIP_NAME}: Socket Comparison: {test_names[test_type]}")
         set_yaxis(ax, data_for_plot)
         plt.tight_layout()
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + "_socket_violin.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/socket_violin.png", dpi=300)
         plt.close()
 
     # -------------------------------
@@ -404,7 +425,12 @@ for CSV_FILE in CSV_FILES:
         centers = positions  # for per-core totals, label directly on each core
 
         # Bar + Line
-        fig, ax = plt.subplots(figsize=(14,7))
+
+        if IS_GOLD:
+            figsize = (10,7)
+        else:
+            figsize = (8,7)
+        fig, ax = plt.subplots(figsize=figsize)
         means = [np.mean(d) for d in data_for_plot]
         medians = [np.median(d) for d in data_for_plot]
         ax.bar(positions, means, width=0.6, edgecolor="black", color=COLOR_DARK)
@@ -415,7 +441,7 @@ for CSV_FILE in CSV_FILES:
         ax.set_xticklabels(core_labels)
         ax.set_xlabel("Core ID")
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: Per Core Total Wins: {test_type}")
+        ax.set_title(f"Per Core Total Wins: {test_names[test_type]}")
         set_yaxis(ax, means + medians)
         plt.tight_layout()
 
@@ -428,7 +454,8 @@ for CSV_FILE in CSV_FILES:
         ax_top.set_xlabel("")
         
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + "_per_core_total_barline.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/per_core_bar.png", dpi=300)
         plt.close()
 
         # Violin
@@ -444,7 +471,7 @@ for CSV_FILE in CSV_FILES:
         ax.set_xticklabels(core_labels)
         ax.set_xlabel("Cores and CPUs")
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: Per-Core Total Wins: {test_type}")
+        ax.set_title(f"{CHIP_NAME}: Per-Core Total Wins: {test_names[test_type]}")
         set_yaxis(ax, data_for_plot)
         ax.axvline(socket_boundary, color="black", linestyle="--", linewidth=1)
         plt.tight_layout()
@@ -458,7 +485,8 @@ for CSV_FILE in CSV_FILES:
         ax_top.set_xlabel("")
 
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + "_per_core_total_violin.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/per_core_violin.png", dpi=300)
         plt.close()
 
     def per_core_execution_plots():
@@ -501,11 +529,12 @@ for CSV_FILE in CSV_FILES:
 
         ax.set_xlabel("Core")
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: Per Core Executions: {test_type}")
+        ax.set_title(f"{CHIP_NAME}: Per Core Executions: {test_names[test_type]}")
         set_yaxis(ax, means + medians)
         plt.tight_layout()
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + "_per_core_exec_barline.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/per_core_exec_bar.png", dpi=300)
         plt.close()
 
         # ---------- VIOLIN ----------
@@ -535,11 +564,12 @@ for CSV_FILE in CSV_FILES:
 
         ax.set_xlabel("Core")
         ax.set_ylabel("Instructions Executed")
-        ax.set_title(f"{CHIP_NAME}: Per-Core Executions: {test_type}")
+        ax.set_title(f"{CHIP_NAME}: Per-Core Executions: {test_names[test_type]}")
         set_yaxis(ax, data_for_plot)
         plt.tight_layout()
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
-        plt.savefig(CSV_FILE + "_per_core_exec_violin.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/per_core_exec_violin.png", dpi=300)
         plt.close()
 
     def per_core_imbalance_plot():
@@ -562,7 +592,11 @@ for CSV_FILE in CSV_FILES:
 
             imbalance_values.append(imbalance)
 
-        fig, ax = plt.subplots(figsize=(14,7))
+        if IS_GOLD:
+            figsize = (10,7)
+        else:
+            figsize = (8,7)
+        fig, ax = plt.subplots(figsize=figsize)
 
         bars = ax.bar(positions, imbalance_values, width=0.6,
                     edgecolor="black", color=COLOR_DARK)
@@ -582,20 +616,21 @@ for CSV_FILE in CSV_FILES:
 
         ax.set_xlabel("Core")
         ax.set_ylabel("Imbalance Ratio")
-        ax.set_title(f"{CHIP_NAME}: SMT Execution Imbalance per Core: {test_type}")
+        ax.set_title(f"SMT Execution Imbalance per Core: {test_names[test_type]}", x=0.43)
 
         ax.set_ylim(0)
 
         plt.tight_layout()
         ax.set_xlim(min(positions)-0.8, max(positions)+0.8)
 
-        plt.savefig(CSV_FILE + "_per_core_imbalance.png", dpi=300)
+        os.makedirs(os.path.join(OUTPUT_DIR, CHIP_NAME, test_type), exist_ok=True)
+        plt.savefig(f"{OUTPUT_DIR}/{CHIP_NAME}/{test_type}/per_core_imbalance.png", dpi=300)
         plt.close()
 
     # -------------------------------
     # Generate all plots
     # -------------------------------
-    make_plots(str(CHIP_NAME + ": Executions for Each CPU Using Operation"), grouped_by_socket)
+    make_plots(str("Executions for Each CPU Using Operation"), grouped_by_socket)
     socket_level_plots()
     per_core_total_plots()
     per_core_execution_plots()

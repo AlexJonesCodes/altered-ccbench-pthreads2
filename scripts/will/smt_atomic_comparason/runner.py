@@ -2,261 +2,117 @@ import subprocess
 import csv
 import re
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
+CCBENCH_LOCATON = "../../../ccbench"
+CSV_OUT = "./result/ccbench_results.csv"
+REPEATS = 4
+TEST_INDEXS = [0, 7, 12, 13, 14, 15, 34] # 34 is the cas repeat operation
 
-CCBENCH = "../../../ccbench"
-OUTPUT_CSV = "ccbench_results.csv"
-
-REPEATS = 1
-
-TESTS = [0, 7, 12, 13, 14, 15, 34]
-
-
-# --------------------------------------------------
-# Detect SMT sibling CPU pairs
-# --------------------------------------------------
-
-def detect_cpu_pairs():
-
-    output = subprocess.check_output(
+def find_cpu_pairs():
+    out = subprocess.check_output(
         ["lscpu", "-p=CPU,CORE"],
         text=True
     )
 
-    core_map = {}
-
-    for line in output.splitlines():
-
-        if line.startswith("#"):
+    core_translations = {}
+    for row in out.splitlines():
+        if row.startswith("#"):
             continue
+        cpu, core = map(int, row.split(","))
+        core_translations.setdefault(core, []).append(cpu)
 
-        cpu, core = map(int, line.split(","))
+    cpu_pairs = []
 
-        core_map.setdefault(core, []).append(cpu)
-
-    pairs = []
-
-    for core in sorted(core_map.keys()):
-
-        cpus = sorted(core_map[core])
-
+    for core in sorted(core_translations.keys()):
+        cpus = sorted(core_translations[core])
         if len(cpus) >= 2:
-            pairs.append((cpus[0], cpus[1]))
+            cpu_pairs.append((cpus[0], cpus[1]))
+    return cpu_pairs
 
-    return pairs
-
-
-# --------------------------------------------------
-# Get full CPU list
-# --------------------------------------------------
-
-def detect_all_cpus():
-
+def find_all():
     output = subprocess.check_output(
-        ["lscpu", "-p=CPU"],
+        ["lscpu", "-p=CPU"], # -p gives better parsable out than normal
         text=True
     )
-
     cpus = []
-
     for line in output.splitlines():
-
         if line.startswith("#"):
             continue
-
         cpus.append(int(line.strip()))
-
     return sorted(cpus)
+    
+# main
+print("pairs:")
+for p in find_cpu_pairs():
+    print(p)
 
+# find all test pairs
+tests = []
+for a in TEST_INDEXS:
+    for b in TEST_INDEXS:
+        tests.append((a, b))
 
-# --------------------------------------------------
-# Generate full 6x6 test matrix
-# --------------------------------------------------
+with open(CSV_OUT, "w", newline="") as csv_file:
+    csv_write_obj = csv.writer(csv_file)
+    csv_write_obj.writerow([
+        "repeat",
+        "cpu1",
+        "cpu2",
+        "test1",
+        "test2",
+        "core0_avg_cycles",
+        "core1_avg_cycles"
+    ])
+    for repeat in range(REPEATS):
+        print(f"\nRepeat {repeat}\n")
 
-def generate_test_matrix():
+        # pair cpu runs
+        for cpu1, cpu2 in find_cpu_pairs():
+            for test1, test2 in tests:
+                # run the test
+                cmd = [
+                    CCBENCH_LOCATON,
+                    "-x", f"[{cpu1},{cpu2}]",
+                    "-t", f"[{test1},{test2}]",
+                    "-b", str(cpu1)
+                ]
+                print("Running:", " ".join(cmd))
+                process = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
 
-    tests = []
+                summary = re.compile(r"Core number 0.*avg\s+([0-9.]+).*?\n"r"Core number 1.*avg\s+([0-9.]+)", re.MULTILINE)
+                match = summary.search(process.stdout)
+                cpu_pin0 = float(match.group(1))
+                cpu_pin1 = float(match.group(2))
 
-    for a in TESTS:
-        for b in TESTS:
-            tests.append((a, b))
+                #write to csv
+                csv_write_obj.writerow([ repeat, cpu1, cpu2, test1, test2, cpu_pin0, cpu_pin1])
+                csv_file.flush()
 
-    return tests
+        # single cpuy runs
+        for cpu in find_all():
+            for test in TEST_INDEXS:
+                # run test
+                cmd = [
+                    CCBENCH_LOCATON,
+                    "-x", f"[{cpu}]",
+                    "-t", f"[{test}]",
+                    "-b", str(cpu)
+                ]
+                print("Running:", " ".join(cmd))
+                process = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
 
-
-# --------------------------------------------------
-# Parse Cross-core summary
-# --------------------------------------------------
-
-summary_regex = re.compile(
-    r"Core number 0.*avg\s+([0-9.]+).*?\n"
-    r"Core number 1.*avg\s+([0-9.]+)",
-    re.MULTILINE
-)
-
-
-single_regex = re.compile(
-    r"Core number 0.*avg\s+([0-9.]+)"
-)
-
-
-def parse_output_pair(output):
-
-    match = summary_regex.search(output)
-
-    if not match:
-        return None, None
-
-    return float(match.group(1)), float(match.group(2))
-
-
-def parse_output_single(output):
-
-    match = single_regex.search(output)
-
-    if not match:
-        return None
-
-    return float(match.group(1))
-
-
-# --------------------------------------------------
-# Run pair benchmark
-# --------------------------------------------------
-
-def run_pair_test(cpu1, cpu2, test1, test2):
-
-    cmd = [
-        CCBENCH,
-        "-x", f"[{cpu1},{cpu2}]",
-        "-t", f"[{test1},{test2}]",
-        "-b", str(cpu1)
-    ]
-
-    print("Running:", " ".join(cmd))
-
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
-    )
-
-    return parse_output_pair(proc.stdout)
-
-
-# --------------------------------------------------
-# Run single benchmark
-# --------------------------------------------------
-
-def run_single_test(cpu, test):
-
-    cmd = [
-        CCBENCH,
-        "-x", f"[{cpu}]",
-        "-t", f"[{test}]",
-        "-b", str(cpu)
-    ]
-
-    print("Running:", " ".join(cmd))
-
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
-    )
-
-    return parse_output_single(proc.stdout)
-
-
-# --------------------------------------------------
-# Main experiment
-# --------------------------------------------------
-
-def main():
-
-    cpu_pairs = detect_cpu_pairs()
-    all_cpus = detect_all_cpus()
-
-    print("Detected SMT pairs:")
-    for p in cpu_pairs:
-        print(p)
-
-    test_matrix = generate_test_matrix()
-
-    with open(OUTPUT_CSV, "w", newline="") as f:
-
-        writer = csv.writer(f)
-
-        writer.writerow([
-            "repeat",
-            "cpu1",
-            "cpu2",
-            "test1",
-            "test2",
-            "core0_avg_cycles",
-            "core1_avg_cycles"
-        ])
-
-        for repeat in range(REPEATS):
-
-            print(f"\n===== Repeat {repeat} =====\n")
-
-            # ----------------------------------
-            # Dual-core tests (existing)
-            # ----------------------------------
-
-            for cpu1, cpu2 in cpu_pairs:
-
-                for test1, test2 in test_matrix:
-
-                    c0, c1 = run_pair_test(cpu1, cpu2, test1, test2)
-
-                    if c0 is None:
-                        print("Failed to parse output")
-                        continue
-
-                    writer.writerow([
-                        repeat,
-                        cpu1,
-                        cpu2,
-                        test1,
-                        test2,
-                        c0,
-                        c1
-                    ])
-
-                    f.flush()
-
-            # ----------------------------------
-            # Single-core baseline tests (new)
-            # ----------------------------------
-
-            for cpu in all_cpus:
-
-                for test in TESTS:
-
-                    c0 = run_single_test(cpu, test)
-
-                    if c0 is None:
-                        print("Failed to parse output")
-                        continue
-
-                    writer.writerow([
-                        repeat,
-                        cpu,
-                        -1,
-                        test,
-                        -1,
-                        c0,
-                        -1
-                    ])
-
-                    f.flush()
-
-
-if __name__ == "__main__":
-    main()
+                # parse out
+                single = re.compile(r"Core number 0.*avg\s+([0-9.]+)")
+                match = single.search(process.stdout)
+                cpu_pin0 = float(match.group(1))
+                csv_write_obj.writerow([repeat, cpu, -1, test, -1, cpu_pin0, -1])
+                csv_file.flush()
