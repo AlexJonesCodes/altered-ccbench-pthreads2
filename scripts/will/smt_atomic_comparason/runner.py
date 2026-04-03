@@ -2,7 +2,7 @@ import subprocess
 import csv
 import re
 
-CCBENCH_LOCATON = "../../../ccbench"
+CCBENCH_LOCATON = "../../../ccbench" # CHANGE IF BINARY IS MOVED
 CSV_OUT = "./result/ccbench_results.csv"
 REPEATS = 4
 TEST_INDEXS = [0, 7, 12, 13, 14, 15, 34] # 34 is the cas repeat operation
@@ -13,11 +13,13 @@ def find_cpu_pairs():
         text=True
     )
 
+    cpu_list = []
     core_translations = {}
     for row in out.splitlines():
         if row.startswith("#"):
             continue
         cpu, core = map(int, row.split(","))
+        cpu_list.append(int(cpu))
         core_translations.setdefault(core, []).append(cpu)
 
     cpu_pairs = []
@@ -26,24 +28,19 @@ def find_cpu_pairs():
         cpus = sorted(core_translations[core])
         if len(cpus) >= 2:
             cpu_pairs.append((cpus[0], cpus[1]))
-    return cpu_pairs
-
-def find_all():
-    output = subprocess.check_output(
-        ["lscpu", "-p=CPU"], # -p gives better parsable out than normal
-        text=True
-    )
-    cpus = []
-    for line in output.splitlines():
-        if line.startswith("#"):
-            continue
-        cpus.append(int(line.strip()))
-    return sorted(cpus)
+    return sorted(cpu_list), cpu_pairs
     
 # main
-print("pairs:")
-for p in find_cpu_pairs():
-    print(p)
+cpus, cpu_pairs = find_cpu_pairs()
+
+print("cpus:")
+for cpu in cpus:
+    print(cpu)
+
+print("\n\npairs:")
+
+for pair in cpu_pairs:
+    print(pair)
 
 # find all test pairs
 tests = []
@@ -66,7 +63,7 @@ with open(CSV_OUT, "w", newline="") as csv_file:
         print(f"\nRepeat {repeat}\n")
 
         # pair cpu runs
-        for cpu1, cpu2 in find_cpu_pairs():
+        for cpu1, cpu2 in cpu_pairs:
             for test1, test2 in tests:
                 # run the test
                 cmd = [
@@ -93,7 +90,7 @@ with open(CSV_OUT, "w", newline="") as csv_file:
                 csv_file.flush()
 
         # single cpuy runs
-        for cpu in find_all():
+        for cpu in cpus:
             for test in TEST_INDEXS:
                 # run test
                 cmd = [
