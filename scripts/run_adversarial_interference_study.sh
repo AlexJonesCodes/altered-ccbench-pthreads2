@@ -575,9 +575,7 @@ PLAN
   # Track per-stage success
   local -A stage_status=()
 
-  # ═══════════════════════════════════════════════════════════════════════════
   #  STAGE 1 — Lock-vs-FAI adversarial sweep
-  # ═══════════════════════════════════════════════════════════════════════════
 
   if stage_enabled 1; then
     log_stage "1 — Lock-vs-FAI adversarial sweep"
@@ -621,10 +619,7 @@ PLAN
     log_info "Stage 1 skipped"
   fi
 
-
-  # ═══════════════════════════════════════════════════════════════════════════
   #  STAGE 2 — Separate-address sweep (seed rotation + replicates)
-  # ═══════════════════════════════════════════════════════════════════════════
 
   if stage_enabled 2; then
     log_stage "2 — Separate-address sweep"
@@ -671,10 +666,7 @@ PLAN
     log_info "Stage 2 skipped"
   fi
 
-
-  # ═══════════════════════════════════════════════════════════════════════════
   #  STAGE 3 — Perf c2c diagnostic
-  # ═══════════════════════════════════════════════════════════════════════════
 
   if stage_enabled 3; then
     log_stage "3 — Perf c2c diagnostic"
@@ -710,10 +702,7 @@ PLAN
     log_info "Stage 3 skipped"
   fi
 
-
-  # ═══════════════════════════════════════════════════════════════════════════
   #  STAGE 4 — Plot all results
-  # ═══════════════════════════════════════════════════════════════════════════
 
   if stage_enabled 4; then
     log_stage "4 — Generate plots"
@@ -744,10 +733,7 @@ PLAN
     log_info "Stage 4 skipped"
   fi
 
-
-  # ═══════════════════════════════════════════════════════════════════════════
   #  Summary for this group
-  # ═══════════════════════════════════════════════════════════════════════════
 
   echo
   if [[ -n "$group_label" ]]; then
@@ -817,9 +803,7 @@ PLAN
   echo
 }
 
-# ═════════════════════════════════════════════════════════════════════════════
 #  Dispatch: pair-groups mode vs single mode
-# ═════════════════════════════════════════════════════════════════════════════
 
 if [[ -n "$pair_groups" ]]; then
   # Parse pair groups: "name1:vcores:acores;name2:vcores:acores;..."
