@@ -49,10 +49,7 @@ try:
 except ImportError:
     _HAS_NUMPY = False
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  CLI
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -92,10 +89,7 @@ def parse_args() -> argparse.Namespace:
     )
     return p.parse_args()
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  I/O Utilities
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def detect_dialect(path: Path) -> csv.Dialect:
     sample = path.read_text(encoding="utf-8", errors="replace")[:8192]
@@ -149,10 +143,7 @@ def choose_group_columns(headers: Sequence[str], user_cols: str) -> List[str]:
     exclude = {"rep", "seq_idx", "winner_thread_id", "winner_core", "group", "role"}
     return [h for h in headers if h not in exclude]
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Core Metrics
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def repeat_rate(seq: Sequence[str]) -> float:
     """Fraction of transitions where the same thread wins consecutively."""
@@ -233,9 +224,7 @@ def jains_fairness(counts: Counter, n_threads: int) -> float:
     return (total * total) / (n_threads * sum_sq)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Numpy-accelerated helpers (used when numpy is available)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _seq_to_int_array(seq: Sequence[str]) -> "Tuple[np.ndarray, Dict[str, int]]":
     """Map string sequence to integer numpy array for fast operations."""
@@ -344,10 +333,7 @@ def _np_per_thread_mc(
 
     return global_trials, cond_trials
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Wald-Wolfowitz Runs Test (multi-category generalisation)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def wald_wolfowitz_runs_test(seq: Sequence[str]) -> Dict[str, float]:
     """Multi-category Wald-Wolfowitz runs test.
@@ -406,10 +392,7 @@ def _normal_cdf(x: float) -> float:
         return float("nan")
     return 0.5 * math.erfc(-x / math.sqrt(2))
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Transition Matrix + Chi-Squared Independence Test
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def transition_matrix_test(seq: Sequence[str]) -> Dict[str, float]:
     """Test whether transition probabilities depend on previous winner.
@@ -491,10 +474,7 @@ def _chi2_survival(x: float, df: int) -> float:
         return 1.0 - _normal_cdf(z)
     return float("nan")
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Monte Carlo Permutation Testing
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def mc_permutation_test(
     seq: Sequence[str],
@@ -605,10 +585,7 @@ def mc_permutation_test(
     })
     return result
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Per-Thread Analysis
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def per_thread_metrics(
     seq: Sequence[str],
@@ -726,10 +703,7 @@ def per_thread_metrics(
 
     return results
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Windowed Analysis
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def windowed_analysis(
     seq: Sequence[str],
@@ -817,10 +791,7 @@ def windowed_analysis(
 
     return rows, zscores
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Change-Point Detection (Recursive Binary Segmentation)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _best_split(values: Sequence[float], min_seg: int) -> Tuple[float, int]:
     """Find split point maximising mean-difference score."""
@@ -904,10 +875,7 @@ def detect_changepoints(
     changepoints.sort(key=lambda c: c["cp_position"])  # type: ignore[arg-type]
     return changepoints
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Benjamini-Hochberg FDR Correction
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def bh_fdr_correction(pvalues: List[float], alpha: float = 0.05) -> List[Tuple[float, float, bool]]:
     """Benjamini-Hochberg FDR correction.
@@ -943,9 +911,7 @@ def bh_fdr_correction(pvalues: List[float], alpha: float = 0.05) -> List[Tuple[f
     return [(pvalues[i], adjusted[i], significant[i]) for i in range(n)]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Main
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
     args = parse_args()
