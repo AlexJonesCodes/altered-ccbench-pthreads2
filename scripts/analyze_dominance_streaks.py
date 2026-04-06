@@ -35,9 +35,7 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  CLI
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -65,10 +63,7 @@ def parse_args() -> argparse.Namespace:
     )
     return p.parse_args()
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  I/O helpers
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def read_csv(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
     with open(path, newline="") as f:
@@ -92,10 +87,7 @@ def write_csv(path: Path, rows: List[Dict[str, object]], fields: List[str]) -> N
         w.writerows(rows)
     print(f"Wrote {path}  ({len(rows)} rows)")
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Dominance streak computation
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def compute_streaks(winners: List[str]) -> List[Tuple[str, int, int]]:
     """Compute consecutive dominance streaks.
@@ -164,9 +156,7 @@ def normalized_entropy(counts: Counter) -> float:
     return shannon_entropy(counts) / math.log2(n_cat)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  Main
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
     args = parse_args()
