@@ -332,7 +332,7 @@ do_analyze() {
   echo "Analysis complete. Results in: $analysis_dir/"
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────────────
 if [[ "$analyze_only" -eq 0 ]]; then
   do_collect
 fi
